@@ -1,5 +1,7 @@
 'use client';
 
+import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
+
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient, type User } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
@@ -906,6 +908,7 @@ export default function Home() {
                 <header className="simple-header"><h1>Настройки</h1></header>
                 <div className="scroll-content settings-content"><button type="button" className="settings-profile" onClick={()=>showProfile(user.id)}><Avatar size="lg" name={ownProfile?.display_name || 'Мой профиль'} id={user.id} url={avatarUrls[user.id]}/><div><strong>{ownProfile?.display_name || 'Мой профиль'}</strong><span>{ownProfile?.bio || user.email}</span></div><Icon name="chevron" size={19}/></button>
                   <h3>Оформление</h3><div className="settings-group"><div className="settings-theme"><span className="setting-icon"><Icon name={theme === 'dark' ? 'moon' : 'sun'} size={19}/></span><div><strong>Тема приложения</strong><small>Удобная для чтения</small></div></div><div className="theme-buttons"><button type="button" className={theme === 'dark' ? 'current' : ''} onClick={() => changeTheme('dark')}>Тёмная</button><button type="button" className={theme === 'light' ? 'current' : ''} onClick={() => changeTheme('light')}>Светлая</button></div></div>
+                  <h3>Звуки и уведомления</h3><div className="settings-group"><ConnectNotificationSettings supabase={supabase!} userId={user.id}/></div>
                   <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.5 · Статусы и даты</small></div></div></div>
                   <button type="button" className="logout-button" onClick={() => void logout()}><Icon name="logout" size={20}/> Выйти из аккаунта</button>
                 </div>

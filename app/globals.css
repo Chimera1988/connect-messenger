@@ -81,3 +81,6 @@
 .delivery-checks.is-read{color:#85e4ff}
 .bubble-meta{display:flex;align-items:center;justify-content:flex-end;gap:1px}
 .bubble.received .bubble-meta{color:var(--muted)}
+
+/* Shared notifications preferences */
+.connect-notifications{display:flex;flex-direction:column;gap:14px;padding:16px;width:100%;min-width:0}.connect-notifications label{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.connect-notifications select,.connect-notifications button{font:inherit;padding:9px 12px;border-radius:10px;border:1px solid var(--border, #59606d);background:var(--surface,#252b35);color:inherit;max-width:100%}.connect-notifications>div{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.connect-notifications p{margin:0}.connect-notifications small{opacity:.75;line-height:1.4}
