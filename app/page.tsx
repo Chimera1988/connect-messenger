@@ -71,6 +71,87 @@ function messagePreview(m?: Message, selfId?: string) {
   return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Сообщение удалено' : m.body.replace(/\s+/g, ' '));
 }
 
+
+type CropState = { file: File; url: string };
+function AvatarCropper({ url, onCancel, onSave, saving }: { url: string; onCancel: () => void; onSave: (blob: Blob) => void; saving: boolean }) {
+  const imgRef = useRef<HTMLImageElement | null>(null);
+  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
+  const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [offset, setOffset] = useState({ x: 0, y: 0 });
+  const [ready, setReady] = useState(false);
+  const [error, setError] = useState('');
+  const zoomRef = useRef(zoom); zoomRef.current = zoom;
+  const offsetRef = useRef(offset); offsetRef.current = offset;
+  const clamp = (x: number, y: number, z: number) => {
+    const img = imgRef.current;
+    if (!img?.naturalWidth) return { x: 0, y: 0 };
+    const base = Math.max(280 / img.naturalWidth, 280 / img.naturalHeight);
+    const boundX = Math.max(0, (img.naturalWidth * base * z - 280) / 2);
+    const boundY = Math.max(0, (img.naturalHeight * base * z - 280) / 2);
+    return { x: Math.max(-boundX, Math.min(boundX, x)), y: Math.max(-boundY, Math.min(boundY, y)) };
+  };
+  function changeZoom(z: number) {
+    const next = Math.max(1, Math.min(4, z));
+    setZoom(next); setOffset(prev => clamp(prev.x, prev.y, next));
+  }
+  function moveStart(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 1) dragRef.current = { x: e.clientX, y: e.clientY, ox: offsetRef.current.x, oy: offsetRef.current.y };
+    if (pointers.current.size === 2) {
+      const [a,b] = Array.from(pointers.current.values());
+      pinchRef.current = { distance: Math.hypot(a.x-b.x,a.y-b.y), zoom: zoomRef.current };
+      dragRef.current = null;
+    }
+  }
+  function move(e: React.PointerEvent<HTMLDivElement>) {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2 && pinchRef.current) {
+      const [a,b] = Array.from(pointers.current.values());
+      changeZoom(pinchRef.current.zoom * Math.hypot(a.x-b.x,a.y-b.y) / Math.max(1,pinchRef.current.distance));
+    } else if (dragRef.current && pointers.current.size === 1) {
+      const d = dragRef.current;
+      setOffset(clamp(d.ox + e.clientX-d.x, d.oy + e.clientY-d.y, zoomRef.current));
+    }
+  }
+  function moveEnd(e: React.PointerEvent<HTMLDivElement>) {
+    pointers.current.delete(e.pointerId); dragRef.current = null; pinchRef.current = null;
+  }
+  async function save() {
+    const img = imgRef.current;
+    if (!img?.naturalWidth || saving) return;
+    try {
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
+      const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas недоступен');
+      const base = Math.max(280/img.naturalWidth, 280/img.naturalHeight);
+      const width = img.naturalWidth*base*zoom*512/280;
+      const height = img.naturalHeight*base*zoom*512/280;
+      ctx.fillStyle='#fff';ctx.fillRect(0,0,512,512);
+      ctx.drawImage(img,(512-width)/2+offset.x*512/280,(512-height)/2+offset.y*512/280,width,height);
+      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve,'image/jpeg',.88));
+      if (!blob) throw new Error('Не удалось обработать фото');
+      onSave(blob);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка обработки фото'); }
+  }
+  return <div className="avatar-crop-overlay" role="dialog" aria-modal="true" aria-label="Редактор аватара">
+    <div className="avatar-crop-panel">
+      <header><button type="button" onClick={onCancel} disabled={saving}>Отмена</button><strong>Фото профиля</strong><button type="button" disabled={!ready || saving} onClick={()=>void save()}>{saving?'Сохраняю…':'Готово'}</button></header>
+      <p>Переместите фотографию, чтобы выбрать нужную область</p>
+      <div className="avatar-crop-stage" onPointerDown={moveStart} onPointerMove={move} onPointerUp={moveEnd} onPointerCancel={moveEnd}>
+        <img ref={imgRef} src={url} alt="Выбранное фото" draggable={false} onLoad={()=>setReady(true)} onError={()=>setError('Не удалось открыть изображение')} style={ready?{width:`${(imgRef.current?.naturalWidth||280)*Math.max(280/(imgRef.current?.naturalWidth||280),280/(imgRef.current?.naturalHeight||280))*zoom}px`,height:`${(imgRef.current?.naturalHeight||280)*Math.max(280/(imgRef.current?.naturalWidth||280),280/(imgRef.current?.naturalHeight||280))*zoom}px`,transform:`translate(calc(-50% + ${offset.x}px),calc(-50% + ${offset.y}px))`}:undefined}/>
+        <div className="avatar-crop-mask" aria-hidden="true"/>
+        <div className="avatar-crop-ring" aria-hidden="true"/>
+      </div>
+      <div className="avatar-crop-zoom"><span>−</span><input aria-label="Увеличение" type="range" min="1" max="4" step=".01" value={zoom} onChange={e=>changeZoom(Number(e.target.value))}/><span>+</span></div>
+      <small>Можно увеличивать двумя пальцами. Сохраняется только выбранная область.</small>
+      {error && <p className="avatar-crop-error">{error}</p>}
+    </div>
+  </div>;
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [tab, setTab] = useState<Tab>('chats');
@@ -85,6 +166,7 @@ export default function Home() {
   const [editName, setEditName] = useState('');
   const [editBio, setEditBio] = useState('');
   const avatarInput = useRef<HTMLInputElement | null>(null);
+  const [crop, setCrop] = useState<CropState | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -307,6 +389,13 @@ export default function Home() {
     setProfiles(prev=>prev.map(p=>p.id===user.id?{...p,display_name:name,bio:editBio.trim()}:p));
     setNotice('Профиль сохранён');
   }
+  function selectAvatar(file?: File) {
+    if (!file) return;
+    if (!['image/jpeg','image/png','image/webp'].includes(file.type)) {setNotice('Выберите JPG, PNG или WebP');return;}
+    const url = URL.createObjectURL(file);
+    setCrop(prev=>{if(prev) URL.revokeObjectURL(prev.url);return {file,url};});
+  }
+  function closeCrop() {setCrop(prev=>{if(prev)URL.revokeObjectURL(prev.url);return null;});}
   async function uploadAvatar(file?: File) {
     if(!file || !supabase || !user || busy) return;
     if(!['image/jpeg','image/png','image/webp'].includes(file.type) || file.size>2*1024*1024){setNotice('Выберите JPG, PNG или WebP до 2 МБ');return;}
@@ -320,7 +409,7 @@ export default function Home() {
     const signed=await supabase.storage.from('connect-avatars').createSignedUrl(path,3600);
     if(signed.data?.signedUrl)setAvatarUrls(prev=>({...prev,[user.id]:signed.data!.signedUrl}));
     setProfiles(prev=>prev.map(p=>p.id===user.id?{...p,avatar_path:path}:p));
-    setBusy(false);setNotice('Аватар обновлён');
+    setBusy(false);setNotice('Аватар обновлён'); closeCrop();
   }
   const contacts = profiles.filter(p => !p.is_blocked && p.id !== user?.id);
   const chats = conversations.map(c => ({
@@ -461,7 +550,7 @@ export default function Home() {
                 <Avatar size="lg" name={viewedProfile.display_name} id={viewedProfile.id} url={avatarUrls[viewedProfile.id]}/>
                 <h2>{viewedProfile.display_name}</h2>
                 <p>{viewedProfile.bio || 'Информация о себе не указана'}</p>
-                {profileView===user.id && <><button type="button" className="avatar-change" disabled={busy} onClick={()=>avatarInput.current?.click()}><Icon name="camera" size={17}/> Изменить фото</button><input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{void uploadAvatar(e.target.files?.[0]);e.currentTarget.value='';}}/></>}
+                {profileView===user.id && <><button type="button" className="avatar-change" disabled={busy} onClick={()=>avatarInput.current?.click()}><Icon name="camera" size={17}/> Изменить фото</button><input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{selectAvatar(e.target.files?.[0]);e.currentTarget.value='';}}/></>}
               </div>
               {profileView===user.id ? <form className="profile-edit" onSubmit={saveProfile}>
                 <label>Имя<input maxLength={60} required value={editName} onChange={e=>setEditName(e.target.value)}/></label>
@@ -536,7 +625,8 @@ export default function Home() {
             </div><nav className="bottom-nav" aria-label="Основная навигация">
               {([{ id: 'chats' as const, label: 'Чаты', icon: 'chats' as const }, { id: 'contacts' as const, label: 'Контакты', icon: 'contacts' as const }, { id: 'settings' as const, label: 'Настройки', icon: 'settings' as const }]).map(item => <button type="button" key={item.id} className={'nav-tab' + (tab === item.id ? ' selected' : '')} onClick={() => switchTab(item.id)}><span className="nav-symbol"><Icon name={item.icon} size={24}/>{item.id === 'chats' && unreadTotal > 0 && <em className="nav-dot"/>}</span><small>{item.label}</small></button>)}
             </nav></>}
-    {notice && <button type="button" className="notice-toast" role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
+    {crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}
+    {notice && <button type="button" className="notice-toast"  role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
     {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
       <button type="button" onClick={() => startReply(menuMessage)}><Icon name="reply" size={23}/>Ответить</button>
       {menuMessage.sender_id === user?.id && <button type="button" onClick={() => startEdit(menuMessage)}><Icon name="edit" size={22}/>Редактировать</button>}
