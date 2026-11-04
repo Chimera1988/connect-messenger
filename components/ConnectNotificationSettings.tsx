@@ -2,40 +2,20 @@
 import {useEffect,useState} from 'react';
 import type {SupabaseClient} from '@supabase/supabase-js';
 type Sound='soft'|'bright'|'gentle'|'silent';
-const sounds:Record<Sound,string>={soft:'Мягкий (по умолчанию)',bright:'Яркий',gentle:'Нежный',silent:'Без звука'};
-function tone(sound:Sound){
-  if(sound==='silent')return;
-  const AudioContextCtor=window.AudioContext;
-  if(!AudioContextCtor)return;
-  const ctx=new AudioContextCtor();
-  const notes=sound==='bright'?[880,1175]:sound==='gentle'?[523,659]:[740,988];
-  notes.forEach((hz,i)=>{const osc=ctx.createOscillator(),gain=ctx.createGain();osc.type='sine';osc.frequency.value=hz;gain.gain.setValueAtTime(0.0001,ctx.currentTime+i*.13);gain.gain.exponentialRampToValueAtTime(.085,ctx.currentTime+i*.13+.012);gain.gain.exponentialRampToValueAtTime(.0001,ctx.currentTime+i*.13+.24);osc.connect(gain).connect(ctx.destination);osc.start(ctx.currentTime+i*.13);osc.stop(ctx.currentTime+i*.13+.25);});
-  setTimeout(()=>void ctx.close(),900);
-}
-function base64ToUint8Array(base64:string){const padding='='.repeat((4-base64.length%4)%4);const raw=atob((base64+padding).replace(/-/g,'+').replace(/_/g,'/'));return Uint8Array.from(raw,c=>c.charCodeAt(0));}
+type Preferences={enabled:boolean,sound:Sound,vibrate:boolean};
+const labels:Record<Sound,string>={soft:'Мягкий (по умолчанию)',bright:'Яркий',gentle:'Нежный',silent:'Без звука'};
+declare global {interface Window {ConnectAndroid?:{register:(token:string)=>void;setPreferences:(json:string)=>void}}}
+function play(sound:Sound){if(sound==='silent')return;const Audio=window.AudioContext;if(!Audio)return;const ctx=new Audio();const notes=sound==='bright'?[880,1175]:sound==='gentle'?[523,659]:[740,988];notes.forEach((freq,i)=>{const o=ctx.createOscillator(),g=ctx.createGain(),t=ctx.currentTime+i*.13;o.type='sine';o.frequency.value=freq;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.08,t+.012);g.gain.exponentialRampToValueAtTime(.0001,t+.24);o.connect(g).connect(ctx.destination);o.start(t);o.stop(t+.25)});setTimeout(()=>void ctx.close(),850)}
+function vapidBytes(value:string){const pad='='.repeat((4-value.length%4)%4);return Uint8Array.from(atob((value+pad).replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0))}
 export default function ConnectNotificationSettings({supabase,userId}:{supabase:SupabaseClient,userId:string}){
-  const [enabled,setEnabled]=useState(true),[sound,setSound]=useState<Sound>('soft'),[vibrate,setVibrate]=useState(true),[message,setMessage]=useState('');
-  useEffect(()=>{let active=true;void supabase.from('notification_preferences').select('enabled,sound,vibrate').eq('user_id',userId).maybeSingle().then(({data})=>{if(active&&data){setEnabled(data.enabled);setSound(data.sound as Sound);setVibrate(data.vibrate);}});return()=>{active=false;};},[supabase,userId]);
-  async function save(next:{enabled:boolean,sound:Sound,vibrate:boolean}){const {error}=await supabase.from('notification_preferences').upsert({user_id:userId,...next,updated_at:new Date().toISOString()},{onConflict:'user_id'});setMessage(error?'Не удалось сохранить настройки':'Настройки сохранены');}
-  async function activate(){
-    if(!('serviceWorker'in navigator)||!('PushManager'in window)){setMessage('Web Push недоступен в этом браузере');return;}
-    if(!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY){setMessage('VAPID ключ ещё не настроен');return;}
-    const permission=await Notification.requestPermission();if(permission!=='granted'){setMessage('Разрешение на уведомления не предоставлено');return;}
-    try{
-      const registration=await navigator.serviceWorker.register('/sw.js');
-      const subscription=await registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:base64ToUint8Array(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY)});
-      const {data:{session}}=await supabase.auth.getSession();
-      if(!session)throw Error('Не выполнен вход');
-      const response=await fetch('/api/push/register',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({platform:'web',endpoint:subscription.endpoint,subscription:subscription.toJSON()})});
-      if(!response.ok)throw Error('Не удалось зарегистрировать устройство');
-      setMessage('Уведомления подключены');
-    }catch(e){setMessage(e instanceof Error?e.message:'Ошибка подключения');}
-  }
-  return <section aria-label="Звуки и уведомления"><h3>Звуки и уведомления</h3>
-    <label><input type="checkbox" checked={enabled} onChange={e=>{setEnabled(e.target.checked);void save({enabled:e.target.checked,sound,vibrate});}}/> Уведомления включены</label>
-    <div><label htmlFor="connect-sound">Сигнал сообщений</label> <select id="connect-sound" value={sound} onChange={e=>{const s=e.target.value as Sound;setSound(s);void save({enabled,sound:s,vibrate});}}>{Object.entries(sounds).map(([id,name])=><option key={id} value={id}>{name}</option>)}</select> <button type="button" onClick={()=>tone(sound)}>Прослушать</button></div>
-    <label><input type="checkbox" checked={vibrate} onChange={e=>{setVibrate(e.target.checked);void save({enabled,sound,vibrate:e.target.checked});}}/> Вибрация (где поддерживается)</label>
-    <div><button type="button" onClick={()=>void activate()}>Подключить уведомления PWA</button></div>
-    <p role="status">{message}</p><small>На iPhone фоновые уведомления используют системный звук. Для iOS 16.4+ установите PWA на экран «Домой».</small>
-  </section>;
+ const [prefs,setPrefs]=useState<Preferences>({enabled:true,sound:'soft',vibrate:true});const [status,setStatus]=useState('');
+ useEffect(()=>{let live=true;void supabase.from('notification_preferences').select('enabled,sound,vibrate').eq('user_id',userId).maybeSingle().then(({data,error})=>{if(!live)return;if(error){setStatus('Не удалось загрузить настройки');return}if(data){const p={enabled:data.enabled,sound:data.sound as Sound,vibrate:data.vibrate};setPrefs(p);window.ConnectAndroid?.setPreferences(JSON.stringify(p))}});return()=>{live=false}},[supabase,userId]);
+ async function save(next:Preferences){setPrefs(next);const {error}=await supabase.from('notification_preferences').upsert({user_id:userId,...next,updated_at:new Date().toISOString()},{onConflict:'user_id'});if(error){setStatus('Ошибка сохранения настроек');return}window.ConnectAndroid?.setPreferences(JSON.stringify(next));setStatus('Настройки сохранены')}
+ async function activate(){try{const {data:{session}}=await supabase.auth.getSession();if(!session)throw Error('Войдите в аккаунт');if(window.ConnectAndroid){window.ConnectAndroid.setPreferences(JSON.stringify(prefs));window.ConnectAndroid.register(session.access_token);setStatus('Android: запрос на подключение отправлен');return}if(!('serviceWorker'in navigator)||!('PushManager'in window))throw Error('Web Push недоступен. На iPhone откройте приложение с экрана «Домой».');const key=process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;if(!key)throw Error('VAPID ещё не настроен');if(await Notification.requestPermission()!=='granted')throw Error('Разрешение не предоставлено');const reg=await navigator.serviceWorker.register('/sw.js');const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:vapidBytes(key)});const response=await fetch('/api/push/register',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({platform:'web',endpoint:sub.endpoint,subscription:sub.toJSON()})});if(!response.ok)throw Error('Не удалось зарегистрировать устройство');setStatus('Уведомления подключены')}catch(e){setStatus(e instanceof Error?e.message:'Ошибка подключения')}}
+ return <section className="connect-notifications" aria-label="Звуки и уведомления">
+ <label><input type="checkbox" checked={prefs.enabled} onChange={e=>void save({...prefs,enabled:e.target.checked})}/> Уведомления включены</label>
+ <div><label htmlFor="connect-sound">Сигнал для всех чатов</label><select id="connect-sound" value={prefs.sound} onChange={e=>void save({...prefs,sound:e.target.value as Sound})}>{Object.entries(labels).map(([id,label])=><option key={id} value={id}>{label}</option>)}</select><button type="button" onClick={()=>play(prefs.sound)}>Прослушать</button></div>
+ <label><input type="checkbox" checked={prefs.vibrate} onChange={e=>void save({...prefs,vibrate:e.target.checked})}/> Вибрация (где поддерживается)</label>
+ <button type="button" onClick={()=>void activate()}>Подключить уведомления</button><p role="status">{status}</p><small>iOS PWA использует системный звук в фоне. Android применяет выбранный сигнал к новым уведомлениям после подключения. Изменение звука на Android может потребовать настройки канала в системе.</small>
+ </section>
 }
