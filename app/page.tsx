@@ -12,7 +12,7 @@ const supabase = supabaseUrl && supabaseKey
 
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to';
 type Tab = 'chats' | 'contacts' | 'settings';
-type Profile = { id: string; display_name: string; is_blocked: boolean };
+type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null };
 type Conversation = { id: string; user_a: string; user_b: string; created_at: string };
 type Message = {
   id: string; conversation_id: string; sender_id: string; body: string; created_at: string;
@@ -20,7 +20,7 @@ type Message = {
 };
 type Gesture = { id: string; x: number; y: number; dx: number; dy: number; timer: number | null; opened: boolean };
 type IconName = 'chats' | 'contacts' | 'settings' | 'back' | 'search' | 'write' | 'send' | 'reply' |
-  'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message';
+  'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user';
 
 function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number; stroke?: number }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
@@ -45,16 +45,18 @@ function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number
     info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
     chevron: <path d="m9 5 7 7-7 7"/>,
     arrow: <path d="m5 12 14 0m-6-6 6 6-6 6"/>,
+    camera: <><rect x="2" y="6" width="20" height="15" rx="3"/><circle cx="12" cy="13" r="4"/><path d="M7 6 9 3h6l2 3"/></>,
+    user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
     message: <><path d="M20 11.4a7.5 7.5 0 0 1-7.9 7.5 8.2 8.2 0 0 1-3.3-.7L4 20l1.2-4.5A7.6 7.6 0 1 1 20 11.4Z"/><path d="M8 11h8"/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>{paths[name]}</svg>;
 }
 
 const avatarColors = ['#2369b1', '#985ab2', '#b56e48', '#327e89', '#6c73b7', '#599467'];
-function Avatar({ name, id, size = 'md' }: { name: string; id?: string; size?: 'sm' | 'md' | 'lg' }) {
+function Avatar({ name, id, size = 'md', url }: { name: string; id?: string; size?: 'sm' | 'md' | 'lg'; url?: string }) {
   let seed = 0; for (const char of id || name) seed += char.charCodeAt(0);
   const color = avatarColors[seed % avatarColors.length];
-  return <span className={'person-avatar avatar-' + size} style={{ background: `linear-gradient(140deg,${color},#1b283d)` }} aria-hidden="true">{Array.from(name.trim())[0]?.toLocaleUpperCase('ru-RU') || '?'}</span>;
+  return <span className={'person-avatar avatar-' + size} style={{ background: `linear-gradient(140deg,${color},#1b283d)` }} aria-hidden="true">{url ? <img src={url} alt="" loading="lazy"/> : (Array.from(name.trim())[0]?.toLocaleUpperCase('ru-RU') || '?')}</span>;
 }
 function timeLabel(iso: string) { return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
 function listTimeLabel(iso: string) {
@@ -78,6 +80,11 @@ export default function Home() {
   const [newPassword, setNewPassword] = useState(''); const [setup, setSetup] = useState(false);
   const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('');
   const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [avatarUrls, setAvatarUrls] = useState<Record<string,string>>({});
+  const [profileView, setProfileView] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const avatarInput = useRef<HTMLInputElement | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -89,6 +96,7 @@ export default function Home() {
   const [editing, setEditing] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
   const [menuTop, setMenuTop] = useState(150);
+  const [menuSide, setMenuSide] = useState<'left'|'right'>('left');
   const [swipe, setSwipe] = useState<{ id: string; offset: number } | null>(null);
   const [search, setSearch] = useState('');
   const [frame, setFrame] = useState<{ height: number; top: number } | null>(null);
@@ -138,10 +146,19 @@ export default function Home() {
   const loadDirectory = useCallback(async () => {
     if (!supabase || !user) return;
     const [p, c] = await Promise.all([
-      supabase.from('profiles').select('id,display_name,is_blocked'),
+      supabase.from('profiles').select('id,display_name,is_blocked,bio,avatar_path'),
       supabase.from('conversations').select('id,user_a,user_b,created_at').order('created_at', { ascending: false }),
     ]);
-    if (p.error) setNotice(p.error.message); else setProfiles((p.data || []) as Profile[]);
+    if (p.error) setNotice(p.error.message); else {
+      const directory = (p.data || []) as Profile[];
+      setProfiles(directory);
+      const urls: Record<string,string> = {};
+      await Promise.all(directory.filter(x=>x.avatar_path).map(async x => {
+        const { data } = await supabase.storage.from('connect-avatars').createSignedUrl(x.avatar_path!, 3600);
+        if (data?.signedUrl) urls[x.id] = data.signedUrl;
+      }));
+      setAvatarUrls(urls);
+    }
     if (c.error) setNotice(c.error.message); else setConversations((c.data || []) as Conversation[]);
   }, [user?.id]);
   useEffect(() => { void loadDirectory(); }, [loadDirectory]);
@@ -273,6 +290,38 @@ export default function Home() {
     return () => { window.clearInterval(interval); lastKeypress.current = 0; void updateTyping(id, false); };
   }, [activeChat, user?.id, updateTyping]);
 
+  const ownProfile = profiles.find(p=>p.id===user?.id);
+  const viewedProfile = profiles.find(p=>p.id===profileView);
+  function showProfile(id: string) {
+    const p=profiles.find(x=>x.id===id); if(!p) return;
+    setProfileView(id); setEditName(p.display_name); setEditBio(p.bio || ''); setMenuMessage(null);
+  }
+  async function saveProfile(e: FormEvent) {
+    e.preventDefault(); if(!supabase || !user || !ownProfile || busy) return;
+    const name=editName.trim();
+    if(name.length<1 || name.length>60 || editBio.length>160){setNotice('Имя: 1–60 символов; о себе: до 160');return;}
+    setBusy(true);
+    const {error}=await supabase.from('profiles').update({display_name:name,bio:editBio.trim()}).eq('id',user.id);
+    setBusy(false);
+    if(error){setNotice('Не удалось сохранить: '+error.message);return;}
+    setProfiles(prev=>prev.map(p=>p.id===user.id?{...p,display_name:name,bio:editBio.trim()}:p));
+    setNotice('Профиль сохранён');
+  }
+  async function uploadAvatar(file?: File) {
+    if(!file || !supabase || !user || busy) return;
+    if(!['image/jpeg','image/png','image/webp'].includes(file.type) || file.size>2*1024*1024){setNotice('Выберите JPG, PNG или WebP до 2 МБ');return;}
+    setBusy(true);
+    const ext=file.type==='image/png'?'png':file.type==='image/webp'?'webp':'jpg';
+    const path=`${user.id}/avatar-${Date.now()}.${ext}`;
+    const uploaded=await supabase.storage.from('connect-avatars').upload(path,file,{contentType:file.type,upsert:false});
+    if(uploaded.error){setBusy(false);setNotice('Ошибка загрузки: '+uploaded.error.message);return;}
+    const updated=await supabase.from('profiles').update({avatar_path:path}).eq('id',user.id);
+    if(updated.error){setBusy(false);setNotice('Не удалось сохранить аватар: '+updated.error.message);return;}
+    const signed=await supabase.storage.from('connect-avatars').createSignedUrl(path,3600);
+    if(signed.data?.signedUrl)setAvatarUrls(prev=>({...prev,[user.id]:signed.data!.signedUrl}));
+    setProfiles(prev=>prev.map(p=>p.id===user.id?{...p,avatar_path:path}:p));
+    setBusy(false);setNotice('Аватар обновлён');
+  }
   const contacts = profiles.filter(p => !p.is_blocked && p.id !== user?.id);
   const chats = conversations.map(c => ({
     ...c,
@@ -287,7 +336,7 @@ export default function Home() {
 
   function enterChat(id: string) { setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
   function exitChat() { setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
-  function switchTab(t: Tab) { setTab(t); setSearch(''); setNotice(''); }
+  function switchTab(t: Tab) { setTab(t); setSearch(''); setNotice(''); setProfileView(null); }
   async function openContact(p: Profile) {
     if (!supabase || !user || busy) return;
     setBusy(true); setNotice('');
@@ -342,8 +391,9 @@ export default function Home() {
     if (m.deleted_at) return;
     const rect = element.getBoundingClientRect(); const root = shellRef.current?.getBoundingClientRect();
     const height = root?.height || window.innerHeight;
-    const optionsHeight = m.sender_id === user?.id ? 270 : 166;
+    const optionsHeight = m.sender_id === user?.id ? 230 : 120;
     setMenuTop(Math.min(Math.max(76, rect.top - (root?.top || 0) - 14), Math.max(76, height - optionsHeight - 22)));
+    setMenuSide(m.sender_id === user?.id ? 'right' : 'left');
     setMenuMessage(m); setSwipe(null);
     try { if ('vibrate' in navigator) navigator.vibrate(9); } catch { /* iOS doesn't support vibration */ }
   }
@@ -389,8 +439,9 @@ export default function Home() {
     setLatest({}); setUnread({}); readCache.current = {}; setPassword(''); setNotice('');
   }
 
-  const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px` } : undefined;
-  return <div className={'connect-app ' + theme} ref={shellRef} style={screenStyle}>
+  const keyboardOpen = frame ? window.innerHeight - frame.height - frame.top > 130 : false;
+  const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
+  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} ref={shellRef} style={screenStyle}>
     {!supabase ? <div className="connection-error"><Icon name="info" size={32}/><h2>Подключение не настроено</h2><p>Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY в Vercel.</p></div>
       : loading ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
         : !user || setup ? <div className="login-screen">
@@ -403,11 +454,30 @@ export default function Home() {
             <p className="login-hint">Вход доступен только участникам с учётной записью.</p>
           </form>
         </div>
+          : profileView && viewedProfile ? <div className="profile-view">
+            <header className="profile-top"><button className="icon-btn" type="button" onClick={()=>setProfileView(null)} aria-label="Назад"><Icon name="back" size={25}/></button><strong>{profileView===user.id?'Мой профиль':'Профиль'}</strong></header>
+            <div className="profile-content">
+              <div className="profile-hero">
+                <Avatar size="lg" name={viewedProfile.display_name} id={viewedProfile.id} url={avatarUrls[viewedProfile.id]}/>
+                <h2>{viewedProfile.display_name}</h2>
+                <p>{viewedProfile.bio || 'Информация о себе не указана'}</p>
+                {profileView===user.id && <><button type="button" className="avatar-change" disabled={busy} onClick={()=>avatarInput.current?.click()}><Icon name="camera" size={17}/> Изменить фото</button><input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{void uploadAvatar(e.target.files?.[0]);e.currentTarget.value='';}}/></>}
+              </div>
+              {profileView===user.id ? <form className="profile-edit" onSubmit={saveProfile}>
+                <label>Имя<input maxLength={60} required value={editName} onChange={e=>setEditName(e.target.value)}/></label>
+                <label>О себе<textarea maxLength={160} rows={3} value={editBio} onChange={e=>setEditBio(e.target.value)} placeholder="Расскажите немного о себе"/></label>
+                <small>{editBio.length}/160 · Фото JPG, PNG или WebP до 2 МБ</small>
+                <button type="submit" className="primary-action" disabled={busy}>Сохранить изменения</button>
+              </form> : <div className="profile-about"><span>О себе</span><p>{viewedProfile.bio || 'Пока ничего не рассказал(а)'}</p></div>}
+            </div>
+          </div>
           : activeChat && selected ? <div className="chat-view">
             <header className="chat-header">
               <button type="button" className="icon-btn back-btn" onClick={exitChat} aria-label="Назад к чатам"><Icon name="back" size={28}/></button>
-              <Avatar name={currentName} id={selected.other?.id}/>
-              <div className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{typing ? 'печатает…' : 'Личный чат'}</small></div>
+              <button type="button" className="chat-person-link" onClick={()=>selected.other && showProfile(selected.other.id)}>
+                <Avatar name={currentName} id={selected.other?.id} url={selected.other ? avatarUrls[selected.other.id] : undefined}/>
+                <span className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{typing ? 'печатает…' : 'Личный чат'}</small></span>
+              </button>
             </header>
             <div className="message-scroll" ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
               <div className="message-stream">
@@ -443,7 +513,7 @@ export default function Home() {
                 <div className="search-field"><Icon name="search" size={19}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск по чатам" aria-label="Поиск по чатам"/></div>
                 <div className="scroll-content chat-rows">
                   {filteredChats.length === 0 ? <div className="empty-state"><Icon name="chats" size={38}/><strong>{search ? 'Ничего не найдено' : 'Пока нет переписок'}</strong><span>{search ? 'Попробуйте другое имя' : 'Откройте «Контакты» и начните разговор'}</span></div>
-                    : filteredChats.map(c => <button type="button" className="dialog-row" key={c.id} onClick={() => enterChat(c.id)}><Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button>)}
+                    : filteredChats.map(c => <button type="button" className="dialog-row" key={c.id} onClick={() => enterChat(c.id)}><Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button>)}
                 </div>
               </>}
               {tab === 'contacts' && <>
@@ -452,14 +522,14 @@ export default function Home() {
                 <div className="section-caption">МОИ КОНТАКТЫ</div>
                 <div className="scroll-content contact-rows">
                   {filteredContacts.length === 0 ? <div className="empty-state"><Icon name="contacts" size={38}/><strong>{search ? 'Контакт не найден' : 'Контактов пока нет'}</strong><span>{search ? 'Попробуйте другое имя' : 'Контакты появятся после приглашения участников'}</span></div>
-                    : filteredContacts.map(p => <button type="button" className="contact-row" key={p.id} disabled={busy} onClick={() => void openContact(p)}><Avatar name={p.display_name} id={p.id}/><span className="contact-text"><strong>{p.display_name}</strong><small>Написать сообщение</small></span><Icon name="chevron" size={19}/></button>)}
+                    : filteredContacts.map(p => <button type="button" className="contact-row" key={p.id} disabled={busy} onClick={() => void openContact(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span className="contact-text"><strong>{p.display_name}</strong><small>{p.bio || "Открыть переписку"}</small></span><Icon name="chevron" size={19}/></button>)}
                 </div>
               </>}
               {tab === 'settings' && <>
                 <header className="simple-header"><h1>Настройки</h1></header>
-                <div className="scroll-content settings-content"><div className="settings-profile"><Avatar size="lg" name={user.email?.split('@')[0] || 'Мой профиль'} id={user.id}/><div><strong>{profiles.find(p => p.id === user.id)?.display_name || 'Мой профиль'}</strong><span>{user.email}</span></div></div>
+                <div className="scroll-content settings-content"><button type="button" className="settings-profile" onClick={()=>showProfile(user.id)}><Avatar size="lg" name={ownProfile?.display_name || 'Мой профиль'} id={user.id} url={avatarUrls[user.id]}/><div><strong>{ownProfile?.display_name || 'Мой профиль'}</strong><span>{ownProfile?.bio || user.email}</span></div><Icon name="chevron" size={19}/></button>
                   <h3>Оформление</h3><div className="settings-group"><div className="settings-theme"><span className="setting-icon"><Icon name={theme === 'dark' ? 'moon' : 'sun'} size={19}/></span><div><strong>Тема приложения</strong><small>Удобная для чтения</small></div></div><div className="theme-buttons"><button type="button" className={theme === 'dark' ? 'current' : ''} onClick={() => changeTheme('dark')}>Тёмная</button><button type="button" className={theme === 'light' ? 'current' : ''} onClick={() => changeTheme('light')}>Светлая</button></div></div>
-                  <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.0 · Интерфейс iPhone</small></div></div></div>
+                  <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.1 · Профили и интерфейс iPhone</small></div></div></div>
                   <button type="button" className="logout-button" onClick={() => void logout()}><Icon name="logout" size={20}/> Выйти из аккаунта</button>
                 </div>
               </>}
@@ -467,7 +537,7 @@ export default function Home() {
               {([{ id: 'chats' as const, label: 'Чаты', icon: 'chats' as const }, { id: 'contacts' as const, label: 'Контакты', icon: 'contacts' as const }, { id: 'settings' as const, label: 'Настройки', icon: 'settings' as const }]).map(item => <button type="button" key={item.id} className={'nav-tab' + (tab === item.id ? ' selected' : '')} onClick={() => switchTab(item.id)}><span className="nav-symbol"><Icon name={item.icon} size={24}/>{item.id === 'chats' && unreadTotal > 0 && <em className="nav-dot"/>}</span><small>{item.label}</small></button>)}
             </nav></>}
     {notice && <button type="button" className="notice-toast" role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
-    {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className="floating-menu" role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
+    {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
       <button type="button" onClick={() => startReply(menuMessage)}><Icon name="reply" size={23}/>Ответить</button>
       {menuMessage.sender_id === user?.id && <button type="button" onClick={() => startEdit(menuMessage)}><Icon name="edit" size={22}/>Редактировать</button>}
       <button type="button" onClick={() => void copyText(menuMessage)}><Icon name="copy" size={22}/>Скопировать текст</button>
