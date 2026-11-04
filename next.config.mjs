@@ -1,6 +1,5 @@
-/** Cloudflare static export; these are PUBLIC browser settings, not secrets. */
+/** Next.js server runtime required for /api/push routes. */
 const nextConfig = {
-  output: 'export',
   images: { unoptimized: true },
   env: {
     NEXT_PUBLIC_SUPABASE_URL: 'https://tpwkmoxxzjfdsqsomhhr.supabase.co',
