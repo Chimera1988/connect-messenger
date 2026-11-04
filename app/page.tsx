@@ -80,6 +80,103 @@ function messagePreview(m?: Message, selfId?: string) {
 }
 
 
+function voiceTime(seconds: number) {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const whole = Math.floor(seconds);
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+function VoicePlayer({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [duration, setDuration] = useState(0);
+  const [position, setPosition] = useState(0);
+  const [speed, setSpeed] = useState(1);
+  const [bars, setBars] = useState<number[]>(Array(43).fill(0.28));
+  const [error, setError] = useState(false);
+  const seeking = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const controller = new AbortController();
+    let context: AudioContext | null = null;
+    // Read actual audio samples to build the waveform, rather than decorative random bars.
+    void (async () => {
+      try {
+        const response = await fetch(src, { signal: controller.signal });
+        if (!response.ok) throw new Error('Audio unavailable');
+        const bytes = await response.arrayBuffer();
+        if (cancelled) return;
+        context = new AudioContext();
+        const decoded = await context.decodeAudioData(bytes);
+        if (cancelled) return;
+        const samples = decoded.getChannelData(0);
+        const count = 43;
+        const result = Array.from({ length: count }, (_, i) => {
+          const start = Math.floor(i * samples.length / count);
+          const end = Math.max(start + 1, Math.floor((i + 1) * samples.length / count));
+          const stride = Math.max(1, Math.floor((end - start) / 140));
+          let peak = 0;
+          for (let j = start; j < end; j += stride) peak = Math.max(peak, Math.abs(samples[j] || 0));
+          return peak;
+        });
+        const max = Math.max(0.001, ...result);
+        setBars(result.map(value => Math.max(0.14, Math.min(1, Math.pow(value / max, 0.72)))));
+        setDuration(current => current || decoded.duration);
+      } catch { /* Browser may reject decoding; playback remains available. */ }
+      finally { if (context) void context.close().catch(() => {}); }
+    })();
+    return () => { cancelled = true; controller.abort(); if (context) void context.close().catch(() => {}); };
+  }, [src]);
+
+  async function toggle() {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (!audio.paused) { audio.pause(); return; }
+    // Only one voice message should play at a time.
+    document.querySelectorAll<HTMLAudioElement>('audio[data-connect-voice]').forEach(other => {
+      if (other !== audio) other.pause();
+    });
+    try { setError(false); await audio.play(); } catch { setError(true); }
+  }
+  function seek(e: React.PointerEvent<HTMLDivElement>) {
+    const audio = audioRef.current;
+    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    audio.currentTime = fraction * audio.duration;
+    setPosition(audio.currentTime);
+  }
+  function changeSpeed() {
+    const next = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
+    setSpeed(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  }
+  const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
+  return <div className="voice-player" onTouchStart={e => e.stopPropagation()} onTouchMove={e => e.stopPropagation()} onTouchEnd={e => e.stopPropagation()} onContextMenu={e => e.stopPropagation()}>
+    <audio ref={audioRef} data-connect-voice src={src} preload="metadata"
+      onLoadedMetadata={e => { const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
+      onDurationChange={e => { const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
+      onTimeUpdate={e => setPosition(e.currentTarget.currentTime)}
+      onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+      onEnded={() => {setPlaying(false);setPosition(0);}} onError={() => setError(true)}/>
+    <button type="button" className="voice-play" onClick={e => {e.stopPropagation();void toggle();}} aria-label={playing ? 'Пауза' : 'Воспроизвести голосовое'}>
+      {playing ? <span className="voice-pause-icon"/> : <Icon name="play" size={21}/>}
+    </button>
+    <div className="voice-content">
+      <div className="voice-wave" role="slider" tabIndex={0} aria-label="Перемотка голосового сообщения" aria-valuemin={0} aria-valuemax={Math.max(0,Math.round(duration))} aria-valuenow={Math.round(position)}
+        onPointerDown={e => {e.stopPropagation();seeking.current=true;e.currentTarget.setPointerCapture(e.pointerId);seek(e);}}
+        onPointerMove={e => {if(seeking.current)seek(e);}}
+        onPointerUp={e => {seeking.current=false;e.stopPropagation();}}
+        onPointerCancel={() => {seeking.current=false;}}
+        onKeyDown={e => {const audio=audioRef.current;if(!audio)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();audio.currentTime=Math.max(0,Math.min(duration,audio.currentTime+(e.key==='ArrowRight'?5:-5)));}}}>
+        {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
+      </div>
+      <div className="voice-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span><button type="button" className="voice-speed" onClick={e=>{e.stopPropagation();changeSpeed();}} aria-label="Скорость воспроизведения">{speed}×</button></div>
+    </div>
+  </div>;
+}
+
 type CropState = { file: File; url: string };
 function AvatarCropper({ url, onCancel, onSave, saving }: { url: string; onCancel: () => void; onSave: (blob: Blob) => void; saving: boolean }) {
   const imgRef = useRef<HTMLImageElement | null>(null);
@@ -702,7 +799,7 @@ export default function Home() {
                           {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
                             : m.attachment_kind==='image' ? <a href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></a>
                             : m.attachment_kind==='video' ? <video controls playsInline preload="metadata" src={attachmentUrls[m.attachment_path]}/>
-                            : m.attachment_kind==='audio' ? <><span>🎤 Голосовое сообщение</span><audio controls preload="metadata" src={attachmentUrls[m.attachment_path]}/></>
+                            : m.attachment_kind==='audio' ? <VoicePlayer src={attachmentUrls[m.attachment_path]}/>
                             : <a className="attachment-file" href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer" download={m.attachment_name || 'Файл'}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''}</small></span></a>}
                         </div>}
                         {m.body}
