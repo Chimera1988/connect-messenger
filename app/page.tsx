@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient, type User } from '@supabase/supabase-js';
+import * as tus from 'tus-js-client';
 import type { FormEvent, TouchEvent, KeyboardEvent, CSSProperties } from 'react';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -10,17 +11,19 @@ const supabase = supabaseUrl && supabaseKey
   ? createClient(supabaseUrl, supabaseKey, { auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true } })
   : null;
 
-const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to';
+const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
 type Tab = 'chats' | 'contacts' | 'settings';
 type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null };
 type Conversation = { id: string; user_a: string; user_b: string; created_at: string };
 type Message = {
   id: string; conversation_id: string; sender_id: string; body: string; created_at: string;
   edited_at: string | null; deleted_at: string | null; reply_to: string | null;
+  attachment_path: string | null; attachment_name: string | null; attachment_type: string | null;
+  attachment_size: number | null; attachment_kind: 'image' | 'video' | 'audio' | 'file' | null;
 };
 type Gesture = { id: string; x: number; y: number; dx: number; dy: number; timer: number | null; opened: boolean };
 type IconName = 'chats' | 'contacts' | 'settings' | 'back' | 'search' | 'write' | 'send' | 'reply' |
-  'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user';
+  'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user' | 'plus' | 'mic' | 'stop' | 'file' | 'play';
 
 function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number; stroke?: number }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
@@ -47,6 +50,11 @@ function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number
     arrow: <path d="m5 12 14 0m-6-6 6 6-6 6"/>,
     camera: <><rect x="2" y="6" width="20" height="15" rx="3"/><circle cx="12" cy="13" r="4"/><path d="M7 6 9 3h6l2 3"/></>,
     user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
+    plus: <path d="M12 4v16M4 12h16"/>,
+    mic: <><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></>,
+    stop: <rect x="5" y="5" width="14" height="14" rx="3"/>,
+    file: <><path d="M6 2h8l5 5v15H6zM14 2v5h5"/></>,
+    play: <path d="m8 5 11 7-11 7z"/>,
     message: <><path d="M20 11.4a7.5 7.5 0 0 1-7.9 7.5 8.2 8.2 0 0 1-3.3-.7L4 20l1.2-4.5A7.6 7.6 0 1 1 20 11.4Z"/><path d="M8 11h8"/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>{paths[name]}</svg>;
@@ -68,7 +76,7 @@ function listTimeLabel(iso: string) {
 }
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Сообщение удалено' : m.body.replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Сообщение удалено' : (m.body || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
@@ -174,6 +182,15 @@ export default function Home() {
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [typing, setTyping] = useState(false);
   const [draft, setDraft] = useState('');
+  const [attachmentUrls, setAttachmentUrls] = useState<Record<string,string>>({});
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const attachmentInput = useRef<HTMLInputElement | null>(null);
+  const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const audioChunks = useRef<Blob[]>([]);
+  const recordingStream = useRef<MediaStream | null>(null);
+  const recordInterval = useRef<number | null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
@@ -312,7 +329,7 @@ export default function Home() {
       if (error) { setNotice(error.message); return; }
       const incoming = ((data || []) as Message[]).reverse();
       setMessages(prev => prev.length === incoming.length && prev.every((m, i) =>
-        m.id === incoming[i].id && m.body === incoming[i].body && m.edited_at === incoming[i].edited_at && m.deleted_at === incoming[i].deleted_at
+        m.id === incoming[i].id && m.body === incoming[i].body && m.edited_at === incoming[i].edited_at && m.deleted_at === incoming[i].deleted_at && m.attachment_path === incoming[i].attachment_path
       ) ? prev : incoming);
       const last = incoming.at(-1); if (last) void markRead(id, last.created_at);
     };
@@ -476,6 +493,103 @@ export default function Home() {
     requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; });
   }
 
+
+  useEffect(() => {
+    if (!supabase || !user) return;
+    let cancelled = false;
+    const paths = Array.from(new Set(messages.filter(m => m.attachment_path && !m.deleted_at).map(m => m.attachment_path!)));
+    const missing = paths.filter(path => !attachmentUrls[path]);
+    if (!missing.length) return;
+    void Promise.all(missing.map(async path => {
+      const {data} = await supabase.storage.from('connect-attachments').createSignedUrl(path, 3600);
+      return {path, url:data?.signedUrl};
+    })).then(rows => {
+      if (cancelled) return;
+      setAttachmentUrls(prev => {
+        const next={...prev};
+        rows.forEach(row => {if(row.url) next[row.path]=row.url;});
+        return next;
+      });
+    });
+    return () => {cancelled=true;};
+  }, [messages, user?.id]);
+
+  async function sendAttachment(file: File, kindOverride?: 'audio') {
+    if (!supabase || !user || !activeChat || busy) return;
+    if (file.size < 1 || file.size > 100*1024*1024) {setNotice('Максимальный размер файла — 100 МБ');return;}
+    const chatId=activeChat;
+    const kind = kindOverride || (file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':'file');
+    const path=`${chatId}/${user.id}/${crypto.randomUUID()}`;
+    setBusy(true);setUploadProgress(0);setNotice('');
+    try {
+      const {data:{session}}=await supabase.auth.getSession();
+      if(!session) throw new Error('Сессия завершена. Войдите снова.');
+      if (file.size <= 6*1024*1024) {
+        const {error}=await supabase.storage.from('connect-attachments').upload(path,file,{contentType:file.type || 'application/octet-stream',upsert:false});
+        if(error) throw error;
+      } else {
+        await new Promise<void>((resolve,reject)=>{
+          const upload=new tus.Upload(file,{
+            endpoint:`${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
+            retryDelays:[0,3000,5000,10000,20000],
+            headers:{authorization:`Bearer ${session.access_token}`,'x-upsert':'false'},
+            uploadDataDuringCreation:true,
+            removeFingerprintOnSuccess:true,
+            metadata:{bucketName:'connect-attachments',objectName:path,contentType:file.type || 'application/octet-stream'},
+            chunkSize:6*1024*1024,
+            onError:reject,
+            onSuccess:()=>resolve(),
+            onProgress:(done,total)=>setUploadProgress(Math.round(done/total*100)),
+          });
+          upload.start();
+        });
+      }
+      const {data,error}=await supabase.from('messages').insert({
+        conversation_id:chatId,sender_id:user.id,body:'',reply_to:replyTo?.id || null,
+        attachment_path:path,attachment_name:file.name.slice(0,240),attachment_type:file.type || 'application/octet-stream',
+        attachment_size:file.size,attachment_kind:kind
+      }).select(MESSAGE_COLUMNS).single();
+      if(error || !data) throw error || new Error('Сообщение не создано');
+      const m=data as Message;
+      setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
+      setLatest(prev=>({...prev,[chatId]:m}));
+      setReplyTo(null);
+      const signed=await supabase.storage.from('connect-attachments').createSignedUrl(path,3600);
+      if(signed.data?.signedUrl)setAttachmentUrls(prev=>({...prev,[path]:signed.data!.signedUrl}));
+      requestAnimationFrame(()=>{const el=scrollRef.current;if(el)el.scrollTop=el.scrollHeight;});
+    } catch(e) {
+      setNotice('Не удалось отправить вложение: '+(e instanceof Error?e.message:String(e)));
+    } finally {setBusy(false);setUploadProgress(null);}
+  }
+  async function beginRecording() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==='undefined') {setNotice('Запись звука недоступна в этом браузере');return;}
+    try {
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      const formats=['audio/mp4','audio/webm;codecs=opus','audio/webm'];
+      const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
+      const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);
+      audioChunks.current=[];recordingStream.current=stream;mediaRecorder.current=recorder;
+      recorder.ondataavailable=e=>{if(e.data.size)audioChunks.current.push(e.data);};
+      recorder.onstop=()=>{
+        const chunks=audioChunks.current;
+        stream.getTracks().forEach(track=>track.stop());
+        recordingStream.current=null;mediaRecorder.current=null;
+        if(recordInterval.current!==null)window.clearInterval(recordInterval.current);
+        setRecording(false);setRecordSeconds(0);
+        const type=recorder.mimeType || 'audio/mp4';
+        const blob=new Blob(chunks,{type});
+        if(blob.size>0)void sendAttachment(new File([blob],`Голосовое-${Date.now()}.${type.includes('webm')?'webm':'m4a'}`,{type}),'audio');
+      };
+      recorder.start(1000);setRecording(true);setRecordSeconds(0);
+      recordInterval.current=window.setInterval(()=>setRecordSeconds(x=>x+1),1000);
+    } catch(e){setNotice('Не удалось включить микрофон: '+(e instanceof Error?e.message:String(e)));}
+  }
+  function finishRecording(send:boolean) {
+    const recorder=mediaRecorder.current;
+    if(!recorder || recorder.state==='inactive')return;
+    if(!send){recorder.onstop=()=>{recordingStream.current?.getTracks().forEach(x=>x.stop());recordingStream.current=null;mediaRecorder.current=null;if(recordInterval.current!==null)window.clearInterval(recordInterval.current);setRecording(false);setRecordSeconds(0);};}
+    recorder.stop();
+  }
   function openMenu(m: Message, element: HTMLElement) {
     if (m.deleted_at) return;
     const rect = element.getBoundingClientRect(); const root = shellRef.current?.getBoundingClientRect();
@@ -583,7 +697,16 @@ export default function Home() {
                       onKeyDown={e => bubbleKey(e, m)} tabIndex={m.deleted_at ? -1 : 0}
                       role={m.deleted_at ? undefined : 'button'} aria-label={m.deleted_at ? 'Сообщение удалено' : 'Удерживайте, чтобы открыть действия с сообщением'}>
                       {m.reply_to && <div className="quote-box"><strong>{replied?.sender_id === user.id ? 'Вы' : currentName}</strong><span>{!replied ? 'Исходное сообщение' : replied.deleted_at ? 'Сообщение удалено' : replied.body}</span></div>}
-                      <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : m.body}</div>
+                      <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : <>
+                        {m.attachment_path && <div className="attachment-preview">
+                          {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
+                            : m.attachment_kind==='image' ? <a href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></a>
+                            : m.attachment_kind==='video' ? <video controls playsInline preload="metadata" src={attachmentUrls[m.attachment_path]}/>
+                            : m.attachment_kind==='audio' ? <><span>🎤 Голосовое сообщение</span><audio controls preload="metadata" src={attachmentUrls[m.attachment_path]}/></>
+                            : <a className="attachment-file" href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer" download={m.attachment_name || 'Файл'}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''}</small></span></a>}
+                        </div>}
+                        {m.body}
+                      </>}</div>
                       <div className="bubble-meta">{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}</div>
                     </div>
                   </div>;
@@ -592,7 +715,10 @@ export default function Home() {
             </div>
             <form className="chat-composer" onSubmit={sendMessage}>
               {(replyTo || editing) && <div className="compose-context"><div className="context-stripe"/><div className="compose-context-text"><strong>{editing ? 'Редактирование' : `Ответ: ${replyTo?.sender_id === user.id ? 'Вы' : currentName}`}</strong><span>{editing?.body || replyTo?.body}</span></div><button type="button" className="icon-btn dismiss-context" onClick={cancelCompose} aria-label="Отменить"><Icon name="close" size={20}/></button></div>}
-              <div className="compose-line"><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button></div>
+              {uploadProgress!==null && <div className="upload-status">Отправка файла: {uploadProgress}%<progress max={100} value={uploadProgress}/></div>}
+              {recording && <div className="recording-status"><span>● Запись {Math.floor(recordSeconds/60)}:{String(recordSeconds%60).padStart(2,'0')}</span><button type="button" onClick={()=>finishRecording(false)}>Отмена</button><button type="button" onClick={()=>finishRecording(true)}>Отправить</button></div>}
+              <input ref={attachmentInput} type="file" hidden onChange={e=>{const f=e.currentTarget.files?.[0];e.currentTarget.value='';if(f)void sendAttachment(f);}}/>
+              <div className="compose-line"><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
           </div>
             : <><div className="main-view">
@@ -618,7 +744,7 @@ export default function Home() {
                 <header className="simple-header"><h1>Настройки</h1></header>
                 <div className="scroll-content settings-content"><button type="button" className="settings-profile" onClick={()=>showProfile(user.id)}><Avatar size="lg" name={ownProfile?.display_name || 'Мой профиль'} id={user.id} url={avatarUrls[user.id]}/><div><strong>{ownProfile?.display_name || 'Мой профиль'}</strong><span>{ownProfile?.bio || user.email}</span></div><Icon name="chevron" size={19}/></button>
                   <h3>Оформление</h3><div className="settings-group"><div className="settings-theme"><span className="setting-icon"><Icon name={theme === 'dark' ? 'moon' : 'sun'} size={19}/></span><div><strong>Тема приложения</strong><small>Удобная для чтения</small></div></div><div className="theme-buttons"><button type="button" className={theme === 'dark' ? 'current' : ''} onClick={() => changeTheme('dark')}>Тёмная</button><button type="button" className={theme === 'light' ? 'current' : ''} onClick={() => changeTheme('light')}>Светлая</button></div></div>
-                  <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.1 · Профили и интерфейс iPhone</small></div></div></div>
+                  <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.3 · Вложения и голосовые</small></div></div></div>
                   <button type="button" className="logout-button" onClick={() => void logout()}><Icon name="logout" size={20}/> Выйти из аккаунта</button>
                 </div>
               </>}
