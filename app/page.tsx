@@ -13,7 +13,7 @@ const supabase = supabaseUrl && supabaseKey
 
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
 type Tab = 'chats' | 'contacts' | 'settings';
-type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null };
+type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null; last_seen_at: string | null; online_until: string | null };
 type Conversation = { id: string; user_a: string; user_b: string; created_at: string };
 type Message = {
   id: string; conversation_id: string; sender_id: string; body: string; created_at: string;
@@ -73,6 +73,23 @@ function listTimeLabel(iso: string) {
   const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) return 'Вчера';
   return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+}
+function dayKey(iso:string){const d=new Date(iso);return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;}
+function dayLabel(iso:string){
+  const d=new Date(iso),now=new Date(),yesterday=new Date(now);yesterday.setDate(now.getDate()-1);
+  if(dayKey(iso)===dayKey(now.toISOString()))return 'Сегодня';
+  if(dayKey(iso)===dayKey(yesterday.toISOString()))return 'Вчера';
+  return d.toLocaleDateString('ru-RU',{day:'numeric',month:'long',...(d.getFullYear()!==now.getFullYear()?{year:'numeric' as const}:{})});
+}
+function formatPresence(p:{last_seen_at:string|null;online_until:string|null}|undefined,now:number){
+  if(!p?.last_seen_at)return 'Не был(а) в сети';
+  if(p.online_until && new Date(p.online_until).getTime()>now)return 'В сети';
+  return 'Был(а) '+dayLabel(p.last_seen_at).toLocaleLowerCase('ru-RU')+' в '+timeLabel(p.last_seen_at);
+}
+function MessageChecks({delivered,read}:{delivered:boolean;read:boolean}){
+  return <span className={'delivery-checks'+(read?' is-read':'')} aria-label={read?'Прочитано':delivered?'Доставлено':'Отправлено'}>
+    <svg viewBox="0 0 22 16" width="19" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="m2 8 4 4 7-8"/>{delivered&&<path d="m8 8 4 4 8-9"/>}</svg>
+  </span>;
 }
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
@@ -278,6 +295,9 @@ export default function Home() {
   const [latest, setLatest] = useState<Record<string, Message>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [typing, setTyping] = useState(false);
+  const [peerStates, setPeerStates] = useState<Record<string,{delivered:string|null;read:string|null}>>({});
+  const [presence, setPresence] = useState<Record<string,{last_seen_at:string|null;online_until:string|null}>>({});
+  const [clock, setClock] = useState(Date.now());
   const [draft, setDraft] = useState('');
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string,string>>({});
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
@@ -303,6 +323,7 @@ export default function Home() {
   const gesture = useRef<Gesture | null>(null);
   const activeChatRef = useRef<string | null>(null);
   const readCache = useRef<Record<string, string>>({});
+  const deliveredCache = useRef<Record<string, string>>({});
   const lastKeypress = useRef(0); const lastTypingSent = useRef(0);
   const previousLast = useRef(''); const stickToBottom = useRef(true);
   const invited = typeof window !== 'undefined' && /type=(invite|recovery)/.test(window.location.hash + window.location.search);
@@ -342,12 +363,13 @@ export default function Home() {
   const loadDirectory = useCallback(async () => {
     if (!supabase || !user) return;
     const [p, c] = await Promise.all([
-      supabase.from('profiles').select('id,display_name,is_blocked,bio,avatar_path'),
+      supabase.from('profiles').select('id,display_name,is_blocked,bio,avatar_path,last_seen_at,online_until'),
       supabase.from('conversations').select('id,user_a,user_b,created_at').order('created_at', { ascending: false }),
     ]);
     if (p.error) setNotice(p.error.message); else {
       const directory = (p.data || []) as Profile[];
       setProfiles(directory);
+      setPresence(Object.fromEntries(directory.map(p=>[p.id,{last_seen_at:p.last_seen_at,online_until:p.online_until}])));
       const urls: Record<string,string> = {};
       await Promise.all(directory.filter(x=>x.avatar_path).map(async x => {
         const { data } = await supabase.storage.from('connect-avatars').createSignedUrl(x.avatar_path!, 3600);
@@ -359,8 +381,39 @@ export default function Home() {
   }, [user?.id]);
   useEffect(() => { void loadDirectory(); }, [loadDirectory]);
 
+  useEffect(()=>{
+    if(!supabase || !user) return;
+    let active=true;
+    const pulse=async(online:boolean)=>{
+      if(!active)return;
+      const now=new Date();
+      const {error}=await supabase.from('profiles').update({
+        last_seen_at:now.toISOString(),
+        online_until:online?new Date(now.getTime()+45000).toISOString():now.toISOString()
+      }).eq('id',user.id);
+      if(error) console.error('Presence:',error.message);
+    };
+    const onVisibility=()=>{void pulse(document.visibilityState==='visible');};
+    void pulse(document.visibilityState==='visible');
+    const interval=window.setInterval(()=>{setClock(Date.now());if(document.visibilityState==='visible')void pulse(true);},15000);
+    document.addEventListener('visibilitychange',onVisibility);
+    window.addEventListener('pagehide',()=>{ /* lease expires if browser is killed */ },{once:true});
+    return()=>{active=false;window.clearInterval(interval);document.removeEventListener('visibilitychange',onVisibility);};
+  },[user?.id]);
+
+  const markDelivered = useCallback(async (id:string, iso:string)=>{
+    if(!supabase || !user || document.visibilityState!=='visible')return;
+    if(deliveredCache.current[id] && deliveredCache.current[id]>=iso)return;
+    deliveredCache.current[id]=iso;
+    const {error}=await supabase.from('conversation_user_state').upsert(
+      {conversation_id:id,user_id:user.id,last_delivered_at:iso},
+      {onConflict:'conversation_id,user_id'}
+    );
+    if(error){delete deliveredCache.current[id];console.error('Delivery:',error.message);}
+  },[user?.id]);
+
   const markRead = useCallback(async (id: string, iso: string) => {
-    if (!supabase || !user) return;
+    if (!supabase || !user || document.visibilityState!=='visible') return;
     if (readCache.current[id] && readCache.current[id] >= iso) return;
     readCache.current[id] = iso;
     setUnread(prev => prev[id] ? { ...prev, [id]: 0 } : prev);
@@ -388,12 +441,15 @@ export default function Home() {
       if (!alive || document.visibilityState === 'hidden') return;
       const [msgResult, statesResult] = await Promise.all([
         supabase.from('messages').select(MESSAGE_COLUMNS).order('created_at', { ascending: false }).limit(1000),
-        supabase.from('conversation_user_state').select('conversation_id,user_id,last_read_at,typing_until'),
+        supabase.from('conversation_user_state').select('conversation_id,user_id,last_read_at,last_delivered_at,typing_until'),
       ]);
       if (!alive) return;
       if (msgResult.error || statesResult.error) { setNotice(msgResult.error?.message || statesResult.error?.message || 'Ошибка обновления'); return; }
       const recent = (msgResult.data || []) as Message[];
       const states = statesResult.data || [];
+      setPeerStates(Object.fromEntries(states.filter(st=>st.user_id!==user.id).map(st=>[st.conversation_id,{delivered:st.last_delivered_at,read:st.last_read_at}])));
+      const {data:seenProfiles}=await supabase.from('profiles').select('id,last_seen_at,online_until');
+      if(alive && seenProfiles)setPresence(Object.fromEntries(seenProfiles.map(p=>[p.id,{last_seen_at:p.last_seen_at,online_until:p.online_until}])));
       const newest: Record<string, Message> = {}; const counts: Record<string, number> = {};
       const serverRead: Record<string, string> = {};
       for (const row of states) if (row.user_id === user.id) serverRead[row.conversation_id] = row.last_read_at;
@@ -405,12 +461,15 @@ export default function Home() {
         if (m.conversation_id !== current && m.sender_id !== user.id && m.created_at > (readCache.current[m.conversation_id] || '')) counts[m.conversation_id] = (counts[m.conversation_id] || 0) + 1;
       }
       setLatest(newest); setUnread(counts);
+      const deliveredByChat:Record<string,string>={};
+      for(const m of recent)if(m.sender_id!==user.id && (!deliveredByChat[m.conversation_id] || deliveredByChat[m.conversation_id]<m.created_at))deliveredByChat[m.conversation_id]=m.created_at;
+      for(const [id,iso] of Object.entries(deliveredByChat))void markDelivered(id,iso);
     };
     void refresh(); const interval = window.setInterval(() => { void refresh(); }, 3000);
     const onVisible = () => { if (document.visibilityState === 'visible') { void refresh(); void loadDirectory(); } };
     document.addEventListener('visibilitychange', onVisible);
     return () => { alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisible); };
-  }, [user?.id, loadDirectory]);
+  }, [user?.id, loadDirectory, markDelivered]);
 
   useEffect(() => {
     if (!supabase || !activeChat || !user) return;
@@ -533,6 +592,9 @@ export default function Home() {
   })).sort((a, b) => (b.last?.created_at || b.created_at).localeCompare(a.last?.created_at || a.created_at));
   const selected = chats.find(c => c.id === activeChat);
   const currentName = selected?.other?.display_name || 'Собеседник';
+  const peerPresence = selected?.other ? presence[selected.other.id] : undefined;
+  const peerStatus = typing ? 'печатает…' : formatPresence(peerPresence,clock);
+  const currentPeerState=activeChat?peerStates[activeChat]:undefined;
   const filteredChats = chats.filter(c => (c.other?.display_name || '').toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   const filteredContacts = contacts.filter(p => p.display_name.toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   const unreadTotal = Object.values(unread).reduce((sum, n) => sum + n, 0);
@@ -776,15 +838,17 @@ export default function Home() {
               <button type="button" className="icon-btn back-btn" onClick={exitChat} aria-label="Назад к чатам"><Icon name="back" size={28}/></button>
               <button type="button" className="chat-person-link" onClick={()=>selected.other && showProfile(selected.other.id)}>
                 <Avatar name={currentName} id={selected.other?.id} url={selected.other ? avatarUrls[selected.other.id] : undefined}/>
-                <span className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{typing ? 'печатает…' : 'Личный чат'}</small></span>
+                <span className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{peerStatus}</small></span>
               </button>
             </header>
             <div className="message-scroll" ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
               <div className="message-stream">
-                {messages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>Напишите первое сообщение</span></div> : messages.map(m => {
+                {messages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>Напишите первое сообщение</span></div> : messages.map((m,index) => {
                   const mine = m.sender_id === user.id;
                   const replied = m.reply_to ? messages.find(x => x.id === m.reply_to) : undefined;
-                  return <div key={m.id} className={'message-row ' + (mine ? 'outgoing' : 'incoming')}>
+                  return <div key={m.id} className="message-day-group">
+                    {(index===0 || dayKey(messages[index-1].created_at)!==dayKey(m.created_at)) && <div className="date-separator"><span>{dayLabel(m.created_at)}</span></div>}
+                    <div className={'message-row ' + (mine ? 'outgoing' : 'incoming')}>
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
                     <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '')}
                       style={{ transform: `translate3d(${swipe?.id === m.id ? swipe.offset : 0}px,0,0)` }}
@@ -804,8 +868,9 @@ export default function Home() {
                         </div>}
                         {m.body}
                       </>}</div>
-                      <div className="bubble-meta">{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}</div>
+                      <div className="bubble-meta">{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>
                     </div>
+                  </div>
                   </div>;
                 })}
               </div>
@@ -841,7 +906,7 @@ export default function Home() {
                 <header className="simple-header"><h1>Настройки</h1></header>
                 <div className="scroll-content settings-content"><button type="button" className="settings-profile" onClick={()=>showProfile(user.id)}><Avatar size="lg" name={ownProfile?.display_name || 'Мой профиль'} id={user.id} url={avatarUrls[user.id]}/><div><strong>{ownProfile?.display_name || 'Мой профиль'}</strong><span>{ownProfile?.bio || user.email}</span></div><Icon name="chevron" size={19}/></button>
                   <h3>Оформление</h3><div className="settings-group"><div className="settings-theme"><span className="setting-icon"><Icon name={theme === 'dark' ? 'moon' : 'sun'} size={19}/></span><div><strong>Тема приложения</strong><small>Удобная для чтения</small></div></div><div className="theme-buttons"><button type="button" className={theme === 'dark' ? 'current' : ''} onClick={() => changeTheme('dark')}>Тёмная</button><button type="button" className={theme === 'light' ? 'current' : ''} onClick={() => changeTheme('light')}>Светлая</button></div></div>
-                  <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.3 · Вложения и голосовые</small></div></div></div>
+                  <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.5 · Статусы и даты</small></div></div></div>
                   <button type="button" className="logout-button" onClick={() => void logout()}><Icon name="logout" size={20}/> Выйти из аккаунта</button>
                 </div>
               </>}

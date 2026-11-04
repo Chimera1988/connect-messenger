@@ -72,3 +72,12 @@
 .voice-bar.listened{opacity:.95}.voice-bottom{display:flex;align-items:center;justify-content:space-between;gap:7px;font-size:10.5px;opacity:.88;min-height:17px}
 .voice-speed{border:0;border-radius:9px;background:#ffffff2b;color:inherit;padding:2px 6px;font-size:10px;font-weight:700;line-height:1.4}
 .received .voice-speed{background:#ffffff14}
+
+/* Connect 1.5 — day separators and delivery/read receipts */
+.message-day-group{display:flex;flex-direction:column;gap:7px}
+.date-separator{display:flex;justify-content:center;padding:12px 0 6px;pointer-events:none}
+.date-separator span{background:color-mix(in srgb,var(--panel) 91%,transparent);border:1px solid var(--border);color:var(--muted);padding:5px 12px;border-radius:18px;font-size:11px;font-weight:650;letter-spacing:.1px}
+.delivery-checks{display:inline-flex;align-items:center;vertical-align:middle;margin-left:4px;color:#c5d8f7}
+.delivery-checks.is-read{color:#85e4ff}
+.bubble-meta{display:flex;align-items:center;justify-content:flex-end;gap:1px}
+.bubble.received .bubble-meta{color:var(--muted)}
