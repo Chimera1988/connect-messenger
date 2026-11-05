@@ -679,7 +679,12 @@ export default function Home() {
     last: latest[c.id], count: unread[c.id] || 0,
   })).sort((a, b) => (b.last?.created_at || b.created_at).localeCompare(a.last?.created_at || a.created_at));
   const visibleMessages=messages.filter(m=>!activeChat || !clearedChats[activeChat] || m.created_at>clearedChats[activeChat]);
-  const selected = chats.find(c => c.id === activeChat);
+  // A cleared conversation is hidden from the list, but must remain openable from Contacts.
+  const selected = conversations.map(c => ({
+    ...c,
+    other: profiles.find(p => p.id === (c.user_a === user?.id ? c.user_b : c.user_a)),
+    last: latest[c.id], count: unread[c.id] || 0,
+  })).find(c => c.id === activeChat);
   const currentName = selected?.other?.display_name || 'Собеседник';
   const peerPresence = selected?.other ? presence[selected.other.id] : undefined;
   const peerStatus = typing ? 'печатает…' : formatPresence(peerPresence,clock);

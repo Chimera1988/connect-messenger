@@ -97,3 +97,8 @@
 .dialog-entry>.dialog-row{flex:1;min-width:0;border-bottom:0}
 .dialog-delete{width:38px;height:46px;flex:0 0 auto;display:grid;place-items:center;background:transparent;border:0;color:var(--muted);border-radius:10px}
 .dialog-delete:active,.chat-clear-btn:active{color:#ff6675;background:var(--panel)}
+
+/* iOS bottom safe-area is outside the actual navigation controls. Keep controls compact. */
+.bottom-nav{padding-bottom:5px!important;min-height:0!important}
+.chat-composer{padding-bottom:5px!important}
+.connect-app{background-color:var(--bg)}
