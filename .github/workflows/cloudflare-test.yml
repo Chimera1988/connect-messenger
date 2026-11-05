@@ -1,1 +1,29 @@
+name: Cloudflare compatibility test
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-cloudflare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Connect
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install existing dependencies
+        run: npm ci
+      - name: Run Next.js production build
+        run: npm run build
+      - name: Check vinext compatibility
+        run: npx --yes vinext@latest check
+      - name: Upload compatibility report
+        if: failure()
+        run: echo 'Inspect the failed step logs in this workflow run.'
