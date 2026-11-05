@@ -313,6 +313,7 @@ export default function Home() {
   const [latest, setLatest] = useState<Record<string, Message>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
   const [typing, setTyping] = useState(false);
+  const [peerRecording, setPeerRecording] = useState(false);
   const [peerStates, setPeerStates] = useState<Record<string,{delivered:string|null;read:string|null}>>({});
   const [presence, setPresence] = useState<Record<string,{last_seen_at:string|null;online_until:string|null}>>({});
   const [clock, setClock] = useState(Date.now());
@@ -326,6 +327,10 @@ export default function Home() {
   const audioChunks = useRef<Blob[]>([]);
   const recordingStream = useRef<MediaStream | null>(null);
   const recordInterval = useRef<number | null>(null);
+  const recordingChat = useRef<string | null>(null);
+  const recordingStarted = useRef(0);
+  const recordingFinalizing = useRef(false);
+  const recordingSend = useRef<((send:boolean)=>void)|null>(null);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
@@ -533,6 +538,15 @@ export default function Home() {
     if (error) console.error('Typing:', error.message);
   }, [user?.id]);
 
+  const updateRecording = useCallback(async (id:string, value:boolean) => {
+    if (!supabase || !user) return;
+    const {error}=await supabase.from('conversation_user_state').upsert({
+      conversation_id:id,user_id:user.id,
+      recording_until:value?new Date(Date.now()+8000).toISOString():null,
+    },{onConflict:'conversation_id,user_id'});
+    if(error) console.error('Recording indicator:',error.message);
+  },[user?.id]);
+
   // Realtime has a 3s polling fallback for mobile Safari when WebSockets are suspended.
   useEffect(() => {
     if (!supabase || !user) return;
@@ -541,7 +555,7 @@ export default function Home() {
       if (!alive || document.visibilityState === 'hidden') return;
       const [msgResult, statesResult] = await Promise.all([
         supabase.from('messages').select(MESSAGE_COLUMNS).order('created_at', { ascending: false }).limit(1000),
-        supabase.from('conversation_user_state').select('conversation_id,user_id,last_read_at,last_delivered_at,typing_until'),
+        supabase.from('conversation_user_state').select('conversation_id,user_id,last_read_at,last_delivered_at,typing_until,recording_until'),
       ]);
       if (!alive) return;
       if (msgResult.error || statesResult.error) { setNotice(msgResult.error?.message || statesResult.error?.message || 'Ошибка обновления'); return; }
@@ -556,6 +570,7 @@ export default function Home() {
       for (const [id, at] of Object.entries(serverRead)) if (!readCache.current[id] || readCache.current[id] < at) readCache.current[id] = at;
       const current = activeChatRef.current;
       setTyping(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.typing_until && new Date(st.typing_until).getTime() > Date.now())));
+      setPeerRecording(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.recording_until && new Date(st.recording_until).getTime() > Date.now())));
       for (const m of recent) {
         if (!newest[m.conversation_id]) newest[m.conversation_id] = m;
         if (m.conversation_id !== current && m.sender_id !== user.id && m.created_at > (readCache.current[m.conversation_id] || '')) counts[m.conversation_id] = (counts[m.conversation_id] || 0) + 1;
@@ -574,7 +589,7 @@ export default function Home() {
   useEffect(() => {
     if (!supabase || !activeChat || !user) return;
     let alive = true;
-    setMessages([]); setTyping(false); setMenuMessage(null);
+    setMessages([]); setTyping(false); setPeerRecording(false); setMenuMessage(null);
     previousLast.current = ''; stickToBottom.current = true;
     const id = activeChat;
     void supabase.from('conversation_user_state').upsert({ conversation_id: id, user_id: user.id }, { onConflict: 'conversation_id,user_id', ignoreDuplicates: true });
@@ -711,7 +726,7 @@ export default function Home() {
   })).find(c => c.id === activeChat);
   const currentName = selected?.other?.display_name || 'Собеседник';
   const peerPresence = selected?.other ? presence[selected.other.id] : undefined;
-  const peerStatus = typing ? 'печатает…' : formatPresence(peerPresence,clock);
+  const peerStatus = peerRecording ? '🎙 Записывает голосовое сообщение…' : typing ? 'печатает…' : formatPresence(peerPresence,clock);
   const currentPeerState=activeChat?peerStates[activeChat]:undefined;
   const filteredChats = chats.filter(c => (c.other?.display_name || '').toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   useEffect(()=>{if(chatSearchOpen&&chatQuery.trim()&&searchMatches.length){const match=searchMatches[Math.min(searchPosition,searchMatches.length-1)];requestAnimationFrame(()=>document.getElementById('msg-'+match.id)?.scrollIntoView({behavior:'smooth',block:'center'}));}},[chatQuery,chatSearchOpen,searchMatches.length]);
@@ -865,33 +880,61 @@ export default function Home() {
     } finally {setBusy(false);setUploadProgress(null);}
   }
   async function beginRecording() {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==='undefined') {setNotice('Запись звука недоступна в этом браузере');return;}
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==='undefined') {
+      setNotice('Запись звука недоступна в этом браузере');return;
+    }
+    if (!activeChat || recordingFinalizing.current) return;
+    let stream:MediaStream|null=null;
     try {
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      const formats=['audio/mp4','audio/webm;codecs=opus','audio/webm'];
+      stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      const formats=['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/webm;codecs=opus','audio/webm'];
       const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
       const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);
       audioChunks.current=[];recordingStream.current=stream;mediaRecorder.current=recorder;
-      recorder.ondataavailable=e=>{if(e.data.size)audioChunks.current.push(e.data);};
+      recordingChat.current=activeChat;recordingStarted.current=Date.now();
+      let failed=false;let sendOnStop=true;
+      recorder.ondataavailable=e=>{if(e.data.size>0)audioChunks.current.push(e.data);};
+      recorder.onerror=()=>{failed=true;setNotice('Ошибка записи аудио. Попробуйте ещё раз.');};
       recorder.onstop=()=>{
         const chunks=audioChunks.current;
-        stream.getTracks().forEach(track=>track.stop());
-        recordingStream.current=null;mediaRecorder.current=null;
-        if(recordInterval.current!==null)window.clearInterval(recordInterval.current);
-        setRecording(false);setRecordSeconds(0);
-        const type=recorder.mimeType || 'audio/mp4';
+        const durationMs=Date.now()-recordingStarted.current;
+        const chat=recordingChat.current;
+        const type=recorder.mimeType || mime || 'audio/webm';
         const blob=new Blob(chunks,{type});
-        if(blob.size>0)void sendAttachment(new File([blob],`Голосовое-${Date.now()}.${type.includes('webm')?'webm':'m4a'}`,{type}),'audio');
+        stream?.getTracks().forEach(track=>track.stop());
+        recordingStream.current=null;mediaRecorder.current=null;recordingChat.current=null;
+        recordingFinalizing.current=false;recordingSend.current=null;
+        if(recordInterval.current!==null)window.clearInterval(recordInterval.current);
+        recordInterval.current=null;setRecording(false);setRecordSeconds(0);
+        if(chat)void updateRecording(chat,false);
+        if(!sendOnStop)return;
+        if(failed || blob.size<1000 || durationMs<700){
+          setNotice('Голосовое не записалось полностью. Попробуйте ещё раз.');return;
+        }
+        const ext=type.includes('mp4')?'m4a':type.includes('ogg')?'ogg':'webm';
+        void sendAttachment(new File([blob],`Голосовое-${Date.now()}.${ext}`,{type}),'audio');
       };
-      recorder.start(1000);setRecording(true);setRecordSeconds(0);
-      recordInterval.current=window.setInterval(()=>setRecordSeconds(x=>x+1),1000);
-    } catch(e){setNotice('Не удалось включить микрофон: '+(e instanceof Error?e.message:String(e)));}
+      recorder.start();setRecording(true);setRecordSeconds(0);
+      void updateRecording(activeChat,true);
+      recordInterval.current=window.setInterval(()=>{
+        setRecordSeconds(Math.floor((Date.now()-recordingStarted.current)/1000));
+        const chat=recordingChat.current;if(chat)void updateRecording(chat,true);
+      },3000);
+      recordingSend.current=(send:boolean)=>{sendOnStop=send;};
+    } catch(e){
+      stream?.getTracks().forEach(track=>track.stop());
+      recordingFinalizing.current=false;
+      setNotice('Не удалось включить микрофон: '+(e instanceof Error?e.message:String(e)));
+    }
   }
   function finishRecording(send:boolean) {
     const recorder=mediaRecorder.current;
-    if(!recorder || recorder.state==='inactive')return;
-    if(!send){recorder.onstop=()=>{recordingStream.current?.getTracks().forEach(x=>x.stop());recordingStream.current=null;mediaRecorder.current=null;if(recordInterval.current!==null)window.clearInterval(recordInterval.current);setRecording(false);setRecordSeconds(0);};}
-    recorder.stop();
+    if(!recorder || recorder.state==='inactive' || recordingFinalizing.current)return;
+    recordingFinalizing.current=true;recordingSend.current?.(send);
+    try{recorder.stop();}catch(e){
+      recordingFinalizing.current=false;
+      setNotice('Не удалось завершить запись: '+(e instanceof Error?e.message:String(e)));
+    }
   }
   function openMenu(m: Message, element: HTMLElement) {
     if (m.deleted_at) return;
@@ -984,7 +1027,7 @@ export default function Home() {
               <button type="button" className="icon-btn back-btn" onClick={exitChat} aria-label="Назад к чатам"><Icon name="back" size={28}/></button>
               <button type="button" className="chat-person-link" onClick={()=>selected.other && showProfile(selected.other.id)}>
                 <Avatar name={currentName} id={selected.other?.id} url={selected.other ? avatarUrls[selected.other.id] : undefined}/>
-                <span className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{peerStatus}</small></span>
+                <span className="chat-header-person"><strong>{currentName}</strong><small className={typing || peerRecording ? 'typing-label' : ''}>{peerStatus}</small></span>
               </button>
               <button type="button" className="icon-btn chat-clear-btn" aria-label="Меню чата" onClick={()=>setChatActions(v=>!v)}><Icon name="dots" size={23}/></button>
               {chatActions&&<div className="chat-actions-menu"><button type="button" onClick={()=>{setChatSearchOpen(true);setChatActions(false);}}>Найти в чате</button><button type="button" onClick={()=>startSelection()}>Выбрать сообщения</button><button type="button" className="destructive" onClick={()=>{setChatActions(false);clearConversation(activeChat);}}>Удалить переписку</button></div>}
