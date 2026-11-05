@@ -22,6 +22,25 @@ const supabaseFetch: typeof fetch = (input, init) => {
   // Preserve headers, method and body when the SDK passes a Request object.
   return fetch(input instanceof Request ? new Request(proxied, input) : proxied, init);
 };
+// Signed media URLs are used directly by <img>, <audio>, <video> and fetch().
+// The SDK custom fetch cannot intercept those browser requests, so route them
+// through the same-origin Vercel proxy on the DuckDNS domain as well.
+function mediaUrl(url: string): string {
+  if (!useSupabaseProxy || !url) return url;
+  try {
+    const parsed = new URL(url);
+    const base = new URL(supabaseUrl);
+    const storageHost = base.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
+    if (parsed.hostname === base.hostname) {
+      return window.location.origin + '/supabase' + parsed.pathname + parsed.search + parsed.hash;
+    }
+    if (parsed.hostname === storageHost) {
+      return window.location.origin + '/supabase-storage' + parsed.pathname + parsed.search + parsed.hash;
+    }
+  } catch { /* Preserve unexpected URLs without breaking rendering. */ }
+  return url;
+}
+
 const supabase = supabaseUrl && supabaseKey
   ? createClient(supabaseUrl, supabaseKey, {
       auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true },
@@ -492,7 +511,7 @@ export default function Home() {
       const urls: Record<string,string> = {};
       await Promise.all(directory.filter(x=>x.avatar_path).map(async x => {
         const { data } = await supabase.storage.from('connect-avatars').createSignedUrl(x.avatar_path!, 3600);
-        if (data?.signedUrl) urls[x.id] = data.signedUrl;
+        if (data?.signedUrl) urls[x.id] = mediaUrl(data.signedUrl);
       }));
       setAvatarUrls(urls);
     }
@@ -709,7 +728,7 @@ export default function Home() {
     const updated=await supabase.from('profiles').update({avatar_path:path}).eq('id',user.id);
     if(updated.error){setBusy(false);setNotice('Не удалось сохранить аватар: '+updated.error.message);return;}
     const signed=await supabase.storage.from('connect-avatars').createSignedUrl(path,3600);
-    if(signed.data?.signedUrl)setAvatarUrls(prev=>({...prev,[user.id]:signed.data!.signedUrl}));
+    if(signed.data?.signedUrl)setAvatarUrls(prev=>({...prev,[user.id]:mediaUrl(signed.data!.signedUrl)}));
     setProfiles(prev=>prev.map(p=>p.id===user.id?{...p,avatar_path:path}:p));
     setBusy(false);setNotice('Аватар обновлён'); closeCrop();
   }
@@ -817,7 +836,7 @@ export default function Home() {
     if (!missing.length) return;
     void Promise.all(missing.map(async path => {
       const {data} = await supabase.storage.from('connect-attachments').createSignedUrl(path, 3600);
-      return {path, url:data?.signedUrl};
+      return {path, url:data?.signedUrl ? mediaUrl(data.signedUrl) : undefined};
     })).then(rows => {
       if (cancelled) return;
       setAttachmentUrls(prev => {
@@ -887,7 +906,7 @@ export default function Home() {
       setLatest(prev=>({...prev,[chatId]:m}));
       setReplyTo(null);
       const signed=await supabase.storage.from('connect-attachments').createSignedUrl(path,3600);
-      if(signed.data?.signedUrl)setAttachmentUrls(prev=>({...prev,[path]:signed.data!.signedUrl}));
+      if(signed.data?.signedUrl)setAttachmentUrls(prev=>({...prev,[path]:mediaUrl(signed.data!.signedUrl)}));
       requestAnimationFrame(()=>{const el=scrollRef.current;if(el)el.scrollTop=el.scrollHeight;});
     } catch(e) {
       setNotice('Не удалось отправить вложение: '+(e instanceof Error?e.message:String(e)));
