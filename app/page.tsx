@@ -800,6 +800,19 @@ export default function Home() {
     return () => {cancelled=true;};
   }, [messages, user?.id]);
 
+  function handleComposerPaste(event: React.ClipboardEvent<HTMLInputElement>) {
+    // iOS custom keyboard stickers may be delivered as image clipboard items.
+    const clipboard = event.clipboardData;
+    if (!clipboard || busy || recording || editing) return;
+    const item = Array.from(clipboard.items || []).find(entry => entry.kind === 'file' && entry.type.startsWith('image/'));
+    const pasted = item?.getAsFile() || Array.from(clipboard.files || []).find(file => file.type.startsWith('image/'));
+    if (!pasted) return; // Keep normal text and Unicode emoji paste untouched.
+    event.preventDefault();
+    const ext = pasted.type === 'image/gif' ? 'gif' : pasted.type === 'image/webp' ? 'webp' : pasted.type === 'image/jpeg' ? 'jpg' : 'png';
+    const image = new File([pasted], `sticker-${Date.now()}.${ext}`, { type: pasted.type || 'image/png' });
+    void sendAttachment(image);
+  }
+
   async function sendAttachment(file: File, kindOverride?: 'audio') {
     if (!supabase || !user || !activeChat || busy) return;
     if (file.size < 1 || file.size > 100*1024*1024) {setNotice('Максимальный размер файла — 100 МБ');return;}
@@ -880,8 +893,8 @@ export default function Home() {
     if (m.deleted_at) return;
     const rect = element.getBoundingClientRect(); const root = shellRef.current?.getBoundingClientRect();
     const height = root?.height || window.innerHeight;
-    const optionsHeight = m.sender_id === user?.id ? 230 : 120;
-    setMenuTop(Math.min(Math.max(76, rect.top - (root?.top || 0) - 14), Math.max(76, height - optionsHeight - 22)));
+    const optionsHeight = m.sender_id === user?.id ? 360 : 270;
+    setMenuTop(Math.min(Math.max(12, rect.top - (root?.top || 0) - 14), Math.max(12, height - optionsHeight - 12)));
     setMenuSide(m.sender_id === user?.id ? 'right' : 'left');
     setMenuMessage(m); setSwipe(null);
     try { if ('vibrate' in navigator) navigator.vibrate(9); } catch { /* iOS doesn't support vibration */ }
@@ -1023,7 +1036,7 @@ export default function Home() {
                 </div>
                 <div className="sticker-grid">{(stickerPack==='favorites'?stickerFavorites:stickerPack==='recent'?stickerRecent:STICKER_PACKS.find(p=>p.id===stickerPack)?.stickers.map(st=>stickerPack+':'+st.id)||[]).map(key=>{const [pack,id]=key.split(':');const found=STICKER_PACKS.find(p=>p.id===pack)?.stickers.find(st=>st.id===id);if(!found)return null;return <div key={key} className="sticker-choice"><button type="button" onClick={()=>void sendSticker(pack as StickerPackId,id)} disabled={busy} aria-label={'Отправить '+found.name}><img src={stickerUrl({pack,id})} alt={found.name}/></button><button type="button" className="sticker-fav" onClick={()=>toggleFavorite(key)} aria-label="В избранное">{stickerFavorites.includes(key)?'★':'☆'}</button></div>;})}</div>
               </div>}
-              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры">☺</button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
+              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры">☺</button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
           </div>
             : <><div className="main-view">
