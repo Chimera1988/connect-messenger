@@ -11,8 +11,22 @@ import type { FormEvent, TouchEvent, KeyboardEvent, CSSProperties } from 'react'
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
+// On the alternate DuckDNS domain, send Supabase HTTP traffic through Vercel.
+// Keep the original Supabase URL for Realtime WebSockets and the primary domain.
+const useSupabaseProxy = typeof window !== 'undefined' && window.location.hostname === 'connect-chat.duckdns.org';
+const supabaseFetch: typeof fetch = (input, init) => {
+  const original = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const proxied = useSupabaseProxy && original.startsWith(supabaseUrl + '/')
+    ? '/supabase/' + original.slice(supabaseUrl.length + 1)
+    : original;
+  // Preserve headers, method and body when the SDK passes a Request object.
+  return fetch(input instanceof Request ? new Request(proxied, input) : proxied, init);
+};
 const supabase = supabaseUrl && supabaseKey
-  ? createClient(supabaseUrl, supabaseKey, { auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true } })
+  ? createClient(supabaseUrl, supabaseKey, {
+      auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true },
+      global: { fetch: supabaseFetch },
+    })
   : null;
 
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
@@ -848,7 +862,7 @@ export default function Home() {
       } else {
         await new Promise<void>((resolve,reject)=>{
           const upload=new tus.Upload(file,{
-            endpoint:`${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
+            endpoint:useSupabaseProxy ? '/supabase-storage/storage/v1/upload/resumable' : `${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
             retryDelays:[0,3000,5000,10000,20000],
             headers:{authorization:`Bearer ${session.access_token}`,'x-upsert':'false'},
             uploadDataDuringCreation:true,
@@ -974,8 +988,22 @@ export default function Home() {
 
   async function login(e: FormEvent) {
     e.preventDefault(); if (!supabase) return;
-    setBusy(true); setNotice(''); const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setBusy(false); if (error) setNotice('Не удалось войти: ' + error.message);
+    setBusy(true); setNotice('');
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        supabase.auth.signInWithPassword({ email, password }),
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Сервер авторизации не отвечает (15 секунд). Проверьте соединение.')), 15000);
+        }),
+      ]);
+      if (result.error) setNotice('Не удалось войти: ' + result.error.message);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Ошибка соединения с сервером');
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      setBusy(false);
+    }
   }
   async function savePassword(e: FormEvent) {
     e.preventDefault(); if (!supabase) return;
