@@ -114,3 +114,5 @@
 .bubble.sticker-bubble .keyboard-sticker-preview,.bubble.sticker-bubble .keyboard-sticker-preview a{display:block;max-width:100%;background:transparent;border:0;text-decoration:none}
 .bubble.sticker-bubble .keyboard-sticker-preview img{display:block;width:auto;height:auto;max-width:150px;max-height:150px;object-fit:contain;border-radius:0}
 .bubble.sticker-bubble .bubble-body{padding:0;background:transparent}
+
+.connect-custom-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.connect-custom-grid button{border:0;background:transparent;cursor:pointer}.connect-custom-grid img{width:100%;aspect-ratio:1;object-fit:contain}.settings-content .field{width:100%;min-width:0}
