@@ -1,6 +1,8 @@
 'use client';
 
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
+import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
+import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient, type User } from '@supabase/supabase-js';
@@ -15,6 +17,7 @@ const supabase = supabaseUrl && supabaseKey
 
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
 type Tab = 'chats' | 'contacts' | 'settings';
+type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'data' | 'privacy' | 'about';
 type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null; last_seen_at: string | null; online_until: string | null };
 type Conversation = { id: string; user_a: string; user_b: string; created_at: string };
 type Message = {
@@ -95,7 +98,7 @@ function MessageChecks({delivered,read}:{delivered:boolean;read:boolean}){
 }
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Сообщение удалено' : (m.body || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Сообщение удалено' : (stickerFromBody(m.body) ? 'Стикер' : m.body || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
@@ -279,6 +282,16 @@ function AvatarCropper({ url, onCancel, onSave, saving }: { url: string; onCance
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [tab, setTab] = useState<Tab>('chats');
+  const [settingsPage, setSettingsPage] = useState<SettingsPage>('home');
+  const [accent, setAccent] = useState('#087dff');
+  const [wallpaper, setWallpaper] = useState<string | null>(null);
+  const wallpaperInput = useRef<HTMLInputElement | null>(null);
+  const [stickerPicker, setStickerPicker] = useState(false);
+  const [stickerPack, setStickerPack] = useState<StickerPackId>('speed');
+  const [enabledPacks, setEnabledPacks] = useState<StickerPackId[]>(STICKER_PACKS.map(p=>p.id));
+  const [stickerFavorites, setStickerFavorites] = useState<string[]>([]);
+  const [stickerRecent, setStickerRecent] = useState<string[]>([]);
+
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
@@ -331,6 +344,74 @@ export default function Home() {
   const invited = typeof window !== 'undefined' && /type=(invite|recovery)/.test(window.location.hash + window.location.search);
 
   useEffect(() => { try { if (localStorage.getItem('connect-theme') === 'light') setTheme('light'); } catch { /* Private browsing */ } }, []);
+  useEffect(() => {
+    try {
+      const color = localStorage.getItem('connect-accent');
+      if (color && /^#[0-9a-f]{6}$/i.test(color)) setAccent(color);
+      const packs = JSON.parse(localStorage.getItem('connect-sticker-packs') || 'null');
+      if (Array.isArray(packs)) setEnabledPacks(STICKER_PACKS.map(p=>p.id).filter(id=>packs.includes(id)));
+      const favorites = JSON.parse(localStorage.getItem('connect-sticker-favorites') || '[]');
+      if (Array.isArray(favorites)) setStickerFavorites(favorites.filter((x): x is string => typeof x === 'string').slice(0,100));
+      const recent = JSON.parse(localStorage.getItem('connect-sticker-recent') || '[]');
+      if (Array.isArray(recent)) setStickerRecent(recent.filter((x): x is string => typeof x === 'string').slice(0,30));
+    } catch { /* storage unavailable */ }
+    void loadWallpaper().then(setWallpaper).catch(()=>{});
+  }, []);
+  function changeAccent(color: string) {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) return;
+    setAccent(color); try { localStorage.setItem('connect-accent', color); } catch {}
+  }
+  function togglePack(id: StickerPackId) {
+    setEnabledPacks(prev=>{const next=prev.includes(id)?prev.filter(x=>x!==id):[...prev,id];try{localStorage.setItem('connect-sticker-packs',JSON.stringify(next));}catch{}return next;});
+  }
+  function toggleFavorite(key: string) {
+    setStickerFavorites(prev=>{const next=prev.includes(key)?prev.filter(x=>x!==key):[key,...prev].slice(0,100);try{localStorage.setItem('connect-sticker-favorites',JSON.stringify(next));}catch{}return next;});
+  }
+  async function changeWallpaper(file: File) {
+    if (!file.type.startsWith('image/') || file.size>12*1024*1024) {setNotice('Выберите изображение до 12 МБ');return;}
+    try { const url=await saveWallpaper(file);setWallpaper(url);setNotice('Фон чатов сохранён на этом устройстве'); }
+    catch {setNotice('Не удалось сохранить фон. Попробуйте изображение поменьше');}
+  }
+  async function removeWallpaper() {await clearWallpaper();setWallpaper(null);}
+  function clearLocalPreferences() {
+    if (!window.confirm('Сбросить оформление, избранные стикеры и фон на этом устройстве? Переписки на сервере останутся.')) return;
+    for (const key of ['connect-theme','connect-accent','connect-sticker-packs','connect-sticker-favorites','connect-sticker-recent']) try{localStorage.removeItem(key);}catch{}
+    setTheme('dark');setAccent('#087dff');setEnabledPacks(STICKER_PACKS.map(p=>p.id));setStickerFavorites([]);setStickerRecent([]);
+    void removeWallpaper();setNotice('Локальные настройки сброшены');
+  }
+  async function exportChats() {
+    if (!supabase || !user || busy) return;
+    setBusy(true);
+    try {
+      const ids=conversations.filter(c=>c.user_a===user.id||c.user_b===user.id).map(c=>c.id);
+      if (!ids.length){setNotice('Нет переписок для экспорта');return;}
+      const all:Message[]=[];
+      for (let offset=0;offset<50000;offset+=500) {
+        const {data,error}=await supabase.from('messages').select(MESSAGE_COLUMNS).in('conversation_id',ids).order('created_at',{ascending:true}).range(offset,offset+499);
+        if (error) throw error;
+        all.push(...(data||[]) as Message[]);
+        if (!data || data.length<500) break;
+      }
+      const payload={exported_at:new Date().toISOString(),account_id:user.id,conversations,messages:all};
+      const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+      const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download='connect-chats-export.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+      if(all.length>=50000)setNotice('Экспорт ограничен 50 000 сообщений');
+    } catch {setNotice('Не удалось экспортировать переписки');}
+    finally {setBusy(false);}
+  }
+  async function sendSticker(pack: StickerPackId, id: string) {
+    if (!supabase || !user || !activeChat || busy) return;
+    const body=stickerBody(pack,id);if (!stickerFromBody(body)) return;
+    setBusy(true);setNotice('');
+    const {data,error}=await supabase.from('messages').insert({conversation_id:activeChat,sender_id:user.id,body,reply_to:replyTo?.id||null}).select(MESSAGE_COLUMNS).single();
+    setBusy(false);
+    if (error || !data){setNotice('Не удалось отправить стикер: '+(error?.message||'Ошибка'));return;}
+    setReplyTo(null);setStickerPicker(false);
+    const key=pack+':'+id;
+    setStickerRecent(prev=>{const next=[key,...prev.filter(x=>x!==key)].slice(0,30);try{localStorage.setItem('connect-sticker-recent',JSON.stringify(next));}catch{}return next;});
+    const m=data as Message;setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);setLatest(prev=>({...prev,[activeChat]:m}));
+    requestAnimationFrame(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;});
+  }
   function changeTheme(next: 'dark' | 'light') { setTheme(next); try { localStorage.setItem('connect-theme', next); } catch { /* no storage */ } }
 
   // The visual viewport shrinks when the iPhone keyboard appears. Keep the composer
@@ -603,7 +684,7 @@ export default function Home() {
 
   function enterChat(id: string) { setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
   function exitChat() { setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
-  function switchTab(t: Tab) { setTab(t); setSearch(''); setNotice(''); setProfileView(null); }
+  function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); }
   async function openContact(p: Profile) {
     if (!supabase || !user || busy) return;
     setBusy(true); setNotice('');
@@ -805,7 +886,7 @@ export default function Home() {
 
   const keyboardOpen = frame ? window.innerHeight - frame.height - frame.top > 130 : false;
   const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
-  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} ref={shellRef} style={screenStyle}>
+  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
     {!supabase ? <div className="connection-error"><Icon name="info" size={32}/><h2>Подключение не настроено</h2><p>Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY в Vercel.</p></div>
       : loading ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
         : !user || setup ? <div className="login-screen">
@@ -843,7 +924,7 @@ export default function Home() {
                 <span className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{peerStatus}</small></span>
               </button>
             </header>
-            <div className="message-scroll" ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
+            <div className={"message-scroll"+(wallpaper?" has-wallpaper":"")} style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`}:undefined} ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
               <div className="message-stream">
                 {messages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>Напишите первое сообщение</span></div> : messages.map((m,index) => {
                   const mine = m.sender_id === user.id;
@@ -852,7 +933,7 @@ export default function Home() {
                     {(index===0 || dayKey(messages[index-1].created_at)!==dayKey(m.created_at)) && <div className="date-separator"><span>{dayLabel(m.created_at)}</span></div>}
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming')}>
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
-                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '')}
+                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && stickerFromBody(m.body) ? ' sticker-bubble' : '')}
                       style={{ transform: `translate3d(${swipe?.id === m.id ? swipe.offset : 0}px,0,0)` }}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
@@ -868,7 +949,7 @@ export default function Home() {
                             : m.attachment_kind==='audio' ? <VoicePlayer src={attachmentUrls[m.attachment_path]}/>
                             : <a className="attachment-file" href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer" download={m.attachment_name || 'Файл'}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''}</small></span></a>}
                         </div>}
-                        {m.body}
+                        {stickerFromBody(m.body) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(m.body)!)} alt="Стикер" loading="lazy"/> : m.body}
                       </>}</div>
                       <div className="bubble-meta">{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>
                     </div>
@@ -882,7 +963,15 @@ export default function Home() {
               {uploadProgress!==null && <div className="upload-status">Отправка файла: {uploadProgress}%<progress max={100} value={uploadProgress}/></div>}
               {recording && <div className="recording-status"><span>● Запись {Math.floor(recordSeconds/60)}:{String(recordSeconds%60).padStart(2,'0')}</span><button type="button" onClick={()=>finishRecording(false)}>Отмена</button><button type="button" onClick={()=>finishRecording(true)}>Отправить</button></div>}
               <input ref={attachmentInput} type="file" hidden onChange={e=>{const f=e.currentTarget.files?.[0];e.currentTarget.value='';if(f)void sendAttachment(f);}}/>
-              <div className="compose-line"><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
+              {stickerPicker && <div className="sticker-picker">
+                <div className="sticker-picker-tabs">
+                  {STICKER_PACKS.filter(p=>enabledPacks.includes(p.id)).map(p=><button key={p.id} type="button" className={stickerPack===p.id?'active':''} onClick={()=>setStickerPack(p.id)}>{p.emoji} {p.name}</button>)}
+                  <button type="button" className={stickerPack==='favorites'?'active':''} onClick={()=>setStickerPack('favorites')}>⭐</button>
+                  <button type="button" className={stickerPack==='recent'?'active':''} onClick={()=>setStickerPack('recent')}>🕒</button>
+                </div>
+                <div className="sticker-grid">{(stickerPack==='favorites'?stickerFavorites:stickerPack==='recent'?stickerRecent:STICKER_PACKS.find(p=>p.id===stickerPack)?.stickers.map(st=>stickerPack+':'+st.id)||[]).map(key=>{const [pack,id]=key.split(':');const found=STICKER_PACKS.find(p=>p.id===pack)?.stickers.find(st=>st.id===id);if(!found)return null;return <div key={key} className="sticker-choice"><button type="button" onClick={()=>void sendSticker(pack as StickerPackId,id)} disabled={busy} aria-label={'Отправить '+found.name}><img src={stickerUrl({pack,id})} alt={found.name}/></button><button type="button" className="sticker-fav" onClick={()=>toggleFavorite(key)} aria-label="В избранное">{stickerFavorites.includes(key)?'★':'☆'}</button></div>;})}</div>
+              </div>}
+              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры">☺</button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
           </div>
             : <><div className="main-view">
@@ -905,12 +994,24 @@ export default function Home() {
                 </div>
               </>}
               {tab === 'settings' && <>
-                <header className="simple-header"><h1>Настройки</h1></header>
-                <div className="scroll-content settings-content"><button type="button" className="settings-profile" onClick={()=>showProfile(user.id)}><Avatar size="lg" name={ownProfile?.display_name || 'Мой профиль'} id={user.id} url={avatarUrls[user.id]}/><div><strong>{ownProfile?.display_name || 'Мой профиль'}</strong><span>{ownProfile?.bio || user.email}</span></div><Icon name="chevron" size={19}/></button>
-                  <h3>Оформление</h3><div className="settings-group"><div className="settings-theme"><span className="setting-icon"><Icon name={theme === 'dark' ? 'moon' : 'sun'} size={19}/></span><div><strong>Тема приложения</strong><small>Удобная для чтения</small></div></div><div className="theme-buttons"><button type="button" className={theme === 'dark' ? 'current' : ''} onClick={() => changeTheme('dark')}>Тёмная</button><button type="button" className={theme === 'light' ? 'current' : ''} onClick={() => changeTheme('light')}>Светлая</button></div></div>
-                  <h3>Звуки и уведомления</h3><div className="settings-group"><ConnectNotificationSettings supabase={supabase!} userId={user.id}/></div>
-                  <h3>Приложение</h3><div className="settings-group"><div className="settings-static"><span className="setting-icon"><Icon name="shield" size={19}/></span><div><strong>Личные переписки</strong><small>Диалоги доступны их участникам</small></div></div><div className="setting-divider"/><div className="settings-static"><span className="setting-icon"><Icon name="info" size={19}/></span><div><strong>О Connect</strong><small>Версия 1.5 · Статусы и даты</small></div></div></div>
-                  <button type="button" className="logout-button" onClick={() => void logout()}><Icon name="logout" size={20}/> Выйти из аккаунта</button>
+                <header className="simple-header">{settingsPage!=='home' && <button type="button" className="icon-btn" onClick={()=>setSettingsPage('home')} aria-label="Назад"><Icon name="back" size={24}/></button>}<h1>{({home:'Настройки',appearance:'Оформление',notifications:'Уведомления',stickers:'Стикеры',data:'Данные',privacy:'Приватность',about:'О приложении'} as Record<SettingsPage,string>)[settingsPage]}</h1></header>
+                <div className="scroll-content settings-content">
+                  {settingsPage==='home' && <>
+                    <button type="button" className="settings-profile" onClick={()=>showProfile(user.id)}><Avatar size="lg" name={ownProfile?.display_name||'Мой профиль'} id={user.id} url={avatarUrls[user.id]}/><div><strong>{ownProfile?.display_name||'Мой профиль'}</strong><span>{ownProfile?.bio||user.email}</span></div><Icon name="chevron" size={19}/></button>
+                    <div className="settings-group settings-menu">
+                      {([{id:'appearance',icon:'sun',title:'Оформление',subtitle:'Тема, цвет и фон чатов'},{id:'stickers',icon:'message',title:'Стикеры',subtitle:'Наборы и избранное'},{id:'notifications',icon:'info',title:'Уведомления',subtitle:'Звуки и push-уведомления'},{id:'data',icon:'file',title:'Данные и хранилище',subtitle:'Экспорт и очистка'},{id:'privacy',icon:'shield',title:'Приватность',subtitle:'Безопасность переписок'},{id:'about',icon:'info',title:'О приложении',subtitle:'Версия и разработчики'}] as {id:SettingsPage;icon:IconName;title:string;subtitle:string}[]).map((item,i)=><div key={item.id}>{i>0&&<div className="setting-divider"/>}<button type="button" className="settings-menu-row" onClick={()=>setSettingsPage(item.id)}><span className="setting-icon"><Icon name={item.icon} size={19}/></span><span><strong>{item.title}</strong><small>{item.subtitle}</small></span><Icon name="chevron" size={19}/></button></div>)}
+                    </div><button type="button" className="logout-button" onClick={()=>void logout()}><Icon name="logout" size={20}/> Выйти из аккаунта</button>
+                  </>}
+                  {settingsPage==='appearance' && <>
+                    <h3>Тема приложения</h3><div className="settings-group"><div className="settings-theme"><span className="setting-icon"><Icon name={theme==='dark'?'moon':'sun'} size={19}/></span><div><strong>Режим отображения</strong><small>На этом устройстве</small></div></div><div className="theme-buttons"><button type="button" className={theme==='dark'?'current':''} onClick={()=>changeTheme('dark')}>Тёмная</button><button type="button" className={theme==='light'?'current':''} onClick={()=>changeTheme('light')}>Светлая</button></div></div>
+                    <h3>Цветовая схема</h3><div className="settings-group"><div className="accent-options">{['#087dff','#8055dc','#dc477e','#198f78','#b46b26','#cc4545','#60748b'].map(c=><button type="button" key={c} className={accent===c?'selected':''} style={{background:c}} aria-label={'Цвет '+c} onClick={()=>changeAccent(c)}>{accent===c?'✓':''}</button>)}<label className="accent-custom" title="Свой цвет">＋<input type="color" aria-label="Свой цвет" value={accent} onChange={e=>changeAccent(e.target.value)}/></label></div><p className="settings-hint">Цвет кнопок, ссылок и исходящих сообщений</p></div>
+                    <h3>Фон переписок</h3><div className="settings-group wallpaper-settings"><input type="file" ref={wallpaperInput} hidden accept="image/*" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void changeWallpaper(file);}}/>{wallpaper&&<img className="wallpaper-preview" src={wallpaper} alt="Выбранный фон"/>}<button type="button" className="settings-action" onClick={()=>wallpaperInput.current?.click()}>Выбрать изображение</button>{wallpaper&&<button type="button" className="settings-action secondary" onClick={()=>void removeWallpaper()}>Удалить фон</button>}<p className="settings-hint">Фон хранится только на этом устройстве. До 12 МБ.</p></div>
+                  </>}
+                  {settingsPage==='notifications' && <div className="settings-group"><ConnectNotificationSettings supabase={supabase!} userId={user.id}/></div>}
+                  {settingsPage==='stickers' && <><p className="settings-hint">Общие наборы доступны всем пользователям. Выбирайте, какие показывать в чате.</p><div className="settings-group">{STICKER_PACKS.map((p,i)=><div key={p.id}>{i>0&&<div className="setting-divider"/>}<label className="sticker-pack-setting"><span className="sticker-pack-emoji">{p.emoji}</span><span><strong>{p.name}</strong><small>{p.description} · {p.stickers.length} шт.</small></span><input type="checkbox" checked={enabledPacks.includes(p.id)} onChange={()=>togglePack(p.id)}/></label></div>)}</div><p className="settings-hint">В чате нажмите ☺ рядом с полем сообщения. Есть избранное и недавно отправленные.</p></>}
+                  {settingsPage==='data' && <><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
+                  {settingsPage==='privacy' && <div className="settings-group data-settings"><strong>Личные переписки</strong><p className="settings-hint">Сообщения доступны участникам диалога в рамках настроенных правил доступа. Это не означает сквозное шифрование.</p></div>}
+                  {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 1.5</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
                 </div>
               </>}
             </div><nav className="bottom-nav" aria-label="Основная навигация">
