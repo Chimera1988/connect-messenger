@@ -28,7 +28,7 @@ type Message = {
 };
 type Gesture = { id: string; x: number; y: number; dx: number; dy: number; timer: number | null; opened: boolean };
 type IconName = 'chats' | 'contacts' | 'settings' | 'back' | 'search' | 'write' | 'send' | 'reply' |
-  'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user' | 'plus' | 'mic' | 'stop' | 'file' | 'play';
+  'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user' | 'plus' | 'mic' | 'stop' | 'file' | 'play' | 'dots' | 'forward';
 
 function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number; stroke?: number }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
@@ -60,6 +60,8 @@ function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number
     stop: <rect x="5" y="5" width="14" height="14" rx="3"/>,
     file: <><path d="M6 2h8l5 5v15H6zM14 2v5h5"/></>,
     play: <path d="m8 5 11 7-11 7z"/>,
+    dots: <><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></>,
+    forward: <><path d="M13 5l7 7-7 7M20 12H9a5 5 0 0 0-5 5v2"/></>,
     message: <><path d="M20 11.4a7.5 7.5 0 0 1-7.9 7.5 8.2 8.2 0 0 1-3.3-.7L4 20l1.2-4.5A7.6 7.6 0 1 1 20 11.4Z"/><path d="M8 11h8"/></>,
   };
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>{paths[name]}</svg>;
@@ -98,7 +100,7 @@ function MessageChecks({delivered,read}:{delivered:boolean;read:boolean}){
 }
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Сообщение удалено' : (stickerFromBody(m.body) ? 'Стикер' : m.body || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (stickerFromBody(m.body) ? 'Стикер' : m.body || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
@@ -327,6 +329,16 @@ export default function Home() {
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [editing, setEditing] = useState<Message | null>(null);
   const [menuMessage, setMenuMessage] = useState<Message | null>(null);
+  const [chatActions, setChatActions] = useState(false);
+  const [listActions, setListActions] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [chatSearchOpen, setChatSearchOpen] = useState(false);
+  const [chatQuery, setChatQuery] = useState('');
+  const [searchPosition, setSearchPosition] = useState(0);
+  const [forwardIds, setForwardIds] = useState<string[]>([]);
+  const [hiddenMessages, setHiddenMessages] = useState<string[]>([]);
+  const listHold = useRef<{timer:number|null,x:number,y:number,opened:boolean}|null>(null);
   const [menuTop, setMenuTop] = useState(150);
   const [menuSide, setMenuSide] = useState<'left'|'right'>('left');
   const [swipe, setSwipe] = useState<{ id: string; offset: number } | null>(null);
@@ -678,7 +690,19 @@ export default function Home() {
     other: profiles.find(p => p.id === (c.user_a === user?.id ? c.user_b : c.user_a)),
     last: latest[c.id], count: unread[c.id] || 0,
   })).sort((a, b) => (b.last?.created_at || b.created_at).localeCompare(a.last?.created_at || a.created_at));
-  const visibleMessages=messages.filter(m=>!activeChat || !clearedChats[activeChat] || m.created_at>clearedChats[activeChat]);
+  const visibleMessages=messages.filter(m=>!m.deleted_at && !hiddenMessages.includes(m.id) && (!activeChat || !clearedChats[activeChat] || m.created_at>clearedChats[activeChat]));
+  const searchMatches=chatQuery.trim()?visibleMessages.filter(m=>m.body.toLocaleLowerCase('ru-RU').includes(chatQuery.trim().toLocaleLowerCase('ru-RU'))):[];
+  function showMatch(index:number){if(!searchMatches.length)return;const i=(index+searchMatches.length)%searchMatches.length;setSearchPosition(i);requestAnimationFrame(()=>document.getElementById('msg-'+searchMatches[i].id)?.scrollIntoView({behavior:'smooth',block:'center'}));}
+  function highlightMessage(body:string){if(!chatSearchOpen||!chatQuery.trim())return body;const i=body.toLocaleLowerCase('ru-RU').indexOf(chatQuery.trim().toLocaleLowerCase('ru-RU'));return i<0?body:<>{body.slice(0,i)}<mark className="chat-search-mark">{body.slice(i,i+chatQuery.trim().length)}</mark>{body.slice(i+chatQuery.trim().length)}</>;}
+  useEffect(()=>{if(!user)return;try{setHiddenMessages(JSON.parse(localStorage.getItem('connect-hidden-messages:'+user.id)||'[]'));}catch{setHiddenMessages([])}},[user?.id]);
+  function hideMessages(ids:string[]){if(!user)return;const next=Array.from(new Set([...hiddenMessages,...ids]));setHiddenMessages(next);try{localStorage.setItem('connect-hidden-messages:'+user.id,JSON.stringify(next))}catch{}setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}
+  function beginForward(ids:string[]){setForwardIds(ids);setMenuMessage(null);setChatActions(false);}
+  async function forwardTo(contact:Profile){if(!supabase||!user||busy)return;const items=visibleMessages.filter(m=>forwardIds.includes(m.id));if(!items.length){setForwardIds([]);return;}setBusy(true);let chat=conversations.find(c=>(c.user_a===user.id&&c.user_b===contact.id)||(c.user_b===user.id&&c.user_a===contact.id));if(!chat){const [a,b]=[user.id,contact.id].sort();const r=await supabase.from('conversations').upsert({user_a:a,user_b:b},{onConflict:'user_a,user_b'}).select('id,user_a,user_b,created_at').single();if(r.error||!r.data){setBusy(false);setNotice('Не удалось открыть чат: '+(r.error?.message||'Ошибка'));return;}chat=r.data as Conversation;setConversations(prev=>[chat!,...prev]);}let failed='';for(const m of items){const r=await supabase.from('messages').insert({conversation_id:chat.id,sender_id:user.id,body:m.body||'📎 Пересланное вложение',attachment_path:m.attachment_path,attachment_name:m.attachment_name,attachment_type:m.attachment_type,attachment_size:m.attachment_size,attachment_kind:m.attachment_kind});if(r.error){failed=r.error.message;break;}}setBusy(false);setForwardIds([]);setSelectedIds([]);setSelectionMode(false);if(failed)setNotice('Не удалось переслать: '+failed);else{enterChat(chat.id);setNotice('Переслано: '+items.length);}}
+  async function removeForEveryone(ids:string[]){if(!supabase||!user||busy)return;const own=visibleMessages.filter(m=>ids.includes(m.id)&&m.sender_id===user.id);if(!own.length){setNotice('Можно удалить у всех только свои сообщения');return;}if(!window.confirm('Удалить '+own.length+' сообщ. у обоих участников?'))return;setBusy(true);let failed='';for(const m of own){const r=await supabase.from('messages').update({deleted_at:new Date().toISOString()}).eq('id',m.id).eq('sender_id',user.id);if(r.error){failed=r.error.message;break;}}setBusy(false);if(failed)setNotice('Не удалось удалить: '+failed);else{setMessages(prev=>prev.filter(m=>!own.some(x=>x.id===m.id)));setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}}
+  function selectOne(id:string){setSelectedIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);}
+  function startSelection(ids:string[]=[]){setSelectionMode(true);setSelectedIds(ids);setChatActions(false);setMenuMessage(null);}
+  function resetChatTools(){setSelectionMode(false);setSelectedIds([]);setChatActions(false);setChatSearchOpen(false);setChatQuery('');setForwardIds([]);}
+
   // A cleared conversation is hidden from the list, but must remain openable from Contacts.
   const selected = conversations.map(c => ({
     ...c,
@@ -690,6 +714,7 @@ export default function Home() {
   const peerStatus = typing ? 'печатает…' : formatPresence(peerPresence,clock);
   const currentPeerState=activeChat?peerStates[activeChat]:undefined;
   const filteredChats = chats.filter(c => (c.other?.display_name || '').toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
+  useEffect(()=>{if(chatSearchOpen&&chatQuery.trim()&&searchMatches.length){const match=searchMatches[Math.min(searchPosition,searchMatches.length-1)];requestAnimationFrame(()=>document.getElementById('msg-'+match.id)?.scrollIntoView({behavior:'smooth',block:'center'}));}},[chatQuery,chatSearchOpen,searchMatches.length]);
   const filteredContacts = contacts.filter(p => p.display_name.toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   const unreadTotal = Object.values(unread).reduce((sum, n) => sum + n, 0);
 
@@ -701,8 +726,8 @@ export default function Home() {
     if (activeChat===id) exitChat();
     setNotice('Переписка скрыта на этом устройстве');
   }
-  function enterChat(id: string) { setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
-  function exitChat() { setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
+  function enterChat(id: string) { resetChatTools(); setListActions(null); setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
+  function exitChat() { resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
   function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); }
   async function openContact(p: Profile) {
     if (!supabase || !user || busy) return;
@@ -863,6 +888,7 @@ export default function Home() {
   }
   function clearGestureTimer() { if (gesture.current?.timer !== null && gesture.current?.timer !== undefined) window.clearTimeout(gesture.current.timer); if (gesture.current) gesture.current.timer = null; }
   function touchStart(e: TouchEvent<HTMLDivElement>, m: Message) {
+    if (selectionMode) return;
     if (m.deleted_at || !e.touches[0]) return;
     clearGestureTimer(); const touch = e.touches[0]; const element = e.currentTarget;
     gesture.current = { id: m.id, x: touch.clientX, y: touch.clientY, dx: 0, dy: 0, opened: false, timer: window.setTimeout(() => {
@@ -877,6 +903,7 @@ export default function Home() {
     else setSwipe(null);
   }
   function touchEnd(m: Message) {
+    if (selectionMode) return;
     const g = gesture.current; if (!g || g.id !== m.id) return;
     clearGestureTimer(); gesture.current = null; setSwipe(null);
     if (!g.opened && g.dx > 58 && g.dx > Math.abs(g.dy) * 1.3 && !m.deleted_at) startReply(m);
@@ -942,22 +969,27 @@ export default function Home() {
                 <Avatar name={currentName} id={selected.other?.id} url={selected.other ? avatarUrls[selected.other.id] : undefined}/>
                 <span className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{peerStatus}</small></span>
               </button>
-              <button type="button" className="icon-btn chat-clear-btn" aria-label="Очистить переписку" title="Очистить переписку" onClick={()=>clearConversation(activeChat)}><Icon name="trash" size={20}/></button>
+              <button type="button" className="icon-btn chat-clear-btn" aria-label="Меню чата" onClick={()=>setChatActions(v=>!v)}><Icon name="dots" size={23}/></button>
+              {chatActions&&<div className="chat-actions-menu"><button type="button" onClick={()=>{setChatSearchOpen(true);setChatActions(false);}}>Найти в чате</button><button type="button" onClick={()=>startSelection()}>Выбрать сообщения</button><button type="button" className="destructive" onClick={()=>{setChatActions(false);clearConversation(activeChat);}}>Удалить переписку</button></div>}
             </header>
+            {chatSearchOpen&&<div className="chat-search-bar"><Icon name="search" size={18}/><input autoFocus placeholder="Поиск по чату" value={chatQuery} onChange={e=>{setChatQuery(e.target.value);setSearchPosition(0)}}/><small>{searchMatches.length?`${searchPosition+1}/${searchMatches.length}`:'0'}</small><button type="button" onClick={()=>showMatch(searchPosition-1)}>↑</button><button type="button" onClick={()=>showMatch(searchPosition+1)}>↓</button><button type="button" onClick={()=>{setChatSearchOpen(false);setChatQuery('')}} aria-label="Закрыть поиск"><Icon name="close" size={17}/></button></div>}
+            {selectionMode&&<div className="selection-toolbar"><button type="button" onClick={()=>{setSelectionMode(false);setSelectedIds([])}}>Отмена</button><strong>Выбрано: {selectedIds.length}</strong><button type="button" disabled={!selectedIds.length} onClick={()=>beginForward(selectedIds)}>Переслать</button><button type="button" disabled={!selectedIds.length} onClick={()=>hideMessages(selectedIds)}>У себя</button><button type="button" disabled={!selectedIds.length||selectedIds.some(id=>visibleMessages.find(m=>m.id===id)?.sender_id!==user.id)} onClick={()=>void removeForEveryone(selectedIds)}>У всех</button></div>}
             <div className={"message-scroll"+(wallpaper?" has-wallpaper":"")} style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`}:undefined} ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
               <div className="message-stream">
                 {visibleMessages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>Напишите первое сообщение</span></div> : visibleMessages.map((m,index) => {
                   const mine = m.sender_id === user.id;
                   const replied = m.reply_to ? visibleMessages.find(x => x.id === m.reply_to) : undefined;
-                  return <div key={m.id} className="message-day-group">
+                  return <div key={m.id} id={"msg-"+m.id} className="message-day-group">
                     {(index===0 || dayKey(visibleMessages[index-1].created_at)!==dayKey(m.created_at)) && <div className="date-separator"><span>{dayLabel(m.created_at)}</span></div>}
-                    <div className={'message-row ' + (mine ? 'outgoing' : 'incoming')}>
+                    <div className={'message-row ' + (mine ? 'outgoing' : 'incoming') + (selectedIds.includes(m.id)?' is-selected':'')}>
+                    {selectionMode&&<input className="message-select-check" type="checkbox" aria-label="Выбрать сообщение" checked={selectedIds.includes(m.id)} onChange={()=>selectOne(m.id)}/>}
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
                     <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && stickerFromBody(m.body) ? ' sticker-bubble' : '')}
                       style={{ transform: `translate3d(${swipe?.id === m.id ? swipe.offset : 0}px,0,0)` }}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
-                      onContextMenu={e => { e.preventDefault(); openMenu(m, e.currentTarget); }}
+                      onClick={()=>{if(selectionMode)selectOne(m.id)}}
+                      onContextMenu={e => { e.preventDefault(); if(selectionMode)selectOne(m.id);else openMenu(m, e.currentTarget); }}
                       onKeyDown={e => bubbleKey(e, m)} tabIndex={m.deleted_at ? -1 : 0}
                       role={m.deleted_at ? undefined : 'button'} aria-label={m.deleted_at ? 'Сообщение удалено' : 'Удерживайте, чтобы открыть действия с сообщением'}>
                       {m.reply_to && <div className="quote-box"><strong>{replied?.sender_id === user.id ? 'Вы' : currentName}</strong><span>{!replied ? 'Исходное сообщение' : replied.deleted_at ? 'Сообщение удалено' : replied.body}</span></div>}
@@ -969,7 +1001,7 @@ export default function Home() {
                             : m.attachment_kind==='audio' ? <VoicePlayer src={attachmentUrls[m.attachment_path]}/>
                             : <a className="attachment-file" href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer" download={m.attachment_name || 'Файл'}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''}</small></span></a>}
                         </div>}
-                        {stickerFromBody(m.body) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(m.body)!)} alt="Стикер" loading="lazy"/> : m.body}
+                        {stickerFromBody(m.body) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(m.body)!)} alt="Стикер" loading="lazy"/> : highlightMessage(m.body)}
                       </>}</div>
                       <div className="bubble-meta">{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>
                     </div>
@@ -1001,7 +1033,12 @@ export default function Home() {
                 <div className="search-field"><Icon name="search" size={19}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск по чатам" aria-label="Поиск по чатам"/></div>
                 <div className="scroll-content chat-rows">
                   {filteredChats.length === 0 ? <div className="empty-state"><Icon name="chats" size={38}/><strong>{search ? 'Ничего не найдено' : 'Пока нет переписок'}</strong><span>{search ? 'Попробуйте другое имя' : 'Откройте «Контакты» и начните разговор'}</span></div>
-                    : filteredChats.map(c => <div className="dialog-entry" key={c.id}><button type="button" className="dialog-row" key={c.id} onClick={() => enterChat(c.id)}><Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button><button type="button" className="dialog-delete" aria-label={'Удалить переписку с '+(c.other?.display_name||'собеседником')} onClick={()=>clearConversation(c.id)}><Icon name="trash" size={19}/></button></div>)}
+                    : filteredChats.map(c => <div className="dialog-entry" key={c.id}><button type="button" className="dialog-row" key={c.id}
+                    onTouchStart={e=>{const t=e.touches[0];if(!t)return;const state={timer:null as number|null,x:t.clientX,y:t.clientY,opened:false};state.timer=window.setTimeout(()=>{state.opened=true;setListActions(c.id)},480);listHold.current=state}}
+                    onTouchMove={e=>{const t=e.touches[0],h=listHold.current;if(h&&t&&(Math.abs(t.clientX-h.x)>12||Math.abs(t.clientY-h.y)>12)){if(h.timer!==null)clearTimeout(h.timer);h.timer=null}}}
+                    onTouchEnd={()=>{if(listHold.current?.timer!==null&&listHold.current?.timer!==undefined)clearTimeout(listHold.current.timer);}}
+                    onContextMenu={e=>{e.preventDefault();setListActions(c.id)}}
+                    onClick={() => {if(listHold.current?.opened){listHold.current=null;return;}enterChat(c.id)}}><Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button>{listActions===c.id&&<div className="list-chat-popover"><button type="button" onClick={()=>{setListActions(null);clearConversation(c.id)}}>Удалить переписку</button><button type="button" onClick={()=>setListActions(null)}>Отмена</button></div>}</div>)}
                 </div>
               </>}
               {tab === 'contacts' && <>
@@ -1039,11 +1076,15 @@ export default function Home() {
             </nav></>}
     {crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}
     {notice && <button type="button" className="notice-toast"  role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
+    {forwardIds.length>0&&<div className="forward-overlay"><div className="forward-dialog"><header><strong>Переслать сообщения</strong><button type="button" onClick={()=>setForwardIds([])}><Icon name="close" size={21}/></button></header><p>Выберите получателя · {forwardIds.length} сообщ.</p><div className="forward-contacts">{contacts.map(p=><button type="button" key={p.id} disabled={busy} onClick={()=>void forwardTo(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span>{p.display_name}</span><Icon name="chevron" size={18}/></button>)}</div></div></div>}
     {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
+      <button type="button" onClick={() => beginForward([menuMessage.id])}><Icon name="forward" size={22}/>Переслать</button>
+      <button type="button" onClick={() => startSelection([menuMessage.id])}><Icon name="check" size={22}/>Выбрать</button>
+      <button type="button" onClick={() => {hideMessages([menuMessage.id])}}><Icon name="trash" size={22}/>Удалить у себя</button>
       <button type="button" onClick={() => startReply(menuMessage)}><Icon name="reply" size={23}/>Ответить</button>
       {menuMessage.sender_id === user?.id && <button type="button" onClick={() => startEdit(menuMessage)}><Icon name="edit" size={22}/>Редактировать</button>}
       <button type="button" onClick={() => void copyText(menuMessage)}><Icon name="copy" size={22}/>Скопировать текст</button>
-      {menuMessage.sender_id === user?.id && <><div className="menu-separator"/><button type="button" className="destructive" onClick={() => void deleteMessage(menuMessage)}><Icon name="trash" size={22}/>Удалить у всех</button></>}
+      {menuMessage.sender_id === user?.id && <><div className="menu-separator"/><button type="button" className="destructive" onClick={() => void removeForEveryone([menuMessage.id])}><Icon name="trash" size={22}/>Удалить у всех</button></>}
     </div></div>}
   </div>;
 }
