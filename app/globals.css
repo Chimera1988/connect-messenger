@@ -112,5 +112,5 @@
 
 /* Pasted iOS keyboard stickers: not photo bubbles. */
 .bubble.sticker-bubble .keyboard-sticker-preview,.bubble.sticker-bubble .keyboard-sticker-preview a{display:block;max-width:100%;background:transparent;border:0;text-decoration:none}
-.bubble.sticker-bubble .keyboard-sticker-preview img{display:block;width:auto;height:auto;max-width:176px;max-height:176px;object-fit:contain;border-radius:0}
+.bubble.sticker-bubble .keyboard-sticker-preview img{display:block;width:auto;height:auto;max-width:150px;max-height:150px;object-fit:contain;border-radius:0}
 .bubble.sticker-bubble .bubble-body{padding:0;background:transparent}
