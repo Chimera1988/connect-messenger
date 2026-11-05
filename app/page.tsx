@@ -17,7 +17,7 @@ const useSupabaseProxy = typeof window !== 'undefined' && window.location.hostna
 const supabaseFetch: typeof fetch = (input, init) => {
   const original = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
   const proxied = useSupabaseProxy && original.startsWith(supabaseUrl + '/')
-    ? '/supabase/' + original.slice(supabaseUrl.length + 1)
+    ? window.location.origin + '/supabase/' + original.slice(supabaseUrl.length + 1)
     : original;
   // Preserve headers, method and body when the SDK passes a Request object.
   return fetch(input instanceof Request ? new Request(proxied, input) : proxied, init);
@@ -862,7 +862,7 @@ export default function Home() {
       } else {
         await new Promise<void>((resolve,reject)=>{
           const upload=new tus.Upload(file,{
-            endpoint:useSupabaseProxy ? '/supabase-storage/storage/v1/upload/resumable' : `${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
+            endpoint:useSupabaseProxy ? window.location.origin + '/supabase-storage/storage/v1/upload/resumable' : `${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
             retryDelays:[0,3000,5000,10000,20000],
             headers:{authorization:`Bearer ${session.access_token}`,'x-upsert':'false'},
             uploadDataDuringCreation:true,
