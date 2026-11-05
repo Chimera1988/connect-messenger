@@ -306,6 +306,7 @@ export default function Home() {
   const [crop, setCrop] = useState<CropState | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChat, setActiveChat] = useState<string | null>(null);
+  const [clearedChats, setClearedChats] = useState<Record<string,string>>({});
   const [messages, setMessages] = useState<Message[]>([]);
   const [latest, setLatest] = useState<Record<string, Message>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
@@ -425,6 +426,10 @@ export default function Home() {
     return () => { vv.removeEventListener('resize', update); vv.removeEventListener('scroll', update); window.removeEventListener('orientationchange', update); };
   }, []);
   useEffect(() => { activeChatRef.current = activeChat; }, [activeChat]);
+  useEffect(() => {
+    if (!user) { setClearedChats({}); return; }
+    try { const raw=localStorage.getItem('connect-cleared-chats:'+user.id); setClearedChats(raw?JSON.parse(raw):{}); } catch { setClearedChats({}); }
+  }, [user?.id]);
 
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
@@ -668,11 +673,12 @@ export default function Home() {
     setBusy(false);setNotice('Аватар обновлён'); closeCrop();
   }
   const contacts = profiles.filter(p => !p.is_blocked && p.id !== user?.id);
-  const chats = conversations.map(c => ({
+  const chats = conversations.filter(c => !clearedChats[c.id] || (latest[c.id] && latest[c.id].created_at > clearedChats[c.id])).map(c => ({
     ...c,
     other: profiles.find(p => p.id === (c.user_a === user?.id ? c.user_b : c.user_a)),
     last: latest[c.id], count: unread[c.id] || 0,
   })).sort((a, b) => (b.last?.created_at || b.created_at).localeCompare(a.last?.created_at || a.created_at));
+  const visibleMessages=messages.filter(m=>!activeChat || !clearedChats[activeChat] || m.created_at>clearedChats[activeChat]);
   const selected = chats.find(c => c.id === activeChat);
   const currentName = selected?.other?.display_name || 'Собеседник';
   const peerPresence = selected?.other ? presence[selected.other.id] : undefined;
@@ -682,6 +688,14 @@ export default function Home() {
   const filteredContacts = contacts.filter(p => p.display_name.toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   const unreadTotal = Object.values(unread).reduce((sum, n) => sum + n, 0);
 
+  function clearConversation(id: string) {
+    if (!user || !window.confirm('Очистить переписку только на этом устройстве? У собеседника сообщения останутся.')) return;
+    const next={...clearedChats,[id]:new Date().toISOString()};
+    setClearedChats(next);
+    try { localStorage.setItem('connect-cleared-chats:'+user.id,JSON.stringify(next)); } catch {}
+    if (activeChat===id) exitChat();
+    setNotice('Переписка скрыта на этом устройстве');
+  }
   function enterChat(id: string) { setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
   function exitChat() { setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
   function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); }
@@ -923,14 +937,15 @@ export default function Home() {
                 <Avatar name={currentName} id={selected.other?.id} url={selected.other ? avatarUrls[selected.other.id] : undefined}/>
                 <span className="chat-header-person"><strong>{currentName}</strong><small className={typing ? 'typing-label' : ''}>{peerStatus}</small></span>
               </button>
+              <button type="button" className="icon-btn chat-clear-btn" aria-label="Очистить переписку" title="Очистить переписку" onClick={()=>clearConversation(activeChat)}><Icon name="trash" size={20}/></button>
             </header>
             <div className={"message-scroll"+(wallpaper?" has-wallpaper":"")} style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`}:undefined} ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
               <div className="message-stream">
-                {messages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>Напишите первое сообщение</span></div> : messages.map((m,index) => {
+                {visibleMessages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>Напишите первое сообщение</span></div> : visibleMessages.map((m,index) => {
                   const mine = m.sender_id === user.id;
-                  const replied = m.reply_to ? messages.find(x => x.id === m.reply_to) : undefined;
+                  const replied = m.reply_to ? visibleMessages.find(x => x.id === m.reply_to) : undefined;
                   return <div key={m.id} className="message-day-group">
-                    {(index===0 || dayKey(messages[index-1].created_at)!==dayKey(m.created_at)) && <div className="date-separator"><span>{dayLabel(m.created_at)}</span></div>}
+                    {(index===0 || dayKey(visibleMessages[index-1].created_at)!==dayKey(m.created_at)) && <div className="date-separator"><span>{dayLabel(m.created_at)}</span></div>}
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming')}>
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
                     <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && stickerFromBody(m.body) ? ' sticker-bubble' : '')}
@@ -981,7 +996,7 @@ export default function Home() {
                 <div className="search-field"><Icon name="search" size={19}/><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Поиск по чатам" aria-label="Поиск по чатам"/></div>
                 <div className="scroll-content chat-rows">
                   {filteredChats.length === 0 ? <div className="empty-state"><Icon name="chats" size={38}/><strong>{search ? 'Ничего не найдено' : 'Пока нет переписок'}</strong><span>{search ? 'Попробуйте другое имя' : 'Откройте «Контакты» и начните разговор'}</span></div>
-                    : filteredChats.map(c => <button type="button" className="dialog-row" key={c.id} onClick={() => enterChat(c.id)}><Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button>)}
+                    : filteredChats.map(c => <div className="dialog-entry" key={c.id}><button type="button" className="dialog-row" key={c.id} onClick={() => enterChat(c.id)}><Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button><button type="button" className="dialog-delete" aria-label={'Удалить переписку с '+(c.other?.display_name||'собеседником')} onClick={()=>clearConversation(c.id)}><Icon name="trash" size={19}/></button></div>)}
                 </div>
               </>}
               {tab === 'contacts' && <>
