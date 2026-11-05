@@ -800,6 +800,10 @@ export default function Home() {
     return () => {cancelled=true;};
   }, [messages, user?.id]);
 
+  function isKeyboardSticker(m: Message): boolean {
+    return m.attachment_kind === 'image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || '');
+  }
+
   function handleComposerPaste(event: React.ClipboardEvent<HTMLInputElement>) {
     // iOS custom keyboard stickers may be delivered as image clipboard items.
     const clipboard = event.clipboardData;
@@ -997,7 +1001,7 @@ export default function Home() {
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming') + (selectedIds.includes(m.id)?' is-selected':'')}>
                     {selectionMode&&<input className="message-select-check" type="checkbox" aria-label="Выбрать сообщение" checked={selectedIds.includes(m.id)} onChange={()=>selectOne(m.id)}/>}
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
-                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && stickerFromBody(m.body) ? ' sticker-bubble' : '')}
+                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(m.body) || isKeyboardSticker(m)) ? ' sticker-bubble' : '')}
                       style={{ transform: `translate3d(${swipe?.id === m.id ? swipe.offset : 0}px,0,0)` }}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
@@ -1007,7 +1011,7 @@ export default function Home() {
                       role={m.deleted_at ? undefined : 'button'} aria-label={m.deleted_at ? 'Сообщение удалено' : 'Удерживайте, чтобы открыть действия с сообщением'}>
                       {m.reply_to && <div className="quote-box"><strong>{replied?.sender_id === user.id ? 'Вы' : currentName}</strong><span>{!replied ? 'Исходное сообщение' : replied.deleted_at ? 'Сообщение удалено' : replied.body}</span></div>}
                       <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : <>
-                        {m.attachment_path && <div className="attachment-preview">
+                        {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
                           {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
                             : m.attachment_kind==='image' ? <a href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></a>
                             : m.attachment_kind==='video' ? <video controls playsInline preload="metadata" src={attachmentUrls[m.attachment_path]}/>
