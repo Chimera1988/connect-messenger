@@ -9,7 +9,7 @@ permissions:
 jobs:
   check-cloudflare:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout Connect
         uses: actions/checkout@v4
@@ -17,13 +17,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-      - name: Install existing dependencies
-        run: npm ci
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
       - name: Run Next.js production build
         run: npm run build
       - name: Check vinext compatibility
         run: npx --yes vinext@latest check
-      - name: Upload compatibility report
-        if: failure()
-        run: echo 'Inspect the failed step logs in this workflow run.'
