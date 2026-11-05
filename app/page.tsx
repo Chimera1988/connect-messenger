@@ -131,9 +131,25 @@ function MessageChecks({delivered,read}:{delivered:boolean;read:boolean}){
     <svg viewBox="0 0 22 16" width="19" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="m2 8 4 4 7-8"/>{delivered&&<path d="m8 8 4 4 8-9"/>}</svg>
   </span>;
 }
+// Forwarding metadata is encoded in the body for compatibility with the current database schema.
+const FORWARD_PREFIX = '[[connect-forward:';
+function forwardedMessage(body: string): { from: string | null; text: string } {
+  if (!body.startsWith(FORWARD_PREFIX)) return { from: null, text: body };
+  const end = body.indexOf(']]\n', FORWARD_PREFIX.length);
+  if (end < 0) return { from: null, text: body };
+  try {
+    const from = decodeURIComponent(body.slice(FORWARD_PREFIX.length, end));
+    if (!from || from.length > 100) return { from: null, text: body };
+    return { from, text: body.slice(end + 3) };
+  } catch { return { from: null, text: body }; }
+}
+function forwardBody(from: string, body: string): string {
+  return `${FORWARD_PREFIX}${encodeURIComponent(from.slice(0, 60))}]]\n${forwardedMessage(body).text}`;
+}
+
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (stickerFromBody(m.body) ? 'Стикер' : m.body || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (stickerFromBody(forwardedMessage(m.body).text) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
@@ -745,7 +761,61 @@ export default function Home() {
   useEffect(()=>{if(!user)return;try{setHiddenMessages(JSON.parse(localStorage.getItem('connect-hidden-messages:'+user.id)||'[]'));}catch{setHiddenMessages([])}},[user?.id]);
   function hideMessages(ids:string[]){if(!user)return;const next=Array.from(new Set([...hiddenMessages,...ids]));setHiddenMessages(next);try{localStorage.setItem('connect-hidden-messages:'+user.id,JSON.stringify(next))}catch{}setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}
   function beginForward(ids:string[]){setForwardIds(ids);setMenuMessage(null);setChatActions(false);}
-  async function forwardTo(contact:Profile){if(!supabase||!user||busy)return;const items=visibleMessages.filter(m=>forwardIds.includes(m.id));if(!items.length){setForwardIds([]);return;}setBusy(true);let chat=conversations.find(c=>(c.user_a===user.id&&c.user_b===contact.id)||(c.user_b===user.id&&c.user_a===contact.id));if(!chat){const [a,b]=[user.id,contact.id].sort();const r=await supabase.from('conversations').upsert({user_a:a,user_b:b},{onConflict:'user_a,user_b'}).select('id,user_a,user_b,created_at').single();if(r.error||!r.data){setBusy(false);setNotice('Не удалось открыть чат: '+(r.error?.message||'Ошибка'));return;}chat=r.data as Conversation;setConversations(prev=>[chat!,...prev]);}let failed='';for(const m of items){const r=await supabase.from('messages').insert({conversation_id:chat.id,sender_id:user.id,body:m.body||'📎 Пересланное вложение',attachment_path:m.attachment_path,attachment_name:m.attachment_name,attachment_type:m.attachment_type,attachment_size:m.attachment_size,attachment_kind:m.attachment_kind});if(r.error){failed=r.error.message;break;}}setBusy(false);setForwardIds([]);setSelectedIds([]);setSelectionMode(false);if(failed)setNotice('Не удалось переслать: '+failed);else{enterChat(chat.id);setNotice('Переслано: '+items.length);}}
+  async function forwardTo(contact:Profile) {
+    if (!supabase || !user || busy) return;
+    const items = visibleMessages.filter(m => forwardIds.includes(m.id));
+    if (!items.length) { setForwardIds([]); return; }
+    setBusy(true);
+    try {
+      let chat = conversations.find(c => (c.user_a === user.id && c.user_b === contact.id) || (c.user_b === user.id && c.user_a === contact.id));
+      if (!chat) {
+        const [a,b] = [user.id, contact.id].sort();
+        const {data,error} = await supabase.from('conversations').upsert({user_a:a,user_b:b},{onConflict:'user_a,user_b'}).select('id,user_a,user_b,created_at').single();
+        if (error || !data) throw error || new Error('Не удалось открыть чат');
+        chat = data as Conversation;
+        setConversations(prev => [chat!, ...prev]);
+      }
+      let count = 0;
+      for (const m of items) {
+        const original = forwardedMessage(m.body);
+        const senderName = original.from || profiles.find(p => p.id === m.sender_id)?.display_name || (m.sender_id === user.id ? ownProfile?.display_name : null) || 'Пользователь';
+        let path: string | null = null;
+        if (m.attachment_path) {
+          // The DB constraint requires every attachment path to start with
+          // the destination conversation ID and the forwarding user's ID.
+          path = `${chat.id}/${user.id}/${crypto.randomUUID()}`;
+          const bucket = supabase.storage.from('connect-attachments');
+          const copied = await bucket.copy(m.attachment_path, path);
+          if (copied.error) {
+            // Some Storage policies allow signed downloads and uploads but not copy.
+            // Use that path for small attachments; large files need server-side copy permission.
+            if (!m.attachment_size || m.attachment_size > 6 * 1024 * 1024) throw new Error('Не удалось скопировать вложение: ' + copied.error.message);
+            const downloaded = await bucket.download(m.attachment_path);
+            if (downloaded.error || !downloaded.data) throw new Error('Не удалось прочитать вложение: ' + (downloaded.error?.message || 'Ошибка'));
+            const uploaded = await bucket.upload(path, downloaded.data, {contentType:m.attachment_type || 'application/octet-stream', upsert:false});
+            if (uploaded.error) throw new Error('Не удалось загрузить вложение: ' + uploaded.error.message);
+          }
+        }
+        const {error} = await supabase.from('messages').insert({
+          conversation_id:chat.id, sender_id:user.id,
+          body:forwardBody(senderName, original.text),
+          attachment_path:path, attachment_name:path ? m.attachment_name : null,
+          attachment_type:path ? m.attachment_type : null,
+          attachment_size:path ? m.attachment_size : null,
+          attachment_kind:path ? m.attachment_kind : null,
+        });
+        if (error) {
+          if (path) await supabase.storage.from('connect-attachments').remove([path]);
+          throw error;
+        }
+        count++;
+      }
+      setForwardIds([]); setSelectedIds([]); setSelectionMode(false);
+      enterChat(chat.id); setNotice('Переслано: ' + count);
+    } catch (error) {
+      setNotice('Не удалось переслать: ' + (error instanceof Error ? error.message : String(error)));
+    } finally { setBusy(false); }
+  }
   async function removeForEveryone(ids:string[]){if(!supabase||!user||busy)return;const own=visibleMessages.filter(m=>ids.includes(m.id)&&m.sender_id===user.id);if(!own.length){setNotice('Можно удалить у всех только свои сообщения');return;}if(!window.confirm('Удалить '+own.length+' сообщ. у обоих участников?'))return;setBusy(true);let failed='';for(const m of own){const r=await supabase.from('messages').update({deleted_at:new Date().toISOString()}).eq('id',m.id).eq('sender_id',user.id);if(r.error){failed=r.error.message;break;}}setBusy(false);if(failed)setNotice('Не удалось удалить: '+failed);else{setMessages(prev=>prev.filter(m=>!own.some(x=>x.id===m.id)));setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}}
   function selectOne(id:string){setSelectedIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);}
   function startSelection(ids:string[]=[]){setSelectionMode(true);setSelectedIds(ids);setChatActions(false);setMenuMessage(null);}
@@ -1091,7 +1161,7 @@ export default function Home() {
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming') + (selectedIds.includes(m.id)?' is-selected':'')}>
                     {selectionMode&&<input className="message-select-check" type="checkbox" aria-label="Выбрать сообщение" checked={selectedIds.includes(m.id)} onChange={()=>selectOne(m.id)}/>}
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
-                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(m.body) || isKeyboardSticker(m)) ? ' sticker-bubble' : '')}
+                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(forwardedMessage(m.body).text) || isKeyboardSticker(m)) ? ' sticker-bubble' : '')}
                       style={{ transform: `translate3d(${swipe?.id === m.id ? swipe.offset : 0}px,0,0)` }}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
@@ -1101,6 +1171,7 @@ export default function Home() {
                       role={m.deleted_at ? undefined : 'button'} aria-label={m.deleted_at ? 'Сообщение удалено' : 'Удерживайте, чтобы открыть действия с сообщением'}>
                       {m.reply_to && <div className="quote-box"><strong>{replied?.sender_id === user.id ? 'Вы' : currentName}</strong><span>{!replied ? 'Исходное сообщение' : replied.deleted_at ? 'Сообщение удалено' : replied.body}</span></div>}
                       <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : <>
+                        {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
                           {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
                             : m.attachment_kind==='image' ? <a href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></a>
@@ -1108,7 +1179,7 @@ export default function Home() {
                             : m.attachment_kind==='audio' ? <VoicePlayer src={attachmentUrls[m.attachment_path]}/>
                             : <a className="attachment-file" href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer" download={m.attachment_name || 'Файл'}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''}</small></span></a>}
                         </div>}
-                        {stickerFromBody(m.body) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(m.body)!)} alt="Стикер" loading="lazy"/> : highlightMessage(m.body)}
+                        {stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
                       </>}</div>
                       <div className="bubble-meta">{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>
                     </div>
