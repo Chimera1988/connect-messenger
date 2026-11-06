@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import InvitationCodes from '../components/InvitationCodes';
+import ConnectDynamicTheme from '../components/ConnectDynamicTheme';
 import './globals.css';
 import './liquid-glass.css';
 
@@ -17,5 +18,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ru"><body>{children}<InvitationCodes /></body></html>;
+  return <html lang="ru"><body>{children}<InvitationCodes /><ConnectDynamicTheme /></body></html>;
 }

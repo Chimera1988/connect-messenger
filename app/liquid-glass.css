@@ -1,7 +1,7 @@
-/* Connect Messenger — Liquid Glass v2 (PWA)
-   Visual-only refinement matched to the original dark navy / teal reference.
-   CSS affects no Supabase, messaging, voice, or notification behavior.
-   The selected user accent is preserved for existing actionable elements.
+/* Connect Messenger — Adaptive Liquid Glass v3 (PWA)
+   Seven calibrated color schemes + any custom HEX accent.
+   All colors below adapt with the saved UI accent; no app data is touched.
+   The SVG acts strictly as an alpha mask: it does not contain color values.
 */
 .connect-app {
   --glass-surface: rgba(24, 34, 52, .62);
@@ -11,14 +11,18 @@
   --glass-stroke-hi: rgba(231, 245, 255, .24);
   --glass-sheen: rgba(255, 255, 255, .10);
   --glass-shadow: 0 10px 38px rgba(0, 0, 0, .24);
-  --glass-glow: color-mix(in srgb, var(--accent) 20%, #00cdbd);
+  --glass-glow: var(--wave-primary, #08d9bd);
   --glass-background: #070c15;
+  /* JS writes these for seven presets + custom selections. Fallback is teal. */
+  --wave-primary: #08d9bd;
+  --wave-secondary: #62a7f5;
+  --wave-tertiary: #7ae5db;
   background: var(--glass-background);
 }
 .connect-app:has(.chat-view) { background: var(--glass-background); }
 
-/* Light & glow are deliberately concentrated below the list.
-   No broad opaque ribbons at the top of the screen. */
+/* Low, floating lights instead of opaque bands. Ambient glows and trails
+   share the same CSS variables, so the entire scene changes in real time. */
 .connect-app::before,
 .connect-app::after {
   content: "";
@@ -29,17 +33,28 @@
 }
 .connect-app::before {
   background:
-    radial-gradient(ellipse 53% 22% at 15% 72%, color-mix(in srgb, var(--glass-glow) 24%, transparent), transparent 84%),
-    radial-gradient(ellipse 55% 28% at 89% 86%, rgba(87, 135, 223, .20), transparent 83%),
-    radial-gradient(ellipse 67% 47% at 92% 13%, rgba(45, 76, 122, .13), transparent 80%),
-    radial-gradient(ellipse 52% 21% at 44% 100%, rgba(92, 130, 184, .10), transparent 88%);
+    radial-gradient(ellipse 65% 33% at 6% 79%, color-mix(in srgb, var(--wave-primary) 24%, transparent), transparent 88%),
+    radial-gradient(ellipse 57% 31% at 91% 88%, color-mix(in srgb, var(--wave-secondary) 23%, transparent), transparent 88%),
+    radial-gradient(ellipse 64% 45% at 89% 12%, color-mix(in srgb, var(--wave-tertiary) 8%, transparent), transparent 88%);
 }
 .connect-app::after {
-  background-image: url('/connect-ambient-waves.svg');
-  background-size: 100% 100%;
-  background-position: center bottom;
-  background-repeat: no-repeat;
-  opacity: .92;
+  /* A transparent alpha mask preserves the flowing-wave geometry but allows
+     every stop color to be driven by the theme (including a custom color). */
+  background: linear-gradient(111deg,
+    var(--wave-primary) 4%,
+    color-mix(in srgb, var(--wave-primary) 68%, var(--wave-tertiary)) 36%,
+    var(--wave-secondary) 74%,
+    var(--wave-tertiary) 100%);
+  -webkit-mask-image: url('/connect-wave-mask.svg');
+  mask-image: url('/connect-wave-mask.svg');
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center bottom;
+  mask-position: center bottom;
+  mask-mode: alpha;
+  opacity: .88;
   transform: translateZ(0);
   will-change: transform;
 }
@@ -69,7 +84,7 @@
   min-height: 67px !important;
   border: 1px solid var(--glass-stroke-hi);
   border-radius: 25px;
-  background: linear-gradient(140deg, rgba(104, 148, 197, .18), rgba(24, 37, 59, .80) 44%, rgba(64, 88, 120, .34));
+  background: linear-gradient(140deg, color-mix(in srgb, var(--wave-secondary) 14%, rgba(37, 51, 77, .65)), rgba(24, 37, 59, .80) 44%, color-mix(in srgb, var(--wave-primary) 11%, rgba(59, 84, 119, .32)));
   box-shadow: 0 14px 32px rgba(0, 0, 0, .36), inset 0 1px 0 rgba(255, 255, 255, .18);
   -webkit-backdrop-filter: blur(26px) saturate(150%);
   backdrop-filter: blur(26px) saturate(150%);
@@ -80,7 +95,7 @@
   padding: 4px 2px !important;
   border-radius: 20px;
   color: #aebcd0;
-  transition: background .18s ease, color .18s ease;
+  transition: background .18s ease, color .18s ease, box-shadow .18s ease;
 }
 .connect-app .nav-symbol {
   height: 27px !important;
@@ -93,8 +108,8 @@
 .connect-app .nav-tab small { font-size: 10.5px !important; }
 .connect-app .nav-tab.selected {
   color: var(--accent);
-  background: linear-gradient(155deg, rgba(201, 229, 245, .13), rgba(51, 91, 118, .22));
-  border: 1px solid rgba(209, 238, 248, .12);
+  background: linear-gradient(155deg, color-mix(in srgb, var(--wave-primary) 13%, rgba(201, 229, 245, .13)), rgba(51, 91, 118, .22));
+  border: 1px solid color-mix(in srgb, var(--wave-primary) 18%, rgba(209, 238, 248, .12));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 5px 15px rgba(0, 0, 0, .12);
 }
 .connect-app .nav-tab.selected .nav-symbol svg {
@@ -123,7 +138,7 @@
 .connect-app .chat-actions-menu,
 .connect-app .compose-context,
 .connect-app .settings-menu > div {
-  background: linear-gradient(130deg, rgba(107, 141, 183, .16), rgba(27, 38, 58, .68) 35%, rgba(37, 52, 74, .53));
+  background: linear-gradient(130deg, color-mix(in srgb, var(--wave-secondary) 6%, rgba(107, 141, 183, .16)), rgba(27, 38, 58, .68) 35%, rgba(37, 52, 74, .53));
   border: 1px solid var(--glass-stroke);
   box-shadow: inset 0 1px 0 var(--glass-sheen), var(--glass-shadow);
   -webkit-backdrop-filter: blur(23px) saturate(145%);
@@ -171,7 +186,7 @@
 .connect-app .settings-menu > div:nth-child(7) { margin-top: 14px; }
 .connect-app .settings-menu-row { min-height: 65px; }
 .connect-app .setting-icon {
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 28%, rgba(255,255,255,.04)), rgba(23, 60, 78, .30));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 28%, rgba(255,255,255,.04)), color-mix(in srgb, var(--wave-primary) 8%, rgba(23, 60, 78, .30)));
   border: 1px solid color-mix(in srgb, var(--accent) 36%, rgba(195,231,250,.12));
   border-radius: 12px;
   box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 3px 10px rgba(0,0,0,.18);
@@ -208,6 +223,69 @@
 .connect-app .send-button { box-shadow: 0 3px 16px color-mix(in srgb, var(--accent) 24%, transparent); }
 .connect-app .message-scroll.has-wallpaper { background-position: center; background-size: cover; }
 
+/* V3: unify interactive chrome and text readability. */
+.connect-app .home-header .new-chat {
+  width: 39px; height: 39px; border-radius: 15px;
+  border: 1px solid var(--glass-stroke);
+  background: linear-gradient(145deg, rgba(83, 110, 145, .12), rgba(20, 30, 46, .36));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .09);
+}
+.connect-app .home-header .new-chat svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 23%, transparent)); }
+.connect-app .search-field:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 34%, rgba(219,242,255,.18));
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 0 0 2px color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.connect-app .dialog-entry:first-child:last-child { border-radius: 19px; }
+.connect-app .chat-rows .dialog-entry + .dialog-entry { border-top: 0; }
+.connect-app .dialog-row:last-child { border-bottom-color: rgba(208,230,255,.10); }
+.connect-app .contact-rows { background: transparent; }
+.connect-app .contact-rows .contact-row {
+  background: linear-gradient(120deg, rgba(37, 54, 78, .35), rgba(25, 35, 53, .20));
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  padding-left: 9px; padding-right: 9px;
+}
+.connect-app .contact-rows .contact-row:first-child { border-radius: 18px 18px 0 0; }
+.connect-app .contact-rows .contact-row:last-child { border-radius: 0 0 18px 18px; }
+.connect-app .contact-rows .contact-row:first-child:last-child { border-radius: 18px; }
+.connect-app .chat-header { border-bottom-color: color-mix(in srgb, var(--wave-secondary) 14%, var(--glass-stroke)); }
+.connect-app .chat-header-person strong { font-weight: 720; }
+.connect-app .chat-header-person small.typing-label { color: var(--accent); }
+.connect-app .chat-composer { border-top-color: var(--glass-stroke-hi); }
+.connect-app .chat-composer .composer-extra {
+  width: 34px; height: 38px;
+  color: var(--accent);
+  border-radius: 14px;
+  transition: background .16s ease;
+}
+.connect-app .chat-composer .composer-extra:active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.connect-app .compose-line input {
+  background: linear-gradient(130deg, rgba(41, 55, 79, .84), rgba(20, 34, 55, .75));
+  border: 1px solid var(--glass-stroke);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.08);
+}
+.connect-app .compose-line input:focus { border-color: color-mix(in srgb, var(--accent) 38%, var(--glass-stroke)); }
+.connect-app .bubble.sent:not(.media-only) {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 85%, #ffffff 15%), var(--accent));
+  box-shadow: 0 3px 16px rgba(0,0,0,.15), inset 0 1px 0 rgba(255,255,255,.13);
+}
+.connect-app .bubble.received { box-shadow: 0 3px 16px rgba(0,0,0,.13), inset 0 1px 0 rgba(255,255,255,.09); }
+.connect-app .settings-menu > div {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 10px 28px rgba(0,0,0,.15);
+}
+.connect-app .settings-menu-row:active { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.connect-app .settings-hint { line-height: 1.5; }
+.connect-app .settings-content { padding-bottom: 30px; }
+.connect-app .wallpaper-settings .settings-action {
+  box-shadow: 0 5px 20px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.connect-app .nav-tab:focus-visible,
+.connect-app .settings-menu-row:focus-visible,
+.connect-app .composer-extra:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Native light mode remains usable; don't put black glass on white surfaces. */
 .connect-app.light {
   --glass-background: #edf3fa;
@@ -235,6 +313,9 @@
 .connect-app.light .nav-tab { color:#5e6d7f; }
 .connect-app.light .nav-tab.selected { color:var(--accent); background:rgba(128, 164, 209, .19); }
 .connect-app.light .bubble.received { background:rgba(237,243,250,.94); }
+.connect-app.light .compose-line input { background: rgba(249,252,255,.86); }
+.connect-app.light .home-header .new-chat { background: rgba(255,255,255,.75); }
+.connect-app.light .contact-rows .contact-row { background: rgba(255,255,255,.76); }
 
 @media (prefers-reduced-motion: no-preference) {
   .connect-app::after { animation: connect-glass-waves 28s ease-in-out infinite alternate; }
