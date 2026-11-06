@@ -7,7 +7,7 @@ import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createClient, type User } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
-import type { FormEvent, TouchEvent, KeyboardEvent, CSSProperties } from 'react';
+import type { FormEvent, TouchEvent, KeyboardEvent as ReactKeyboardEvent, CSSProperties } from 'react';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
@@ -1234,7 +1234,7 @@ export default function Home() {
     clearGestureTimer(); gesture.current = null; setSwipe(null);
     if (!g.opened && g.dx > 58 && g.dx > Math.abs(g.dy) * 1.3 && !m.deleted_at) startReply(m);
   }
-  function bubbleKey(e: KeyboardEvent<HTMLDivElement>, m: Message) {
+  function bubbleKey(e: ReactKeyboardEvent<HTMLDivElement>, m: Message) {
     if ((e.key === 'Enter' || e.key === ' ') && !m.deleted_at) { e.preventDefault(); openMenu(m, e.currentTarget); }
   }
 
