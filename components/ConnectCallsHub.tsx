@@ -1,0 +1,318 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+
+type CallStatus = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
+type Call = {
+  id: string;
+  conversation_id: string;
+  caller_id: string;
+  callee_id: string;
+  status: CallStatus;
+  created_at: string;
+  answered_at: string | null;
+  ended_at: string | null;
+};
+type Profile = { id: string; display_name: string };
+type Filter = 'all' | 'missed';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
+const proxyFetch: typeof fetch = (input, init) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const proxy = typeof window !== 'undefined' && window.location.hostname === 'connect-chat.duckdns.org';
+  const target = proxy && url.startsWith(supabaseUrl + '/')
+    ? window.location.origin + '/supabase/' + url.slice(supabaseUrl.length + 1)
+    : url;
+  return fetch(input instanceof Request ? new Request(target, input) : target, init);
+};
+
+function CallIcon({ outgoing = false, size = 24 }: { outgoing?: boolean; size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.85" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M5 3.8c-1.6 1-1.3 4.8 1.2 8.6 2.4 3.8 5.9 6.7 8.7 6.4 1.1-.1 3-1.4 3.3-2.7l.2-2.3c0-.7-.5-1.4-1.3-1.6l-3.2-.9a1.4 1.4 0 0 0-1.5.6l-1.2 1.4c-2.3-1-4.5-3.2-5.5-5.5l1.4-1.2c.5-.4.7-1 .5-1.6l-.9-3.2A1.7 1.7 0 0 0 7.7 3z" />
+    {outgoing && <path d="m15 3 5 0 0 5m0-5-6 6" />}
+  </svg>;
+}
+function Arrow({ outgoing }: { outgoing: boolean }) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" width="16" height="16" aria-hidden="true">
+    {outgoing ? <path d="M5 18 19 4M10 4h9v9"/> : <path d="M5 5 19 19m-9 0h9v-9"/>}
+  </svg>;
+}
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+function formatTime(iso: string) {
+  return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+}
+function callDuration(call: Call) {
+  if (!call.answered_at || !call.ended_at) return '';
+  const seconds = Math.max(0, Math.round((Date.parse(call.ended_at) - Date.parse(call.answered_at)) / 1000));
+  const mins = Math.floor(seconds / 60);
+  return `${mins}:${String(seconds % 60).padStart(2, '0')}`;
+}
+function missed(call: Call, self: string) {
+  return call.callee_id === self && (call.status === 'missed' || call.status === 'declined' ||
+    (call.status === 'ended' && !call.answered_at) ||
+    (call.status === 'ringing' && Date.now() - Date.parse(call.created_at) > 60000));
+}
+function statusText(call: Call, self: string) {
+  const outgoing = call.caller_id === self;
+  const prefix = outgoing ? 'Исходящий' : 'Входящий';
+  if (call.status === 'active') return prefix + ' · идёт разговор';
+  if (call.status === 'ringing' && Date.now() - Date.parse(call.created_at) <= 60000) return prefix + ' · вызов';
+  if (missed(call, self)) return 'Пропущенный';
+  if (call.status === 'declined') return outgoing ? 'Исходящий · отклонён' : 'Отклонённый';
+  if (call.status === 'busy') return prefix + ' · занято';
+  if (call.status === 'failed') return prefix + ' · соединение не удалось';
+  if (!call.answered_at) return prefix + ' · без ответа';
+  const duration = callDuration(call);
+  return `${prefix}${duration ? ' · ' + duration : ''}`;
+}
+
+/** Four-tab navigation and call history without replacing Connect's large page.tsx. */
+export default function ConnectCallsHub() {
+  const client = useMemo<SupabaseClient | null>(() => {
+    if (!supabaseUrl || !supabaseKey) return null;
+    return createClient(supabaseUrl, supabaseKey, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+      global: { fetch: proxyFetch },
+    });
+  }, []);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [nav, setNav] = useState<Element | null>(null);
+  const [main, setMain] = useState<Element | null>(null);
+  const [open, setOpen] = useState(false);
+  const [filter, setFilter] = useState<Filter>('all');
+  const [calls, setCalls] = useState<Call[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const pushedRef = useRef(new Set<string>());
+  const refreshGeneration = useRef(0);
+
+  useEffect(() => {
+    if (!client) return;
+    let alive = true;
+    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
+      if (alive) setUserId(session?.user?.id || null);
+    });
+    void client.auth.getSession().then(({ data }) => {
+      if (alive) setUserId(data.session?.user.id || null);
+    }).catch(() => {});
+    return () => { alive = false; subscription.unsubscribe(); };
+  }, [client]);
+
+  useEffect(() => {
+    let frame = 0;
+    const scan = () => {
+      frame = 0;
+      const shell = document.querySelector('.connect-app');
+      const nextNav = shell?.querySelector('.bottom-nav') || null;
+      const nextMain = shell?.querySelector('.main-view') || null;
+      setNav(current => current === nextNav ? current : nextNav);
+      setMain(current => current === nextMain ? current : nextMain);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(scan); };
+    scan();
+    const observer = new MutationObserver(schedule);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
+  }, []);
+
+  useEffect(() => {
+    if (!nav || !main || !userId) setOpen(false);
+  }, [nav, main, userId]);
+
+  const refresh = useCallback(async () => {
+    if (!client || !userId) return;
+    const generation = ++refreshGeneration.current;
+    setLoading(true);
+    const { data, error: loadError } = await client.from('connect_calls')
+      .select('id,conversation_id,caller_id,callee_id,status,created_at,answered_at,ended_at')
+      .or(`caller_id.eq.${userId},callee_id.eq.${userId}`)
+      .order('created_at', { ascending: false }).limit(150);
+    if (generation !== refreshGeneration.current) return;
+    if (loadError) {
+      setError('Не удалось загрузить историю звонков.');
+      setLoading(false);
+      return;
+    }
+    setError('');
+    const rows = (data || []) as Call[];
+    setCalls(rows);
+    const ids = Array.from(new Set(rows.map(c => c.caller_id === userId ? c.callee_id : c.caller_id)));
+    if (ids.length) {
+      const people = await client.from('profiles').select('id,display_name').in('id', ids);
+      if (generation !== refreshGeneration.current) return;
+      if (people.data) setNames(Object.fromEntries((people.data as Profile[]).map(p => [p.id, p.display_name])));
+    } else setNames({});
+    setLoading(false);
+  }, [client, userId]);
+
+  const sendCallPush = useCallback(async (call: Call) => {
+    if (!client || !userId || call.caller_id !== userId || call.status !== 'ringing') return;
+    if (Date.now() - Date.parse(call.created_at) > 85000 || pushedRef.current.has(call.id)) return;
+    pushedRef.current.add(call.id);
+    try {
+      const { data: { session } } = await client.auth.getSession();
+      if (!session) return;
+      const response = await fetch('/api/push/call', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ callId: call.id }),
+        cache: 'no-store',
+      });
+      if (!response.ok) {
+        pushedRef.current.delete(call.id);
+        console.warn('Connect: call push not delivered, HTTP', response.status);
+      }
+    } catch {
+      pushedRef.current.delete(call.id);
+      console.warn('Connect: call push could not reach the server');
+    }
+  }, [client, userId]);
+
+  useEffect(() => {
+    if (!client || !userId) return;
+    let alive = true;
+    const subscription = client.channel(`connect-call-history-${userId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'connect_calls', filter: `caller_id=eq.${userId}` }, event => {
+        if (!alive) return;
+        const call = event.new as Call;
+        void sendCallPush(call);
+        void refresh();
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'connect_calls', filter: `callee_id=eq.${userId}` }, () => { if (alive) void refresh(); })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'connect_calls', filter: `caller_id=eq.${userId}` }, () => { if (alive) void refresh(); })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'connect_calls', filter: `callee_id=eq.${userId}` }, () => { if (alive) void refresh(); })
+      .subscribe();
+    void refresh();
+
+    // Fallback: the caller's button emits this event before its RPC creates the call.
+    // Re-check shortly afterwards if the Realtime INSERT was missed during reconnect.
+    let timers: ReturnType<typeof setTimeout>[] = [];
+    const onDial = () => {
+      for (const ms of [600, 1300, 2600, 4400, 7000]) {
+        timers.push(setTimeout(() => {
+          if (!alive) return;
+          void client.from('connect_calls').select('id,conversation_id,caller_id,callee_id,status,created_at,answered_at,ended_at')
+            .eq('caller_id', userId).eq('status', 'ringing')
+            .gte('created_at', new Date(Date.now() - 25000).toISOString())
+            .order('created_at', { ascending: false }).limit(1).maybeSingle()
+            .then(({ data }) => { if (alive && data) void sendCallPush(data as Call); });
+        }, ms));
+      }
+    };
+    window.addEventListener('connect:audio-call:start', onDial);
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    document.addEventListener('visibilitychange', onVisible);
+    const onServiceWorker = (event: MessageEvent) => {
+      if (event.data?.type === 'CONNECT_INCOMING_CALL') void refresh();
+    };
+    navigator.serviceWorker?.addEventListener('message', onServiceWorker);
+    return () => {
+      alive = false;
+      timers.forEach(clearTimeout); timers = [];
+      window.removeEventListener('connect:audio-call:start', onDial);
+      document.removeEventListener('visibilitychange', onVisible);
+      navigator.serviceWorker?.removeEventListener('message', onServiceWorker);
+      void client.removeChannel(subscription);
+    };
+  }, [client, userId, refresh, sendCallPush]);
+
+  useEffect(() => {
+    if (!open) return;
+    void refresh();
+  }, [open, refresh]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onOtherTab(event: PointerEvent) {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest('.bottom-nav .nav-tab:not(.connect-calls-tab)')) setOpen(false);
+    }
+    document.addEventListener('pointerdown', onOtherTab, true);
+    return () => document.removeEventListener('pointerdown', onOtherTab, true);
+  }, [open]);
+
+  const list = filter === 'missed' && userId ? calls.filter(call => missed(call, userId)) : calls;
+  return <>
+    <style>{`
+      .connect-app .main-view { position: relative; }
+      .connect-app .bottom-nav>.connect-calls-tab { order: 2; }
+      .connect-app .bottom-nav>.nav-tab:nth-child(3):not(.connect-calls-tab) { order: 3; }
+      .connect-app .bottom-nav>.nav-tab:nth-child(1) { order: 0; }
+      .connect-app .bottom-nav>.nav-tab:nth-child(2) { order: 1; }
+      .connect-app .bottom-nav>.connect-calls-tab svg { width: 23px; height: 23px; }
+      .connect-app:has(.connect-call-history-screen) .bottom-nav>.nav-tab.selected:not(.connect-calls-tab) {
+        background: transparent !important; border-color: transparent !important; box-shadow: none !important;
+        color: var(--muted) !important;
+      }
+      .connect-app:has(.connect-call-history-screen) .bottom-nav>.nav-tab.selected:not(.connect-calls-tab) svg { color: var(--muted) !important; filter: none !important; }
+      .connect-call-history-screen {
+        position: absolute; inset: 0; z-index: 3; display:flex; flex-direction:column;
+        padding: 14px 5px 5px; color: var(--text); min-height: 0;
+        background: color-mix(in srgb, var(--bg) 83%, transparent);
+        -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+      }
+      .connect-call-history-head { margin: 5px 3px 17px; display:flex; align-items: center; justify-content: space-between; }
+      .connect-call-history-head h1 { font-size: 27px; letter-spacing: -.6px; margin: 0; font-weight: 760; }
+      .connect-call-history-head span { color: var(--muted); font-size: 12px; }
+      .connect-call-history-filters { display:flex; gap:8px; margin: 0 2px 15px; }
+      .connect-call-history-filters button {
+        border: 1px solid rgba(190,211,236,.12); border-radius: 999px; padding: 9px 16px;
+        background: rgba(32,46,66,.53); color: var(--text); font-size: 12px;
+      }
+      .connect-call-history-filters button[aria-pressed="true"] {
+        color:#fff; border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+        background:color-mix(in srgb, var(--accent) 60%, #202d43);
+      }
+      .connect-call-history-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 18px; -webkit-overflow-scrolling: touch; }
+      .connect-call-history-item { display: flex; align-items:center; gap: 12px; padding: 14px 12px; min-height: 76px;
+        border-bottom: 1px solid rgba(180,208,237,.12); }
+      .connect-call-history-list { border: 1px solid rgba(180,208,237,.13); background:rgba(20,31,48,.55);
+        border-radius: 22px; overflow: hidden; box-shadow: inset 0 1px 0 rgba(255,255,255,.08); }
+      .connect-call-history-item:last-child { border-bottom: none; }
+      .connect-call-history-avatar { width: 46px; height: 46px; flex:0 0 46px; display:flex;align-items:center;justify-content:center;
+        border-radius: 50%; background: color-mix(in srgb, var(--accent) 24%, #22334b); color:var(--text); font-weight:700;font-size:20px; }
+      .connect-call-history-details { min-width:0; flex:1; display:flex;flex-direction:column;gap:5px; }
+      .connect-call-history-details strong { font-size:15px; overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+      .connect-call-history-details small { display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px; }
+      .connect-call-history-details small.missed { color: #ff8392; }
+      .connect-call-history-date { flex:0 0 auto; display:flex;flex-direction:column;align-items:flex-end;gap:5px;color:var(--muted);font-size:11px; }
+      .connect-call-history-empty { margin: 65px 12px; text-align:center;color:var(--muted);font-size:14px;line-height:1.5; }
+      .connect-call-history-empty button { margin-top:15px; border:0; border-radius:12px; background:var(--accent); color:white; padding:11px 20px; }
+      @media(max-width:370px) { .connect-call-history-item {padding-inline:9px;gap:9px;} .connect-call-history-avatar{width:40px;height:40px;flex-basis:40px;} .connect-call-history-date{font-size:10px;} }
+    `}</style>
+    {nav && main && userId && createPortal(<button type="button" className={'nav-tab connect-calls-tab' + (open ? ' selected' : '')}
+      aria-label="Звонки" aria-pressed={open} onClick={() => { setOpen(true); setFilter('all'); }}>
+      <span className="nav-symbol"><CallIcon /></span><small>Звонки</small>
+    </button>, nav)}
+    {main && nav && userId && open && createPortal(<section className="connect-call-history-screen" aria-label="История звонков">
+      <div className="connect-call-history-head"><h1>Звонки</h1><span>{calls.length} записей</span></div>
+      <div className="connect-call-history-filters">
+        <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Все</button>
+        <button type="button" aria-pressed={filter === 'missed'} onClick={() => setFilter('missed')}>Пропущенные</button>
+      </div>
+      <div className="connect-call-history-scroll">
+        {error ? <div className="connect-call-history-empty" role="alert">{error}<div><button type="button" onClick={() => void refresh()}>Повторить</button></div></div> :
+          list.length === 0 ? <div className="connect-call-history-empty">{loading ? 'Загружаем звонки…' : filter === 'missed' ? 'Пропущенных звонков нет' : 'Звонков пока нет'}</div> :
+          <div className="connect-call-history-list">{list.map(call => {
+            const outgoing = call.caller_id === userId;
+            const peerId = outgoing ? call.callee_id : call.caller_id;
+            const displayName = names[peerId] || 'Собеседник';
+            const missedCall = missed(call, userId);
+            return <div className="connect-call-history-item" key={call.id}>
+              <div className="connect-call-history-avatar" aria-hidden="true">{displayName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</div>
+              <div className="connect-call-history-details"><strong>{displayName}</strong><small className={missedCall ? 'missed' : ''}><Arrow outgoing={outgoing}/>{statusText(call,userId)}</small></div>
+              <div className="connect-call-history-date"><time dateTime={call.created_at}>{formatDate(call.created_at)}</time><span>{formatTime(call.created_at)}</span></div>
+            </div>;
+          })}</div>}
+      </div>
+    </section>, main)}
+  </>;
+}
