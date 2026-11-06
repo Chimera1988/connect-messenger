@@ -1,1 +1,33 @@
+name: Apply Android 1.3.1 PWA integration
 
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply precise patches to existing PWA files
+        run: python3 scripts/apply_android_integration.py
+      - name: Validate patch whitespace
+        run: git diff --check
+      - name: Commit updated PWA files
+        run: |
+          git config user.name 'Connect updater'
+          git config user.email 'actions@users.noreply.github.com'
+          git add app/page.tsx components/ConnectAudioCalls.tsx components/ConnectCallsHub.tsx app/api/push/message/route.ts
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: complete Android FCM and call controls integration'
+            git push
+          else
+            echo 'Already up to date'
+          fi
