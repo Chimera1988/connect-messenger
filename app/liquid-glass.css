@@ -1,0 +1,172 @@
+/* Connect Messenger — Liquid Glass / PWA visual layer (phase 1)
+   Presentation only: no changes to chat, storage, network, or notifications.
+   The ambient waves follow the existing --accent value.
+*/
+.connect-app {
+  --glass-surface: color-mix(in srgb, var(--panel) 74%, transparent);
+  --glass-surface-strong: color-mix(in srgb, var(--nav) 83%, transparent);
+  --glass-outline: color-mix(in srgb, var(--text) 13%, transparent);
+  --glass-sheen: color-mix(in srgb, var(--text) 8%, transparent);
+  --glass-shadow: 0 9px 30px rgba(0, 0, 0, .15);
+}
+
+/* The canvas lives behind all interactive views and never catches touches. */
+.connect-app::before {
+  content: "";
+  position: absolute;
+  inset: -12% -22%;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 85% 36% at 28% 23%, color-mix(in srgb, var(--accent) 46%, transparent), transparent 75%),
+    radial-gradient(ellipse 90% 44% at 88% 52%, color-mix(in srgb, var(--accent) 35%, #9585de 12%), transparent 77%),
+    radial-gradient(ellipse 78% 42% at 16% 87%, color-mix(in srgb, var(--accent) 34%, #a2caff 12%), transparent 77%);
+  -webkit-mask-image: url('/connect-ambient-waves.svg');
+  mask-image: url('/connect-ambient-waves.svg');
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  filter: blur(24px);
+  opacity: .76;
+  transform: translate3d(0, 0, 0) scale(1.04);
+}
+
+.connect-app.light {
+  --glass-surface: rgba(255, 255, 255, .72);
+  --glass-surface-strong: rgba(253, 254, 255, .84);
+  --glass-shadow: 0 9px 28px rgba(37, 54, 89, .07);
+}
+.connect-app.light::before { opacity: .3; }
+
+/* Keep the wave layer underneath the actual application and overlays. */
+.connect-app > .main-view,
+.connect-app > .chat-view,
+.connect-app > .profile-view,
+.connect-app > .login-screen,
+.connect-app > .loading-screen,
+.connect-app > .connection-error {
+  position: relative;
+  z-index: 1;
+}
+.connect-app .chat-rows { background: transparent; }
+
+/* Translucent navigation and chat chrome. */
+.connect-app .bottom-nav,
+.connect-app .chat-header,
+.connect-app .chat-composer,
+.connect-app .chat-search-bar,
+.connect-app .selection-toolbar {
+  background: var(--glass-surface-strong);
+  border-color: var(--glass-outline);
+  -webkit-backdrop-filter: blur(19px) saturate(140%);
+  backdrop-filter: blur(19px) saturate(140%);
+  box-shadow: inset 0 1px 0 var(--glass-sheen);
+}
+.connect-app .bottom-nav { z-index: 4; }
+
+/* Glass-backed tab symbols: retain the existing SVG icons and tab actions. */
+.connect-app .nav-symbol {
+  width: 34px;
+  height: 32px !important;
+  border-radius: 12px;
+  background: linear-gradient(145deg, var(--glass-sheen), color-mix(in srgb, var(--panel) 47%, transparent));
+  border: 1px solid var(--glass-outline);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 4px 12px rgba(0, 0, 0, .10);
+  transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+.connect-app .nav-tab.selected .nav-symbol {
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--accent) 33%, transparent),
+    color-mix(in srgb, var(--accent) 12%, var(--glass-surface)));
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--glass-outline));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 23%, transparent),
+    0 3px 14px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.connect-app .nav-tab.selected .nav-symbol svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 38%, transparent)); }
+.connect-app .icon-btn:active { background: color-mix(in srgb, var(--accent) 13%, transparent); }
+
+/* Search, settings, and popovers share one restrained glass material. */
+.connect-app .search-field,
+.connect-app .settings-group,
+.connect-app .settings-profile,
+.connect-app .login-form,
+.connect-app .floating-menu,
+.connect-app .list-chat-popover,
+.connect-app .chat-actions-menu,
+.connect-app .compose-context {
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-outline);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), var(--glass-shadow);
+  -webkit-backdrop-filter: blur(16px) saturate(125%);
+  backdrop-filter: blur(16px) saturate(125%);
+}
+.connect-app .search-field { border-radius: 15px; }
+.connect-app .settings-group { border-radius: 17px; }
+.connect-app .settings-profile { border-radius: 17px; }
+.connect-app .setting-icon {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--glass-outline));
+  box-shadow: inset 0 1px 0 var(--glass-sheen);
+}
+.connect-app .theme-buttons button,
+.connect-app .compose-line input {
+  border: 1px solid var(--glass-outline);
+  background: color-mix(in srgb, var(--panel) 76%, transparent);
+}
+.connect-app .theme-buttons button.current {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.connect-app .dialog-row,
+.connect-app .contact-row { border-bottom-color: var(--glass-outline); }
+.connect-app .dialog-row:active,
+.connect-app .contact-row:active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.connect-app .bubble.received {
+  background: color-mix(in srgb, var(--chat-in) 87%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-sheen);
+}
+.connect-app .date-separator span {
+  background: var(--glass-surface-strong);
+  border-color: var(--glass-outline);
+  -webkit-backdrop-filter: blur(9px);
+  backdrop-filter: blur(9px);
+}
+.connect-app .send-button {
+  box-shadow: 0 4px 15px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+/* If a user chooses a photo wallpaper, keep that photo and its inline background intact. */
+.connect-app .message-scroll.has-wallpaper {
+  background-position: center;
+  background-size: cover;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .connect-app::before { animation: connect-ambient-drift 25s ease-in-out infinite alternate; }
+  @keyframes connect-ambient-drift {
+    0% { transform: translate3d(-2%, -1%, 0) scale(1.04); }
+    50% { transform: translate3d(2%, 1.5%, 0) scale(1.08); }
+    100% { transform: translate3d(-1%, 3%, 0) scale(1.05); }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-app::before { animation: none; transform: none; }
+  .connect-app .nav-symbol { transition: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .connect-app { --glass-surface: var(--panel); --glass-surface-strong: var(--nav); }
+  .connect-app::before { opacity: .12; }
+  .connect-app .bottom-nav,
+  .connect-app .chat-header,
+  .connect-app .chat-composer,
+  .connect-app .search-field,
+  .connect-app .settings-group { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .connect-app { --glass-surface: var(--panel); --glass-surface-strong: var(--nav); }
+}

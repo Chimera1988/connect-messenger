@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import InvitationCodes from '../components/InvitationCodes';
 import './globals.css';
+import './liquid-glass.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
