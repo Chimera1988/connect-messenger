@@ -305,8 +305,8 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   }
 
   function cleanup() {
-    if (callRef.current) window.ConnectAndroid?.setCallState(callRef.current.id, 'ended');
     window.ConnectAndroid?.setSpeakerphone(false);
+    if (callRef.current) window.ConnectAndroid?.setCallState(callRef.current.id, 'ended');
     setSpeakerOn(false);
     soundRef.current?.stop();
     generationRef.current++;
@@ -326,6 +326,22 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     setShown(null); setPhase('idle'); setElapsed(0); setMuted(false);
   }
 
+  async function notifyCallEnded(callId: string) {
+    if (!client) return;
+    try {
+      const { data: { session } } = await client.auth.getSession();
+      if (!session) return;
+      const response = await fetch('/api/push/call/end', {
+        method: 'POST', cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ callId }),
+      });
+      if (!response.ok) console.warn('Connect: call-end push HTTP', response.status);
+    } catch {
+      console.warn('Connect: call-end push could not reach the server');
+    }
+  }
+
   async function finish(reason: 'hangup' | 'decline' | 'missed' | 'failed' | 'busy' = 'hangup') {
     const current = callRef.current;
     cleanup();
@@ -334,6 +350,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
         p_call_id: current.id, p_reason: reason,
       });
       if (rpcError) console.warn('Connect call state:', rpcError.message);
+      else void notifyCallEnded(current.id);
     }
   }
 
@@ -360,7 +377,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     };
     pc.onconnectionstatechange = () => {
       if (pc !== pcRef.current) return;
-      if (pc.connectionState === 'connected') { if (!enteredRef.current) soundRef.current?.connected(); enteredRef.current = true; setPhase('active'); setError(''); }
+      if (pc.connectionState === 'connected') { if (!enteredRef.current) soundRef.current?.connected(); enteredRef.current = true; if (callRef.current) window.ConnectAndroid?.setCallState(callRef.current.id, 'active'); setPhase('active'); setError(''); }
       if (pc.connectionState === 'failed') { setToast('Связь прервалась. Для некоторых сетей необходим TURN-сервер.'); void finish('failed'); }
     };
     return pc;
@@ -372,6 +389,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     callRef.current = next;
     setShown(next);
     if (!isLive(next.status)) {
+      void notifyCallEnded(next.id);
       if (next.status === 'missed' && next.callee_id === userId) setToast(`Пропущенный звонок: ${shownName || 'собеседник'}`);
       else if (next.status === 'declined') setToast('Звонок отклонён');
       else if (next.status === 'busy') setToast('Собеседник занят');

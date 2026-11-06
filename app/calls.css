@@ -38,3 +38,11 @@
   border-radius: 16px; padding: 11px 13px; font-size: 12px; width: max-content; max-width: 90%; }
 @media (max-width: 370px) { .connect-call-modal { padding: 24px 12px 20px; } .connect-call-actions { gap: 10px; } }
 @media (prefers-reduced-transparency: reduce) { .connect-call-backdrop, .connect-call-modal { backdrop-filter: none; -webkit-backdrop-filter: none; } }
+
+/* Connect 1.3.3: minimalist call icon in the chat header. */
+.connect-app .chat-header .connect-call-trigger {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0;
+}

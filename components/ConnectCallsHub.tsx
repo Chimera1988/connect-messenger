@@ -402,7 +402,7 @@ export default function ConnectCallsHub() {
     `}</style>
     {nav && main && userId && createPortal(<button type="button" className={'nav-tab connect-calls-tab' + (open ? ' selected' : '')}
       aria-label={unseenMissed ? `Звонки: пропущенных ${unseenMissed}` : "Звонки"} aria-pressed={open} onClick={openCalls}>
-      <span className="nav-symbol"><CallIcon /></span>{unseenMissed > 0 && <span className="connect-nav-count" aria-hidden="true">{unseenMissed > 99 ? '99+' : unseenMissed}</span>}<small>Звонки</small>
+      <span className="nav-symbol"><CallIcon />{unseenMissed > 0 && <span className="connect-nav-count" aria-hidden="true">{unseenMissed > 99 ? '99+' : unseenMissed}</span>}</span><small>Звонки</small>
     </button>, nav)}
     {main && nav && userId && open && createPortal(<section className="connect-call-history-screen" aria-label="История звонков">
       <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{calls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button></div></div>

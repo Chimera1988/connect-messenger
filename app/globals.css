@@ -501,3 +501,21 @@
 .connect-vnote-actions .connect-vnote-primary{background:var(--accent,#087dff);font-weight:600}
 
 .connect-video-note-length{position:absolute;z-index:2;bottom:12px;left:10px;border-radius:8px;padding:3px 6px;color:#fff;background:rgba(0,0,0,.55);font-size:12px;font-variant-numeric:tabular-nums}
+
+/* Connect 1.3.3: inline audio file preview */
+.connect-inline-audio-file { width: min(100%, 330px); min-width: 240px; max-width: 100%; padding: 6px 2px; display:flex; flex-direction:column; gap:8px; }
+.connect-inline-audio-file .connect-inline-audio-name { display:flex; align-items:center; gap:8px; font-size:13px; font-weight:600; color:var(--text); min-width:0; }
+.connect-inline-audio-file .connect-inline-audio-name span { display:block; overflow-wrap:anywhere; min-width:0; }
+.connect-inline-audio-file audio { display:block; width:100%; height:40px; border-radius:24px; }
+.connect-inline-audio-file > button { align-self:flex-start; border:1px solid color-mix(in srgb,var(--accent) 26%, transparent); color:var(--text); background:color-mix(in srgb,var(--accent) 16%, transparent); padding:6px 13px; border-radius:12px; font-size:12px; }
+@media(max-width:350px){.connect-inline-audio-file{min-width:0;width:100%;}}
+
+/* Connect 1.3.3: stable chat read boundary and jump control */
+.connect-app .chat-view { position: relative; }
+.connect-app .connect-new-messages { display:flex; align-items:center; justify-content:center; gap:10px; margin: 9px 0 13px; color:var(--accent2); font:600 11px/1.3 system-ui,sans-serif; letter-spacing:.015em; }
+.connect-app .connect-new-messages::before,.connect-app .connect-new-messages::after { content:""; flex:1; min-width:12px; height:1px; background:color-mix(in srgb,var(--accent) 35%,transparent); }
+.connect-app .connect-new-messages span { border-radius:20px; padding:6px 11px; background:color-mix(in srgb,var(--accent) 13%,var(--panel)); border:1px solid color-mix(in srgb,var(--accent) 22%,transparent); }
+.connect-app .connect-chat-jump { position:absolute; right:19px; bottom:calc(75px + env(safe-area-inset-bottom)); width:39px; height:39px; border-radius:50%; z-index:6; display:grid; place-items:center; padding:0; color:var(--accent2); background:color-mix(in srgb,var(--panel) 83%,transparent); border:1px solid color-mix(in srgb,var(--accent) 23%,var(--border)); box-shadow:0 4px 17px rgba(0,0,0,.23); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); }
+.connect-app .connect-chat-jump:active { transform:scale(.95); }
+.connect-app.light .connect-chat-jump { background:color-mix(in srgb,var(--panel) 90%,white); }
+@media(max-width:380px){.connect-app .connect-chat-jump{right:12px;bottom:calc(69px + env(safe-area-inset-bottom));}}

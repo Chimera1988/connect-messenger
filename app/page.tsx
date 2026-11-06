@@ -4,7 +4,7 @@ import ConnectNotificationSettings from '../components/ConnectNotificationSettin
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
 import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createClient, type User } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
 import type { FormEvent, TouchEvent, KeyboardEvent as ReactKeyboardEvent, CSSProperties } from 'react';
@@ -70,6 +70,13 @@ type Message = {
   attachment_path: string | null; attachment_name: string | null; attachment_type: string | null;
   attachment_size: number | null; attachment_kind: 'image' | 'video' | 'audio' | 'file' | null;
 };
+function isPlayableAudioFile(m: Message): boolean {
+  if (m.attachment_kind !== 'file') return false;
+  return (m.attachment_type || '').toLowerCase().startsWith('audio/') ||
+    /\.(?:mp3|m4a|aac|wav|ogg|oga|opus|flac|aif|aiff)$/i.test(m.attachment_name || '');
+}
+
+type ChatReadingEntry = { chatId: string; readAt: string; firstUnreadId: string | null; anchorId: string | null };
 type Gesture = { id: string; x: number; y: number; dx: number; dy: number; timer: number | null; opened: boolean };
 type IconName = 'chats' | 'contacts' | 'settings' | 'back' | 'search' | 'write' | 'send' | 'reply' |
   'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user' | 'plus' | 'mic' | 'stop' | 'file' | 'play' | 'dots' | 'forward';
@@ -620,6 +627,10 @@ export default function Home() {
 
   const shellRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [chatReadingEntry, setChatReadingEntry] = useState<ChatReadingEntry | null>(null);
+  const [showChatJump, setShowChatJump] = useState(false);
+  const chatPositionedRef = useRef<string | null>(null);
+  const scrollCheckFrame = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
   const activeChatRef = useRef<string | null>(null);
@@ -980,7 +991,7 @@ export default function Home() {
       setPeerRecording(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.recording_until && new Date(st.recording_until).getTime() > Date.now())));
       for (const m of recent) {
         if (!newest[m.conversation_id]) newest[m.conversation_id] = m;
-        if (m.conversation_id !== current && m.sender_id !== user.id && m.created_at > (readCache.current[m.conversation_id] || '')) counts[m.conversation_id] = (counts[m.conversation_id] || 0) + 1;
+        if (m.sender_id !== user.id && m.created_at > (readCache.current[m.conversation_id] || '')) counts[m.conversation_id] = (counts[m.conversation_id] || 0) + 1;
       }
       setLatest(newest); setUnread(counts);
       const deliveredByChat:Record<string,string>={};
@@ -996,20 +1007,49 @@ export default function Home() {
   useEffect(() => {
     if (!supabase || !activeChat || !user) return;
     let alive = true;
+    let firstLoad = true;
+    let firstLoadPending = false;
     setMessages([]); setTyping(false); setPeerRecording(false); setMenuMessage(null);
-    previousLast.current = ''; stickToBottom.current = true;
+    setChatReadingEntry(null); setShowChatJump(false);
+    chatPositionedRef.current = null;
+    previousLast.current = ''; stickToBottom.current = false;
     const id = activeChat;
     void supabase.from('conversation_user_state').upsert({ conversation_id: id, user_id: user.id }, { onConflict: 'conversation_id,user_id', ignoreDuplicates: true });
     const refresh = async () => {
-      if (!alive || document.visibilityState === 'hidden') return;
-      const { data, error } = await supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id', id).order('created_at', { ascending: false }).limit(500);
+      if (!alive || document.visibilityState === 'hidden' || firstLoadPending) return;
+      if (firstLoad) firstLoadPending = true;
+      const [messageResult, entryStateResult] = await Promise.all([
+        supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id', id).order('created_at', { ascending: false }).limit(500),
+        firstLoad ? supabase.from('conversation_user_state').select('last_read_at')
+          .eq('conversation_id', id).eq('user_id', user.id).maybeSingle() : Promise.resolve(null),
+      ]);
       if (!alive) return;
-      if (error) { setNotice(error.message); return; }
+      const { data, error } = messageResult;
+      if (error) { firstLoadPending = false; setNotice(error.message); return; }
       const incoming = ((data || []) as Message[]).reverse();
+      if (firstLoad) {
+        firstLoad = false;
+        firstLoadPending = false;
+        // Snapshot the read boundary BEFORE anything becomes visible. Never
+        // declare all 500 messages read just because the chat was opened.
+        const serverAt = entryStateResult?.data?.last_read_at || '';
+        const localAt = readCache.current[id] || '';
+        const readAt = serverAt > localAt ? serverAt : localAt;
+        if (readAt > localAt) readCache.current[id] = readAt;
+        const displayed = incoming.filter(m => !m.deleted_at && !hiddenMessages.includes(m.id)
+          && (!clearedChats[id] || m.created_at > clearedChats[id]));
+        const unreadIndex = displayed.findIndex(m => m.sender_id !== user.id && m.created_at > readAt);
+        let anchorIndex = unreadIndex >= 0 ? Math.max(0, unreadIndex - 1) : displayed.length - 1;
+        // If my own message is the newest, return to it rather than a stale read receipt.
+        if (displayed.at(-1)?.sender_id === user.id) anchorIndex = displayed.length - 1;
+        setChatReadingEntry({ chatId:id, readAt,
+          firstUnreadId:unreadIndex >= 0 ? displayed[unreadIndex].id : null,
+          anchorId:displayed[anchorIndex]?.id || null });
+      }
       setMessages(prev => prev.length === incoming.length && prev.every((m, i) =>
         m.id === incoming[i].id && m.body === incoming[i].body && m.edited_at === incoming[i].edited_at && m.deleted_at === incoming[i].deleted_at && m.attachment_path === incoming[i].attachment_path
       ) ? prev : incoming);
-      const last = incoming.at(-1); if (last) void markRead(id, last.created_at);
+      // Read receipts are updated from messages actually shown in the viewport.
     };
     void refresh();
     const channel = supabase.channel('connect-chat-' + id).on('postgres_changes', {
@@ -1022,33 +1062,98 @@ export default function Home() {
         const exists = prev.some(x => x.id === m.id);
         return exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m].sort((a, b) => a.created_at.localeCompare(b.created_at));
       });
-      if (payload.eventType === 'INSERT') void markRead(id, m.created_at);
+      if (payload.eventType === 'INSERT' && chatPositionedRef.current === id && stickToBottom.current)
+        void markRead(id, m.created_at);
     }).subscribe(status => { if (status === 'SUBSCRIBED') void refresh(); });
     const interval = window.setInterval(() => { void refresh(); }, 3000);
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisible);
+      if (scrollCheckFrame.current !== null) cancelAnimationFrame(scrollCheckFrame.current);
+      scrollCheckFrame.current = null;
       void supabase.removeChannel(channel);
     };
   }, [activeChat, user?.id, markRead]);
 
+  // Position before paint; a chat with unread messages starts at its read
+  // boundary, not at an arbitrary retained browser scroll offset.
+  useLayoutEffect(() => {
+    if (!activeChat || !messages.length || chatReadingEntry?.chatId !== activeChat
+        || chatPositionedRef.current === activeChat) return;
+    const root = scrollRef.current;
+    if (!root) return;
+    const anchor = chatReadingEntry.anchorId
+      ? root.querySelector<HTMLElement>('#msg-' + chatReadingEntry.anchorId) : null;
+    if (anchor) {
+      const scrollOffset = anchor.getBoundingClientRect().top - root.getBoundingClientRect().top;
+      root.scrollTop = Math.max(0, root.scrollTop + scrollOffset - 14);
+    } else root.scrollTop = root.scrollHeight;
+    chatPositionedRef.current = activeChat;
+    const below = root.scrollHeight - root.scrollTop - root.clientHeight;
+    stickToBottom.current = below < 110;
+    setShowChatJump(below > 170);
+    requestAnimationFrame(() => { if (chatPositionedRef.current === activeChat) trackScroll(); });
+  }, [activeChat, chatReadingEntry, messages.length]);
+
   useEffect(() => {
-    if (!activeChat || !messages.length) return;
+    if (!activeChat || !messages.length || chatPositionedRef.current !== activeChat) return;
     const last = messages[messages.length - 1];
-    void markRead(activeChat, last.created_at);
-    if (previousLast.current === last.id) return; // edits/deletions do not force a scroll
+    if (previousLast.current === last.id) return; // edits/deletions never force a jump
     const initial = previousLast.current === '';
     previousLast.current = last.id;
-    const shouldScroll = initial || stickToBottom.current || last.sender_id === user?.id;
-    if (shouldScroll) requestAnimationFrame(() => {
+    if (initial) return; // useLayoutEffect already placed the chat correctly
+    if (stickToBottom.current || last.sender_id === user?.id) requestAnimationFrame(() => {
+      if (chatPositionedRef.current !== activeChat) return;
       const el = scrollRef.current;
-      if (el) { el.scrollTop = el.scrollHeight; stickToBottom.current = true; }
+      if (el) { el.scrollTop = el.scrollHeight; stickToBottom.current = true; setShowChatJump(false); }
+      if (last.sender_id !== user?.id) void markRead(activeChat, last.created_at);
     });
+    else if (last.sender_id !== user?.id) {
+      // If a new message arrived while reading above the bottom, show a divider.
+      setChatReadingEntry(prev => prev?.chatId === activeChat && !prev.firstUnreadId
+        ? { ...prev, firstUnreadId:last.id } : prev);
+    }
   }, [activeChat, messages, user?.id, markRead]);
+
   function trackScroll() {
     const el = scrollRef.current;
-    if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 110;
+    if (!el || !activeChat || chatPositionedRef.current !== activeChat) return;
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottom.current = remaining < 110;
+    setShowChatJump(remaining > 170);
+    // Throttle the read-receipt scan to one animation frame per scroll burst.
+    if (scrollCheckFrame.current !== null || document.visibilityState !== 'visible') return;
+    scrollCheckFrame.current = requestAnimationFrame(() => {
+      scrollCheckFrame.current = null;
+      if (!el.isConnected || chatPositionedRef.current !== activeChat) return;
+      const viewport = el.getBoundingClientRect();
+      const nodes = el.querySelectorAll<HTMLElement>('.message-day-group[id^="msg-"]');
+      for (let i = nodes.length - 1; i >= 0; i--) {
+        const rect = nodes[i].getBoundingClientRect();
+        if (rect.top >= viewport.bottom - 15 || rect.bottom <= viewport.top + 8) continue;
+        const visiblePixels = Math.min(rect.bottom, viewport.bottom) - Math.max(rect.top, viewport.top);
+        if (visiblePixels < Math.min(rect.height * 0.55, 72)) continue;
+        const m = messages.find(message => message.id === nodes[i].id.slice(4));
+        if (m && m.sender_id !== user?.id) { void markRead(activeChat, m.created_at); break; }
+      }
+    });
+  }
+
+  function jumpToReadingPoint() {
+    const root = scrollRef.current;
+    if (!root || !activeChat) return;
+    const readAt = readCache.current[activeChat] || chatReadingEntry?.readAt || '';
+    const last = messages.at(-1);
+    const target = [...messages].reverse().find(m => m.created_at <= readAt
+      || (last?.sender_id === user?.id && m.id === last.id));
+    const node = target ? root.querySelector<HTMLElement>('#msg-' + target.id) : null;
+    // Earlier in history: return to the last read message (or my last sent one).
+    // Below that point: continue to the latest message. Never jump backwards.
+    if (node && node.getBoundingClientRect().top > root.getBoundingClientRect().bottom - 25) {
+      const offset = node.getBoundingClientRect().top - root.getBoundingClientRect().top;
+      root.scrollTo({ top:root.scrollTop + offset - 15, behavior:'smooth' });
+    } else root.scrollTo({ top:root.scrollHeight, behavior:'smooth' });
   }
 
   function changeDraft(value: string) {
@@ -1640,6 +1745,8 @@ export default function Home() {
                   const mine = m.sender_id === user.id;
                   const replied = m.reply_to ? visibleMessages.find(x => x.id === m.reply_to) : undefined;
                   return <div key={m.id} id={"msg-"+m.id} className="message-day-group">
+                    {chatReadingEntry?.chatId === activeChat && chatReadingEntry.firstUnreadId === m.id
+                      && <div className="connect-new-messages" role="separator"><span>Новые сообщения</span></div>}
                     {(index===0 || dayKey(visibleMessages[index-1].created_at)!==dayKey(m.created_at)) && <div className="date-separator"><span>{dayLabel(m.created_at)}</span></div>}
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming') + (selectedIds.includes(m.id)?' is-selected':'')}>
                     {selectionMode&&<input className="message-select-check" type="checkbox" aria-label="Выбрать сообщение" checked={selectedIds.includes(m.id)} onChange={()=>selectOne(m.id)}/>}
@@ -1662,6 +1769,13 @@ export default function Home() {
                             : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'}/>
                             : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
+                            : isPlayableAudioFile(m) ? <div className="connect-inline-audio-file"
+                                onTouchStart={e=>e.stopPropagation()} onTouchMove={e=>e.stopPropagation()} onTouchEnd={e=>e.stopPropagation()}>
+                                <div className="connect-inline-audio-name"><Icon name="file" size={17}/><span>{m.attachment_name || 'Аудиофайл'}</span></div>
+                                <audio controls preload="metadata" src={attachmentUrls[m.attachment_path]} aria-label={m.attachment_name || 'Прослушать аудиофайл'}
+                                  onClick={e=>e.stopPropagation()} onContextMenu={e=>e.stopPropagation()}/>
+                                <button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудиофайл')}}>Сохранить</button>
+                              </div>
                             : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
                         </div>}
                         {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);return st?<img className="sent-sticker" src={customStickerUrl(st)} alt={st.name} loading="lazy"/>:<span>Стикер недоступен</span>})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (parseAlbum(m.body).length ? null : forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
@@ -1673,6 +1787,13 @@ export default function Home() {
                 })}
               </div>
             </div>
+            {showChatJump && <button type="button" className="connect-chat-jump" onClick={jumpToReadingPoint}
+              aria-label="Вниз к последнему прочитанному или последнему сообщению" title="К последнему сообщению">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 4v15m-7-7 7 7 7-7" />
+              </svg>
+            </button>}
             <form className="chat-composer" onSubmit={sendMessage}>
               {(replyTo || editing) && <div className="compose-context"><div className="context-stripe"/><div className="compose-context-text"><strong>{editing ? 'Редактирование' : `Ответ: ${replyTo?.sender_id === user.id ? 'Вы' : currentName}`}</strong><span>{editing?.body || replyTo?.body}</span></div><button type="button" className="icon-btn dismiss-context" onClick={cancelCompose} aria-label="Отменить"><Icon name="close" size={20}/></button></div>}
               {pendingFiles.length>0 && <div className="connect-album-compose">

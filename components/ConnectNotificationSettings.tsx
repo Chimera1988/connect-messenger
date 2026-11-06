@@ -17,6 +17,7 @@ declare global {
       pickSound: (kind: string) => void;
       resetSound: (kind: string) => void;
       previewSound: (kind: string) => void;
+      previewBuiltInSound?: (sound: Sound) => void;
       stopPreviewSound: () => void;
       canShowFullScreenCalls: () => boolean;
       setSilent: (kind: string, muted: boolean) => void;
@@ -31,21 +32,31 @@ declare global {
     __connectAndroidPendingChat?: string;
   }
 }
-function play(sound: Sound) {
-  if (sound==='silent') return;
-  const Audio = window.AudioContext;
+async function play(sound: Sound) {
+  if (sound === 'silent') return;
+  if (window.ConnectAndroid?.previewBuiltInSound) {
+    window.ConnectAndroid.previewBuiltInSound(sound);
+    return;
+  }
+  const audioWindow = window as Window & { webkitAudioContext?: typeof AudioContext };
+  const Audio = audioWindow.AudioContext || audioWindow.webkitAudioContext;
   if (!Audio) return;
   const ctx = new Audio();
-  const notes = sound==='bright'?[880,1175]:sound==='gentle'?[523,659]:[740,988];
-  notes.forEach((freq,i)=>{
-    const o=ctx.createOscillator(),g=ctx.createGain(),t=ctx.currentTime+i*.13;
-    o.type='sine';o.frequency.value=freq;
-    g.gain.setValueAtTime(.0001,t);
-    g.gain.exponentialRampToValueAtTime(.08,t+.012);
-    g.gain.exponentialRampToValueAtTime(.0001,t+.24);
-    o.connect(g);g.connect(ctx.destination);o.start(t);o.stop(t+.25);
-  });
-  setTimeout(()=>void ctx.close(),850);
+  try {
+    // A suspended context silently fails on some PWA/browser combinations.
+    if (ctx.state === 'suspended') await ctx.resume();
+    const notes = sound === 'bright' ? [880,1175] : sound === 'gentle' ? [523,659] : [740,988];
+    notes.forEach((freq,i) => {
+      const o=ctx.createOscillator(),g=ctx.createGain(),t=ctx.currentTime+i*.13;
+      o.type='sine';o.frequency.value=freq;
+      g.gain.setValueAtTime(.0001,t);
+      g.gain.exponentialRampToValueAtTime(.08,t+.012);
+      g.gain.exponentialRampToValueAtTime(.0001,t+.24);
+      o.connect(g);g.connect(ctx.destination);o.start(t);o.stop(t+.25);
+    });
+  } finally {
+    setTimeout(() => { void ctx.close().catch(() => {}); }, 850);
+  }
 }
 function vapidBytes(value:string) {
   const pad='='.repeat((4-value.length%4)%4);
