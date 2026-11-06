@@ -331,8 +331,16 @@ export default function ConnectCallsHub() {
       .connect-app .bottom-nav>.nav-tab:nth-child(2) { order: 1; }
       .connect-app .bottom-nav>.connect-calls-tab svg { width: 23px; height: 23px; }
       .connect-app .bottom-nav>.connect-calls-tab { position: relative; }
-      .connect-call-missed-dot { width: 9px; height: 9px; border-radius: 50%; background: #fa465e;
-        position: absolute; top: 5px; right: calc(50% - 17px); box-shadow: 0 0 0 2px rgba(15,22,35,.9); }
+      .connect-app .bottom-nav .nav-symbol { position: relative; }
+      .connect-app .bottom-nav .connect-nav-count {
+        position: absolute; top: -8px; right: -12px; min-width: 18px; height: 18px;
+        display: inline-flex; align-items: center; justify-content: center;
+        padding: 0 4px; box-sizing: border-box; border-radius: 999px;
+        font: 650 10px/1 system-ui, -apple-system, sans-serif; font-style: normal;
+        background: color-mix(in srgb, var(--accent) 27%, #263649);
+        color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 45%, rgba(215,230,250,.45));
+        box-shadow: 0 1px 5px rgba(0,0,0,.22); pointer-events: none;
+      }
       .connect-app:has(.connect-call-history-screen) .bottom-nav>.nav-tab.selected:not(.connect-calls-tab) {
         background: transparent !important; border-color: transparent !important; box-shadow: none !important;
         color: var(--muted) !important;
@@ -394,7 +402,7 @@ export default function ConnectCallsHub() {
     `}</style>
     {nav && main && userId && createPortal(<button type="button" className={'nav-tab connect-calls-tab' + (open ? ' selected' : '')}
       aria-label={unseenMissed ? `Звонки: пропущенных ${unseenMissed}` : "Звонки"} aria-pressed={open} onClick={openCalls}>
-      <span className="nav-symbol"><CallIcon /></span>{unseenMissed > 0 && <span className="connect-call-missed-dot" aria-hidden="true"/>}<small>Звонки</small>
+      <span className="nav-symbol"><CallIcon /></span>{unseenMissed > 0 && <span className="connect-nav-count" aria-hidden="true">{unseenMissed > 99 ? '99+' : unseenMissed}</span>}<small>Звонки</small>
     </button>, nav)}
     {main && nav && userId && open && createPortal(<section className="connect-call-history-screen" aria-label="История звонков">
       <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{calls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button></div></div>

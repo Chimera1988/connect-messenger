@@ -215,7 +215,11 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   }, []);
 
   useEffect(() => {
-    if (phase === 'incoming') soundRef.current?.start('incoming');
+    if (phase === 'incoming') {
+      // Android uses the selected native NotificationChannel sound; avoid a second browser ringtone.
+      if (window.ConnectAndroid) soundRef.current?.stop();
+      else soundRef.current?.start('incoming');
+    }
     else if (phase === 'ringing') soundRef.current?.start('ringback');
     else soundRef.current?.stop();
   }, [phase]);
