@@ -440,3 +440,64 @@
 }
 /* Album tiles retain their existing fixed-cell geometry and play overlay. */
 .connect-album-grid .connect-video-preview{position:absolute!important;inset:0!important}
+
+
+/* Video notes: separate media surface. Never affect conventional photos, video, albums or stickers. */
+.bubble.sent.media-only.video-note-bubble,.bubble.received.media-only.video-note-bubble{
+  width:min(216px,65vw)!important;max-width:min(216px,65vw)!important;
+  min-width:0!important;display:flex!important;flex-direction:column!important;
+  background:transparent!important;border:0!important;box-shadow:none!important;
+  padding:0!important;overflow:visible!important;gap:5px!important;
+}
+.bubble.media-only.video-note-bubble .bubble-body,.bubble.media-only.video-note-bubble .attachment-preview{
+  display:block!important;width:100%!important;max-width:100%!important;
+  height:auto!important;padding:0!important;margin:0!important;
+  background:transparent!important;border:0!important;box-shadow:none!important;
+  overflow:visible!important;
+}
+.connect-video-note{
+  position:relative;display:block;width:100%;aspect-ratio:1;
+  border-radius:50%;border:2px solid color-mix(in srgb,var(--text) 18%,transparent);
+  background:#151a25;overflow:hidden;padding:0;box-shadow:none;cursor:pointer;
+}
+.connect-video-note video{
+  display:block;width:100%;height:100%;position:absolute;inset:0;
+  object-fit:cover;object-position:center;
+}
+.connect-video-note-sound{
+  position:absolute;right:9px;bottom:8px;z-index:2;
+  border-radius:50%;width:30px;height:30px;display:grid;place-items:center;
+  font-size:15px;background:rgba(0,0,0,.55);color:white;
+}
+.bubble.media-only.video-note-bubble .bubble-meta{
+  align-self:flex-end!important;width:max-content!important;margin:0!important;
+  padding:4px 8px!important;border-radius:10px!important;
+  background:var(--panel)!important;color:var(--text)!important;
+  opacity:.9!important;border:0!important;box-shadow:none!important;
+}
+.connect-vnote-backdrop{
+  position:fixed;inset:0;z-index:16000;
+  display:flex;justify-content:center;align-items:center;
+  padding:20px;background:rgba(4,7,14,.84);
+}
+.connect-vnote-panel{
+  width:min(390px,100%);display:flex;flex-direction:column;align-items:center;
+  gap:12px;border:1px solid rgba(255,255,255,.1);border-radius:18px;
+  padding:14px 16px 20px;background:#171b26;color:#fff;box-shadow:0 20px 60px #0008;
+}
+.connect-vnote-header{display:flex;width:100%;align-items:center;justify-content:space-between}
+.connect-vnote-header button,.connect-vnote-actions button{cursor:pointer;color:white;border:0;border-radius:10px;background:#343a4c;padding:10px 14px}
+.connect-vnote-preview{
+  width:min(268px,68vw);height:auto;aspect-ratio:1;border-radius:50%;position:relative;
+  background:#080b10;overflow:hidden;border:2px solid #404858;
+}
+.connect-vnote-preview.is-recording{border-color:#f4444c}
+.connect-vnote-preview video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.connect-vnote-preview video:first-child{transform:scaleX(-1)}
+.connect-vnote-hint{position:absolute;inset:0;display:grid;place-items:center;color:#c8ccd6;font-size:14px}
+.connect-vnote-timer{margin:0;color:#ff666d;font-size:14px;font-variant-numeric:tabular-nums}
+.connect-vnote-error{color:#ff9da4;text-align:center;margin:4px 0;font-size:13px}
+.connect-vnote-actions{display:flex;justify-content:center;gap:12px;width:100%}
+.connect-vnote-actions .connect-vnote-primary{background:var(--accent,#087dff);font-weight:600}
+
+.connect-video-note-length{position:absolute;z-index:2;bottom:12px;left:10px;border-radius:8px;padding:3px 6px;color:#fff;background:rgba(0,0,0,.55);font-size:12px;font-variant-numeric:tabular-nums}

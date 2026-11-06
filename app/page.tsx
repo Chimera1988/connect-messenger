@@ -160,7 +160,7 @@ function forwardBody(from: string, body: string): string {
 
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (parseAlbum(m.body).length ? `🖼 Альбом (${parseAlbum(m.body).length})` : stickerFromBody(forwardedMessage(m.body).text) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (isVideoNote(m) ? '🎥 Видеокружок' : parseAlbum(m.body).length ? `🖼 Альбом (${parseAlbum(m.body).length})` : stickerFromBody(forwardedMessage(m.body).text) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
@@ -394,6 +394,129 @@ function VideoThumbnail({src}:{src:string}) {
   </span>;
 }
 
+// Video notes use the existing video attachments schema, but have a distinct presentation.
+function isVideoNote(m: Message): boolean {
+  return m.attachment_kind === 'video' && /^connect-video-note-\d+\.(?:mp4|webm)$/i.test(m.attachment_name || '');
+}
+
+function VideoNoteBubble({src,name}:{src:string;name:string}) {
+  const ref=useRef<HTMLVideoElement|null>(null);
+  const [sound,setSound]=useState(false);
+  const [visible,setVisible]=useState(false);
+  const [duration,setDuration]=useState(0);
+  useEffect(()=>{
+    const video=ref.current;
+    if(!video)return;
+    video.muted=true;
+    setSound(false);
+    const observer=new IntersectionObserver(entries=>{
+      const seen=Boolean(entries[0]?.isIntersecting);
+      setVisible(seen);
+      if(seen){video.muted=true;setSound(false);void video.play().catch(()=>{});}
+      else{video.pause();video.muted=true;setSound(false);}
+    },{threshold:.35});
+    observer.observe(video);
+    return()=>{observer.disconnect();video.pause();};
+  },[src]);
+  return <button type="button" className="connect-video-note" aria-label={sound?'Выключить звук видеокружка':'Включить звук видеокружка'}
+    onClick={event=>{
+      event.stopPropagation();const video=ref.current;if(!video)return;
+      if(!visible){void video.play().catch(()=>{});return;}
+      const next=video.muted;
+      video.muted=!next;
+      setSound(next);
+      if(next)void video.play().catch(()=>{});
+    }}>
+    <video ref={ref} src={src} muted playsInline loop preload="metadata" aria-label={name} onLoadedMetadata={e=>{const d=e.currentTarget.duration;if(Number.isFinite(d))setDuration(d)}}/>
+    {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,"0")}</span>}
+    <span className="connect-video-note-sound" aria-hidden="true">{sound?'🔊':'🔇'}</span>
+  </button>;
+}
+
+type VideoNotePhase = 'loading'|'ready'|'recording'|'review'|'error';
+function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)=>void}) {
+  const live=useRef<HTMLVideoElement|null>(null);
+  const streamRef=useRef<MediaStream|null>(null);
+  const recorderRef=useRef<MediaRecorder|null>(null);
+  const chunksRef=useRef<Blob[]>([]);
+  const timerRef=useRef<number|null>(null);
+  const startRef=useRef(0);
+  const previewRef=useRef<string|null>(null);
+  const savedRef=useRef<File|null>(null);
+  const [phase,setPhase]=useState<VideoNotePhase>('loading');
+  const [seconds,setSeconds]=useState(0);
+  const [preview,setPreview]=useState<string|null>(null);
+  const [error,setError]=useState('');
+  function stopCamera(){streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+  function clearClock(){if(timerRef.current!==null){window.clearInterval(timerRef.current);timerRef.current=null;}}
+  useEffect(()=>{
+    let disposed=false;
+    void (async()=>{
+      try{
+        if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined')throw Error('Запись видеокружков не поддерживается браузером');
+        const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:480},height:{ideal:480}},audio:{echoCancellation:true,noiseSuppression:true}});
+        if(disposed){stream.getTracks().forEach(t=>t.stop());return;}
+        streamRef.current=stream;
+        if(live.current){live.current.srcObject=stream;void live.current.play().catch(()=>{});}
+        setPhase('ready');
+      }catch(e){if(!disposed){setError(e instanceof Error?e.message:'Не удалось открыть камеру');setPhase('error');}}
+    })();
+    return()=>{
+      disposed=true;clearClock();
+      const recorder=recorderRef.current;
+      if(recorder&&recorder.state!=='inactive')try{recorder.onstop=null;recorder.stop();}catch{}
+      stopCamera();
+      if(previewRef.current)URL.revokeObjectURL(previewRef.current);
+    };
+  },[]);
+  function start(){
+    const stream=streamRef.current;if(!stream||phase!=='ready')return;
+    try{
+      const formats=['video/mp4;codecs=h264,aac','video/mp4','video/webm;codecs=vp8,opus','video/webm;codecs=vp9,opus','video/webm'];
+      const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
+      const recorder=new MediaRecorder(stream,{...(mime?{mimeType:mime}:{}),videoBitsPerSecond:800000,audioBitsPerSecond:64000});
+      chunksRef.current=[];recorderRef.current=recorder;savedRef.current=null;
+      recorder.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data)};
+      recorder.onerror=()=>{setError('Ошибка записи видео');setPhase('error');clearClock();stopCamera()};
+      recorder.onstop=()=>{
+        clearClock();stopCamera();
+        const type=recorder.mimeType||chunksRef.current[0]?.type||'video/webm';
+        const blob=new Blob(chunksRef.current,{type});
+        if(blob.size<100){setError('Видео не записалось. Попробуйте ещё раз.');setPhase('error');return;}
+        const ext=type.includes('mp4')?'mp4':'webm';
+        savedRef.current=new File([blob],`connect-video-note-${Date.now()}.${ext}`,{type});
+        const url=URL.createObjectURL(blob);previewRef.current=url;setPreview(url);setPhase('review');
+      };
+      recorder.start(1000);startRef.current=Date.now();setSeconds(0);setPhase('recording');
+      timerRef.current=window.setInterval(()=>{
+        const time=Math.floor((Date.now()-startRef.current)/1000);
+        setSeconds(Math.min(60,time));
+        if(time>=60&&recorder.state==='recording')recorder.stop();
+      },250);
+    }catch(e){setError(e instanceof Error?e.message:'Не удалось начать запись');setPhase('error')}
+  }
+  function stop(){if(recorderRef.current?.state==='recording')recorderRef.current.stop()}
+  function cancel(){onClose()}
+  return <div className="connect-vnote-backdrop" role="dialog" aria-modal="true" aria-label="Запись видеокружка">
+    <div className="connect-vnote-panel">
+      <div className="connect-vnote-header"><strong>Видеокружок</strong><button type="button" onClick={cancel} aria-label="Закрыть">✕</button></div>
+      <div className={'connect-vnote-preview'+(phase==='recording'?' is-recording':'')}>
+        <video ref={live} autoPlay muted playsInline style={{display:preview?'none':undefined}}/>
+        {preview&&<video src={preview} controls playsInline preload="auto"/>}
+        {phase==='loading'&&<span className="connect-vnote-hint">Открываем камеру…</span>}
+      </div>
+      {phase==='recording'&&<p className="connect-vnote-timer">● {Math.floor(seconds/60)}:{String(seconds%60).padStart(2,'0')} / 1:00</p>}
+      {phase==='error'&&<p className="connect-vnote-error">{error}</p>}
+      <div className="connect-vnote-actions">
+        <button type="button" onClick={cancel}>Отмена</button>
+        {phase==='ready'&&<button type="button" className="connect-vnote-primary" onClick={start}>● Записать</button>}
+        {phase==='recording'&&<button type="button" className="connect-vnote-primary" onClick={stop}>■ Остановить</button>}
+        {phase==='review'&&<button type="button" className="connect-vnote-primary" onClick={()=>{const file=savedRef.current;if(file)onSend(file)}}>Отправить</button>}
+      </div>
+    </div>
+  </div>;
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [tab, setTab] = useState<Tab>('chats');
@@ -448,6 +571,7 @@ export default function Home() {
   const [savingMedia, setSavingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [pendingFiles,setPendingFiles]=useState<File[]>([]);
+  const [videoNoteOpen,setVideoNoteOpen]=useState(false);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const attachmentInput = useRef<HTMLInputElement | null>(null);
@@ -1275,7 +1399,7 @@ export default function Home() {
       setNotice('Не удалось завершить запись: '+(e instanceof Error?e.message:String(e)));
     }
   }
-  const gallery = visibleMessages.flatMap(m=>[...(m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video')?[{path:m.attachment_path,name:m.attachment_name || 'Медиа',kind:m.attachment_kind as 'image'|'video'}]:[]),...parseAlbum(m.body)]).filter(x=>Boolean(attachmentUrls[x.path])).map(x=>({...x,url:attachmentUrls[x.path]}));
+  const gallery = visibleMessages.flatMap(m=>[...(m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video')&&!isVideoNote(m)?[{path:m.attachment_path,name:m.attachment_name || 'Медиа',kind:m.attachment_kind as 'image'|'video'}]:[]),...parseAlbum(m.body)]).filter(x=>Boolean(attachmentUrls[x.path])).map(x=>({...x,url:attachmentUrls[x.path]}));
   const galleryIndex = mediaViewer ? gallery.findIndex(item => item.path === mediaViewer.path) : -1;
   function stepGallery(delta:number) {
     if (!mediaViewer || galleryIndex < 0 || !gallery.length) return;
@@ -1447,7 +1571,7 @@ export default function Home() {
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming') + (selectedIds.includes(m.id)?' is-selected':'')}>
                     {selectionMode&&<input className="message-select-check" type="checkbox" aria-label="Выбрать сообщение" checked={selectedIds.includes(m.id)} onChange={()=>selectOne(m.id)}/>}
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
-                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(forwardedMessage(m.body).text) || /^\[\[connect-custom-sticker:[0-9a-f-]{36}\]\]$/.test(forwardedMessage(m.body).text) || isKeyboardSticker(m) || (!m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()))) ? ' sticker-bubble' : '') + (!m.deleted_at && !m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()) ? ' emoji-only' : '') + (!m.deleted_at && (parseAlbum(m.body).length>0 || (m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video') && !isKeyboardSticker(m))) ? ' media-only' : '')}
+                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(forwardedMessage(m.body).text) || /^\[\[connect-custom-sticker:[0-9a-f-]{36}\]\]$/.test(forwardedMessage(m.body).text) || isKeyboardSticker(m) || (!m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()))) ? ' sticker-bubble' : '') + (!m.deleted_at && !m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()) ? ' emoji-only' : '') + (!m.deleted_at && (parseAlbum(m.body).length>0 || (m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video') && !isKeyboardSticker(m))) ? ' media-only' : '') + (!m.deleted_at && isVideoNote(m) ? ' video-note-bubble' : '')}
                       style={{ transform: `translate3d(${swipe?.id === m.id ? swipe.offset : 0}px,0,0)` }}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
@@ -1462,6 +1586,7 @@ export default function Home() {
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
                           {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
                             : m.attachment_kind==='image' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>
+                            : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'}/>
                             : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
                             : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
@@ -1494,7 +1619,7 @@ export default function Home() {
                 </div>
                 <div className="sticker-grid">{customPack?customStickers.filter(st=>st.pack_id===customPack).map(st=><button key={st.id} type="button" className="sticker-choice" onClick={()=>void sendCustomSticker(st)} disabled={busy}><img src={customStickerUrl(st)} alt={st.name}/></button>):(stickerPack==='favorites'?stickerFavorites:stickerPack==='recent'?stickerRecent:STICKER_PACKS.find(p=>p.id===stickerPack)?.stickers.map(st=>stickerPack+':'+st.id)||[]).map(key=>{const [pack,id]=key.split(':');const found=STICKER_PACKS.find(p=>p.id===pack)?.stickers.find(st=>st.id===id);if(!found)return null;return <div key={key} className="sticker-choice"><button type="button" onClick={()=>void sendSticker(pack as StickerPackId,id)} disabled={busy} aria-label={'Отправить '+found.name}><img src={stickerUrl({pack,id})} alt={found.name}/></button><button type="button" className="sticker-fav" onClick={()=>toggleFavorite(key)} aria-label="В избранное">{stickerFavorites.includes(key)?'★':'☆'}</button></div>;})}</div>
               </div>}
-              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры">☺</button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
+              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры">☺</button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && !recording && <button className="composer-extra" type="button" disabled={busy} onClick={()=>setVideoNoteOpen(true)} aria-label="Записать видеокружок"><Icon name="camera" size={22}/></button>}{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
           </div>
             : <><div className="main-view">
@@ -1551,6 +1676,7 @@ export default function Home() {
     {crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}
     {notice && <button type="button" className="notice-toast"  role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
     {forwardIds.length>0&&<div className="forward-overlay"><div className="forward-dialog"><header><strong>Переслать сообщения</strong><button type="button" onClick={()=>setForwardIds([])}><Icon name="close" size={21}/></button></header><p>Выберите получателя · {forwardIds.length} сообщ.</p><div className="forward-contacts">{contacts.map(p=><button type="button" key={p.id} disabled={busy} onClick={()=>void forwardTo(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span>{p.display_name}</span><Icon name="chevron" size={18}/></button>)}</div></div></div>}
+    {videoNoteOpen && <VideoNoteRecorder onClose={()=>setVideoNoteOpen(false)} onSend={file=>{setVideoNoteOpen(false);void sendAttachment(file)}}/>}
     {mediaViewer && <div className="connect-media-overlay" role="dialog" aria-modal="true" aria-label="Просмотр вложения" onClick={()=>setMediaViewer(null)}>
       <div className="connect-media-toolbar" onClick={e=>e.stopPropagation()}>
         <button type="button" onClick={()=>setMediaViewer(null)} aria-label="Закрыть">✕</button>
