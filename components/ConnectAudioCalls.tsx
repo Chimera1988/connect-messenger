@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 
 type Status = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
@@ -39,8 +38,16 @@ function Glyph({ name }: { name: 'call' | 'end' | 'mic' | 'muted' | 'speaker' })
   return <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>{paths[name]}</svg>;
 }
 
+/** A real button rendered beside the three-dot menu in the chat header. */
+export function ConnectCallButton({ peerName, disabled = false }: { peerName: string; disabled?: boolean }) {
+  return <button className="connect-call-trigger" type="button"
+    aria-label={`Позвонить: ${peerName}`} title="Аудиозвонок" disabled={disabled}
+    onClick={() => window.dispatchEvent(new Event('connect:audio-call:start'))}>
+    <Glyph name="call"/>
+  </button>;
+}
+
 export default function ConnectAudioCalls({ client, userId, conversationId, peerId, peerName }: Props) {
-  const [header, setHeader] = useState<Element | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [shown, setShown] = useState<CallRow | null>(null);
   const [shownName, setShownName] = useState('');
@@ -60,13 +67,6 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const generationRef = useRef(0);
   const answerPendingRef = useRef(false);
   const enteredRef = useRef(false);
-
-  useEffect(() => {
-    // React mounts the chat header in a sibling branch of this component.
-    // A portal adds a real accessible button without moving any chat logic.
-    const id = requestAnimationFrame(() => setHeader(document.querySelector('.chat-view .chat-header')));
-    return () => cancelAnimationFrame(id);
-  }, [conversationId, userId]);
 
   async function getIceServers(): Promise<RTCIceServer[]> {
     if (!client) return STUN;
@@ -319,6 +319,15 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     }
   }
 
+  // The explicit button above emits this event; it no longer depends on DOM queries.
+  // The call controller stays mounted for incoming calls even outside a conversation.
+  useEffect(() => {
+    const onStart = () => { void startOutgoing(); };
+    window.addEventListener('connect:audio-call:start', onStart);
+    return () => window.removeEventListener('connect:audio-call:start', onStart);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [client, userId, conversationId, peerId, peerName, phase]);
+
   async function acceptIncoming() {
     const row = callRef.current;
     if (!row || !client || row.status !== 'ringing' || phase !== 'incoming') return;
@@ -362,10 +371,6 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   };
 
   return <>
-    {header && userId && conversationId && peerId && createPortal(
-      <button className="connect-call-trigger" type="button" aria-label={`Позвонить: ${peerName}`}
-        disabled={calling} onClick={() => void startOutgoing()}><Glyph name="call"/></button>, header,
-    )}
     {calling && <div className="connect-call-backdrop" role="dialog" aria-modal="true" aria-label="Аудиозвонок Connect">
       <div className="connect-call-modal">
         <p className="connect-call-eyebrow">CONNECT · АУДИО</p>
