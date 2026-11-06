@@ -4,6 +4,7 @@ import ConnectDynamicTheme from '../components/ConnectDynamicTheme';
 import ConnectUiCoordinator from '../components/ConnectUiCoordinator';
 import './globals.css';
 import './liquid-glass.css';
+import './calls.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
