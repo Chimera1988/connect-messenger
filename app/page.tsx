@@ -353,6 +353,18 @@ function PendingAttachment({file,onRemove}:{file:File;onRemove:()=>void}){
   </div>;
 }
 
+// Use the video's decoded dimensions rather than forcing every preview to 16:9.
+// Only change the standalone message thumbnail; album grid cells keep their own layout.
+function syncVideoThumbnailSize(video: HTMLVideoElement) {
+  const width=video.videoWidth, height=video.videoHeight;
+  if(width<=0||height<=0)return;
+  const button=video.closest<HTMLButtonElement>('button.connect-media-thumb');
+  if(!button||button.closest('.connect-album-grid'))return;
+  const ratio=Math.max(0.25,Math.min(4,width/height));
+  button.style.setProperty('--connect-video-ratio', `${width} / ${height}`);
+  button.style.setProperty('--connect-video-width', `${Math.round(Math.min(300,340*ratio))}px`);
+}
+
 function VideoThumbnail({src}:{src:string}) {
   const [poster,setPoster]=useState<string|null>(null);
   const [failed,setFailed]=useState(false);
@@ -373,9 +385,9 @@ function VideoThumbnail({src}:{src:string}) {
   return <span className="connect-video-preview">
     {poster && <img src={poster} alt="Предпросмотр видео"/>}
     <video ref={videoRef} src={src} playsInline muted preload="auto"
-      onLoadedMetadata={e=>{const v=e.currentTarget;try{v.currentTime=Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
-      onSeeked={e=>capture(e.currentTarget)}
-      onLoadedData={e=>{if(!poster)capture(e.currentTarget)}}
+      onLoadedMetadata={e=>{const v=e.currentTarget;syncVideoThumbnailSize(v);try{v.currentTime=Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
+      onSeeked={e=>{syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}
+      onLoadedData={e=>{syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}
       onError={()=>setFailed(true)}
       style={poster?{visibility:'hidden'}:undefined}/>
     {failed&&!poster&&<span className="connect-video-fallback">Видео</span>}

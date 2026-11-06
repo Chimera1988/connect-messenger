@@ -369,20 +369,22 @@
   box-shadow:none!important;
 }
 
-/* Video previews: fixed preview box, independent of image auto-sizing rules.
-   The HTML video remains visible when iOS cannot extract a canvas poster. */
+/* Standalone video thumbnails: size from the real video dimensions (set on the
+   button by syncVideoThumbnailSize), not the old forced 16:9 layout.
+   This block replaces the previous conflicting video-only overrides. */
 .bubble.sent.media-only:has(.connect-video-preview) .attachment-preview .connect-media-thumb,
 .bubble.received.media-only:has(.connect-video-preview) .attachment-preview .connect-media-thumb {
   position:relative!important;
   display:block!important;
   box-sizing:border-box!important;
-  width:min(300px,calc(100vw - 80px))!important;
+  width:min(var(--connect-video-width,300px),calc(100vw - 80px))!important;
   max-width:100%!important;
   height:auto!important;
   min-height:0!important;
-  max-height:none!important;
-  aspect-ratio:16 / 9!important;
+  max-height:340px!important;
+  aspect-ratio:var(--connect-video-ratio,16 / 9)!important;
   overflow:hidden!important;
+  border:0!important;
   border-radius:10px!important;
   background:#141923!important;
 }
@@ -406,12 +408,35 @@
   height:100%!important;
   max-width:none!important;
   max-height:none!important;
-  object-fit:cover!important;
+  object-fit:contain!important;
   border:0!important;
   border-radius:0!important;
 }
-.connect-video-preview>img {z-index:1!important}
-.connect-video-fallback {position:absolute;inset:0;display:grid;place-items:center;color:#aab1be;font-size:12px}
-.connect-media-thumb:has(.connect-video-preview)>.connect-media-play {z-index:2!important}
-/* Albums retain their existing grid and cell dimensions. */
-.connect-album-grid .connect-video-preview {position:absolute!important;inset:0!important}
+.connect-video-preview>img{z-index:1!important}
+.connect-video-fallback{position:absolute;inset:0;display:grid;place-items:center;color:#aab1be;font-size:12px}
+/* iOS Safari may paint the poster over the old play span. A button pseudo-element
+   is kept above the poster and always shows a visible play affordance. */
+.bubble.media-only .attachment-preview .connect-media-thumb:has(.connect-video-preview)::after {
+  content:"▶"!important;
+  position:absolute!important;
+  left:50%!important;
+  top:50%!important;
+  transform:translate(-50%,-50%)!important;
+  display:grid!important;
+  place-items:center!important;
+  width:52px!important;
+  height:52px!important;
+  border-radius:50%!important;
+  background:rgba(0,0,0,.62)!important;
+  color:#fff!important;
+  font-size:25px!important;
+  line-height:1!important;
+  padding-left:3px!important;
+  z-index:20!important;
+  pointer-events:none!important;
+}
+.bubble.media-only .attachment-preview .connect-media-thumb:has(.connect-video-preview)>.connect-media-play {
+  display:none!important;
+}
+/* Album tiles retain their existing fixed-cell geometry and play overlay. */
+.connect-album-grid .connect-video-preview{position:absolute!important;inset:0!important}
