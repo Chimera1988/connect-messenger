@@ -1049,3 +1049,82 @@
   .connect-app .chat-composer,
   .connect-app .chat-header { -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
+
+/* ========================================================================
+   Connect Liquid Glass v4.1 — chat list aligned to contacts.
+   Keep contact-row proportions and add more breathing room in chats.
+   ======================================================================== */
+
+/* Chat list cards should visually match contacts: same insets, avatar scale
+   and more distance from the right-edge timestamp. */
+.connect-app .chat-rows .dialog-entry {
+  padding-left: 9px;
+  padding-right: 9px;
+}
+.connect-app .chat-rows .dialog-row {
+  display: grid !important;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 13px;
+  min-height: 82px;
+  padding: 10px 4px;
+}
+.connect-app .chat-rows .dialog-row > :first-child {
+  width: 58px;
+  min-width: 58px;
+  height: 58px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.connect-app .chat-rows .dialog-row > :first-child img,
+.connect-app .chat-rows .dialog-row > :first-child svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.connect-app .chat-rows .dialog-row > :nth-child(2) {
+  min-width: 0;
+}
+.connect-app .chat-rows .dialog-row > :last-child {
+  justify-self: end;
+  align-self: start;
+  margin-right: 3px;
+  padding-left: 12px;
+  padding-top: 4px;
+  white-space: nowrap;
+}
+
+/* The primary text block should read closer to the contact list rhythm. */
+.connect-app .chat-rows .dialog-row strong,
+.connect-app .chat-rows .dialog-row b,
+.connect-app .chat-rows .dialog-row h3 {
+  font-size: 17px;
+  line-height: 1.2;
+}
+.connect-app .chat-rows .dialog-row small,
+.connect-app .chat-rows .dialog-row p {
+  line-height: 1.25;
+}
+
+/* Keep list edges consistent with contacts on very narrow screens. */
+@media (max-width: 380px) {
+  .connect-app .chat-rows .dialog-entry {
+    padding-left: 7px;
+    padding-right: 7px;
+  }
+  .connect-app .chat-rows .dialog-row {
+    grid-template-columns: 54px minmax(0, 1fr) auto;
+    column-gap: 11px;
+    min-height: 78px;
+    padding: 9px 3px;
+  }
+  .connect-app .chat-rows .dialog-row > :first-child {
+    width: 54px;
+    min-width: 54px;
+    height: 54px;
+  }
+  .connect-app .chat-rows .dialog-row > :last-child {
+    padding-left: 10px;
+    margin-right: 1px;
+  }
+}
