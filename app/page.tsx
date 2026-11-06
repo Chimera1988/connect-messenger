@@ -353,6 +353,35 @@ function PendingAttachment({file,onRemove}:{file:File;onRemove:()=>void}){
   </div>;
 }
 
+function VideoThumbnail({src}:{src:string}) {
+  const [poster,setPoster]=useState<string|null>(null);
+  const [failed,setFailed]=useState(false);
+  const videoRef=useRef<HTMLVideoElement|null>(null);
+  useEffect(()=>{setPoster(null);setFailed(false)},[src]);
+  function capture(video:HTMLVideoElement){
+    if(!video.videoWidth||!video.videoHeight)return;
+    try{
+      const canvas=document.createElement('canvas');
+      const scale=Math.min(1,480/video.videoWidth,480/video.videoHeight);
+      canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
+      canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+      canvas.getContext('2d')?.drawImage(video,0,0,canvas.width,canvas.height);
+      const url=canvas.toDataURL('image/jpeg',.78);
+      if(url.length>100)setPoster(url);
+    }catch{setFailed(true)}
+  }
+  return <span className="connect-video-preview">
+    {poster && <img src={poster} alt="Предпросмотр видео"/>}
+    <video ref={videoRef} src={src} crossOrigin="anonymous" playsInline muted preload="auto"
+      onLoadedMetadata={e=>{const v=e.currentTarget;try{v.currentTime=Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
+      onSeeked={e=>capture(e.currentTarget)}
+      onLoadedData={e=>{if(!poster)capture(e.currentTarget)}}
+      onError={()=>setFailed(true)}
+      style={poster?{visibility:'hidden'}:undefined}/>
+    {failed&&!poster&&<span className="connect-video-fallback">Видео</span>}
+  </span>;
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [tab, setTab] = useState<Tab>('chats');
@@ -1417,11 +1446,11 @@ export default function Home() {
                       {m.reply_to && <div className="quote-box"><strong>{replied?.sender_id === user.id ? 'Вы' : currentName}</strong><span>{!replied ? 'Исходное сообщение' : replied.deleted_at ? 'Сообщение удалено' : parseAlbum(replied.body).length ? `Альбом (${parseAlbum(replied.body).length})` : replied.body}</span></div>}
                       <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : <>
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
-                        {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?<img src={attachmentUrls[item.path]} alt={item.name} loading="lazy"/>:<><video src={attachmentUrls[item.path]} preload="metadata" playsInline/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
+                        {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?<img src={attachmentUrls[item.path]} alt={item.name} loading="lazy"/>:<><VideoThumbnail src={attachmentUrls[item.path]}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
                           {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
                             : m.attachment_kind==='image' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>
-                            : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><video playsInline preload="metadata" src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
+                            : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
                             : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
                         </div>}
