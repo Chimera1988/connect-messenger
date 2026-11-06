@@ -233,3 +233,55 @@
   background:var(--panel)!important;color:var(--text)!important;
   padding:4px 8px!important;border-radius:10px!important;opacity:.9!important;
 }
+
+/* 2026-11-06: Single media uses the same frameless visual surface as an album tile.
+   Do not change album grid or custom sticker styling. */
+.bubble.media-only:has(> .bubble-body .attachment-preview):not(:has(.connect-album-grid)) {
+  width: min(300px, calc(100vw - 80px)) !important;
+  max-width: min(300px, calc(100vw - 80px)) !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+}
+.bubble.media-only:not(:has(.connect-album-grid)) .attachment-preview,
+.bubble.media-only:not(:has(.connect-album-grid)) .connect-media-thumb {
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  border-radius: 10px !important;
+}
+.bubble.media-only:not(:has(.connect-album-grid)) .connect-media-thumb img,
+.bubble.media-only:not(:has(.connect-album-grid)) .connect-media-thumb video {
+  display: block !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: 340px !important;
+  aspect-ratio: auto !important;
+  object-fit: contain !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 10px !important;
+}
+/* For stickers pasted as image attachments, remove the old photo placeholder. */
+.bubble.sticker-bubble .connect-media-thumb,
+.bubble.sticker-bubble .connect-media-thumb img,
+.bubble.sticker-bubble .attachment-preview {
+  background: transparent !important;
+  background-image: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  min-height: 0 !important;
+  height: auto !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  object-fit: contain !important;
+}
