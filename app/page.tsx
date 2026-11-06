@@ -372,7 +372,7 @@ function VideoThumbnail({src}:{src:string}) {
   }
   return <span className="connect-video-preview">
     {poster && <img src={poster} alt="Предпросмотр видео"/>}
-    <video ref={videoRef} src={src} crossOrigin="anonymous" playsInline muted preload="auto"
+    <video ref={videoRef} src={src} playsInline muted preload="auto"
       onLoadedMetadata={e=>{const v=e.currentTarget;try{v.currentTime=Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
       onSeeked={e=>capture(e.currentTarget)}
       onLoadedData={e=>{if(!poster)capture(e.currentTarget)}}
