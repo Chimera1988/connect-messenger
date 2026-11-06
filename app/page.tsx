@@ -1146,7 +1146,7 @@ export default function Home() {
     const readAt = readCache.current[activeChat] || chatReadingEntry?.readAt || '';
     const last = messages.at(-1);
     const target = [...messages].reverse().find(m => m.created_at <= readAt
-      || (last?.sender_id === user?.id && m.id === last.id));
+      || (last?.sender_id === user?.id && m.id === last?.id));
     const node = target ? root.querySelector<HTMLElement>('#msg-' + target.id) : null;
     // Earlier in history: return to the last read message (or my last sent one).
     // Below that point: continue to the latest message. Never jump backwards.

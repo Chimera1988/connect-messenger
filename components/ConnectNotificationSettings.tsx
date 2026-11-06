@@ -39,7 +39,7 @@ async function play(sound: Sound) {
     return;
   }
   const audioWindow = window as Window & { webkitAudioContext?: typeof AudioContext };
-  const Audio = audioWindow.AudioContext || audioWindow.webkitAudioContext;
+  const Audio = typeof AudioContext !== 'undefined' ? AudioContext : audioWindow.webkitAudioContext;
   if (!Audio) return;
   const ctx = new Audio();
   try {
