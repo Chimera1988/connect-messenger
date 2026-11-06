@@ -36,7 +36,7 @@ export async function POST(req:NextRequest) {
         const credentials=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
         if (!credentials) continue;
         if (!getApps().length) initializeApp({credential:cert(JSON.parse(credentials))});
-        await getMessaging().send({token:device.endpoint,data:{title,body:'Новое сообщение',conversationId:String(record.conversation_id),messageId:String(record.id)}});
+        await getMessaging().send({token:device.endpoint,data:{title,body:'Новое сообщение',conversationId:String(record.conversation_id),messageId:String(record.id),createdAt:String(record.created_at||"")}});
       }
       sent++;
     } catch(e:unknown) {

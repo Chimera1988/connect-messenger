@@ -178,6 +178,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const [shown, setShown] = useState<CallRow | null>(null);
   const [shownName, setShownName] = useState('');
   const [muted, setMuted] = useState(false);
+  const [speakerOn, setSpeakerOn] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -300,6 +301,9 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   }
 
   function cleanup() {
+    if (callRef.current) window.ConnectAndroid?.setCallState(callRef.current.id, 'ended');
+    window.ConnectAndroid?.setSpeakerphone(false);
+    setSpeakerOn(false);
     soundRef.current?.stop();
     generationRef.current++;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
@@ -564,6 +568,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       });
       if (rpcError || !data) throw new Error(rpcError?.message || 'Звонок уже завершён');
       callRef.current = data as CallRow; setShown(data as CallRow);
+      window.ConnectAndroid?.setCallState(row.id, 'active');
       await flushLocalIce();
     } catch (e) {
       setToast(`Не удалось принять звонок: ${friendlyError(e)}`);
@@ -577,8 +582,30 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     setMuted(next);
   }
   function enableRemoteAudio() {
-    void remoteAudioRef.current?.play().then(() => setError('')).catch(() => setError('Не удалось включить звук. Проверьте настройки Safari.'));
+    if (window.ConnectAndroid) {
+      const next=!speakerOn;
+      window.ConnectAndroid.setSpeakerphone(next);
+      setSpeakerOn(next);
+    }
+    void remoteAudioRef.current?.play().then(() => setError('')).catch(() => setError('Не удалось включить звук. Проверьте настройки воспроизведения.'));
   }
+
+  // Notification action intents are delivered before or after React mounts.
+  // Execute them only for the matching, still-ringing call, never another caller.
+  useEffect(() => {
+    function handleAndroidAction() {
+      const action=window.__connectAndroidPendingCall;
+      if(!action || !callRef.current || action.callId!==callRef.current.id || phase!=='incoming') return;
+      delete window.__connectAndroidPendingCall;
+      if(action.action==='accept') void acceptIncoming();
+      else if(action.action==='decline') void finish('decline');
+    }
+    handleAndroidAction();
+    const poll=window.setInterval(handleAndroidAction,350);
+    window.addEventListener('connect:android-call-action',handleAndroidAction);
+    return ()=>{window.clearInterval(poll);window.removeEventListener('connect:android-call-action',handleAndroidAction);};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[phase,shown?.id]);
 
   const calling = phase !== 'idle';
   const incoming = phase === 'incoming';
@@ -601,7 +628,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
           {!incoming && (phase === 'active' || phase === 'connecting') && <button className={'connect-call-action' + (muted ? ' muted' : '')}
             type="button" onClick={toggleMute}><span><Glyph name={muted ? 'muted' : 'mic'}/></span><span>{muted ? 'Включить микрофон' : 'Выключить микрофон'}</span></button>}
           {!incoming && <button className="connect-call-action" type="button" onClick={enableRemoteAudio}>
-            <span><Glyph name="speaker"/></span><span>Звук</span>
+            <span><Glyph name="speaker"/></span><span>{window.ConnectAndroid ? speakerOn ? 'Обычный звук' : 'Громкая связь' : 'Звук'}</span>
           </button>}
           <button className="connect-call-action hangup" type="button"
             onClick={() => void finish(incoming ? 'decline' : 'hangup')}>

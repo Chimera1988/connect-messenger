@@ -89,6 +89,7 @@ export default function ConnectCallsHub() {
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [calls, setCalls] = useState<Call[]>([]);
+  const [lastViewed, setLastViewed] = useState(0);
   const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -99,6 +100,16 @@ export default function ConnectCallsHub() {
   const [contactSearch, setContactSearch] = useState('');
   const pushedRef = useRef(new Set<string>());
   const refreshGeneration = useRef(0);
+
+  useEffect(() => {
+    if (!userId) { setLastViewed(0); return; }
+    const key = 'connect-last-viewed-calls:' + userId;
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored !== null && Number.isFinite(Number(stored))) setLastViewed(Number(stored));
+      else { const now = Date.now(); localStorage.setItem(key, String(now)); setLastViewed(now); }
+    } catch { setLastViewed(Date.now()); }
+  }, [userId]);
 
   useEffect(() => {
     if (!client) return;
@@ -301,6 +312,14 @@ export default function ConnectCallsHub() {
     return () => document.removeEventListener('pointerdown', onOtherTab, true);
   }, [open]);
 
+  const unseenMissed = userId ? calls.filter(call =>
+    missed(call, userId) && Date.parse(call.ended_at || call.created_at) > lastViewed).length : 0;
+  function openCalls() {
+    const now = Date.now();
+    setLastViewed(now);
+    if (userId) try { localStorage.setItem('connect-last-viewed-calls:' + userId, String(now)); } catch {}
+    setOpen(true); setFilter('all');
+  }
   const list = filter === 'missed' && userId ? calls.filter(call => missed(call, userId)) : calls;
   const visibleContacts = contacts.filter(c => c.peerName.toLocaleLowerCase('ru-RU').includes(contactSearch.trim().toLocaleLowerCase('ru-RU')));
   return <>
@@ -311,6 +330,9 @@ export default function ConnectCallsHub() {
       .connect-app .bottom-nav>.nav-tab:nth-child(1) { order: 0; }
       .connect-app .bottom-nav>.nav-tab:nth-child(2) { order: 1; }
       .connect-app .bottom-nav>.connect-calls-tab svg { width: 23px; height: 23px; }
+      .connect-app .bottom-nav>.connect-calls-tab { position: relative; }
+      .connect-call-missed-dot { width: 9px; height: 9px; border-radius: 50%; background: #fa465e;
+        position: absolute; top: 5px; right: calc(50% - 17px); box-shadow: 0 0 0 2px rgba(15,22,35,.9); }
       .connect-app:has(.connect-call-history-screen) .bottom-nav>.nav-tab.selected:not(.connect-calls-tab) {
         background: transparent !important; border-color: transparent !important; box-shadow: none !important;
         color: var(--muted) !important;
@@ -371,8 +393,8 @@ export default function ConnectCallsHub() {
       @media(max-width:370px) { .connect-call-history-item {padding-inline:9px;gap:9px;} .connect-call-history-avatar{width:40px;height:40px;flex-basis:40px;} .connect-call-history-date{font-size:10px;} }
     `}</style>
     {nav && main && userId && createPortal(<button type="button" className={'nav-tab connect-calls-tab' + (open ? ' selected' : '')}
-      aria-label="Звонки" aria-pressed={open} onClick={() => { setOpen(true); setFilter('all'); }}>
-      <span className="nav-symbol"><CallIcon /></span><small>Звонки</small>
+      aria-label={unseenMissed ? `Звонки: пропущенных ${unseenMissed}` : "Звонки"} aria-pressed={open} onClick={openCalls}>
+      <span className="nav-symbol"><CallIcon /></span>{unseenMissed > 0 && <span className="connect-call-missed-dot" aria-hidden="true"/>}<small>Звонки</small>
     </button>, nav)}
     {main && nav && userId && open && createPortal(<section className="connect-call-history-screen" aria-label="История звонков">
       <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{calls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button></div></div>

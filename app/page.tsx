@@ -444,6 +444,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
   const previewRef=useRef<string|null>(null);
   const savedRef=useRef<File|null>(null);
   const [phase,setPhase]=useState<VideoNotePhase>('loading');
+  const [facing,setFacing]=useState<'user'|'environment'>('user');
   const [seconds,setSeconds]=useState(0);
   const [preview,setPreview]=useState<string|null>(null);
   const [error,setError]=useState('');
@@ -496,6 +497,20 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
     }catch(e){setError(e instanceof Error?e.message:'Не удалось начать запись');setPhase('error')}
   }
   function stop(){if(recorderRef.current?.state==='recording')recorderRef.current.stop()}
+  async function flipCamera() {
+    if(phase!=='ready' || !streamRef.current) return;
+    const nextFacing=facing==='user'?'environment':'user';
+    try {
+      const stream=await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:{ideal:nextFacing},width:{ideal:480},height:{ideal:480}},
+        audio:{echoCancellation:true,noiseSuppression:true}
+      });
+      streamRef.current.getTracks().forEach(track=>track.stop());
+      streamRef.current=stream;
+      if(live.current){live.current.srcObject=stream;void live.current.play().catch(()=>{});}
+      setFacing(nextFacing);setError('');
+    } catch(e) {setError('Не удалось переключить камеру: '+(e instanceof Error?e.message:String(e)));}
+  }
   function cancel(){onClose()}
   return <div className="connect-vnote-backdrop" role="dialog" aria-modal="true" aria-label="Запись видеокружка">
     <div className="connect-vnote-panel">
@@ -509,6 +524,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
       {phase==='error'&&<p className="connect-vnote-error">{error}</p>}
       <div className="connect-vnote-actions">
         <button type="button" onClick={cancel}>Отмена</button>
+        {phase==='ready'&&<button type="button" onClick={()=>void flipCamera()}>↻ Камера</button>}
         {phase==='ready'&&<button type="button" className="connect-vnote-primary" onClick={start}>● Записать</button>}
         {phase==='recording'&&<button type="button" className="connect-vnote-primary" onClick={stop}>■ Остановить</button>}
         {phase==='review'&&<button type="button" className="connect-vnote-primary" onClick={()=>{const file=savedRef.current;if(file)onSend(file)}}>Отправить</button>}
@@ -717,6 +733,19 @@ export default function Home() {
     return () => { alive = false; subscription.unsubscribe(); };
   }, [invited]);
 
+  // Re-register the current FCM token after login or token rotation, not only
+  // when the user manually opens the notification settings screen.
+  useEffect(() => {
+    if(!supabase || !user || !window.ConnectAndroid) return;
+    let cancelled=false;
+    void supabase.auth.getSession().then(({data})=>{
+      if(!cancelled && data.session?.user.id===user.id && data.session.access_token)
+        window.ConnectAndroid?.register(data.session.access_token);
+    }).catch(()=>{});
+    return ()=>{cancelled=true;};
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[user?.id]);
+
   async function authenticatedRequest(path:string,body?:object){
     if(!supabase)throw new Error('Нет соединения');
     const {data:{session}}=await supabase.auth.getSession();
@@ -875,8 +904,30 @@ export default function Home() {
       { conversation_id: id, user_id: user.id, last_read_at: iso },
       { onConflict: 'conversation_id,user_id' },
     );
-    if (error) console.error('Read receipt:', error.message);
+    if (error) { delete readCache.current[id]; console.error('Read receipt:', error.message); }
+    else {
+      window.ConnectAndroid?.dismissConversationNotifications(id);
+      // A signed-in read receipt also clears Android notifications on other devices.
+      const {data:{session}}=await supabase.auth.getSession();
+      if(session) void fetch('/api/push/read',{
+        method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},
+        body:JSON.stringify({conversationId:id,readAt:iso})
+      }).catch(()=>{});
+    }
   }, [user?.id]);
+
+  // Android native notifications follow the chat the user is actually viewing.
+  useEffect(() => {
+    const sync = () => window.ConnectAndroid?.setActiveConversation(
+      document.visibilityState === 'visible' && tab === 'chats' && activeChat ? activeChat : ''
+    );
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      window.ConnectAndroid?.setActiveConversation('');
+    };
+  }, [activeChat, tab]);
 
   const updateTyping = useCallback(async (id: string, value: boolean) => {
     if (!supabase || !user) return;
@@ -917,6 +968,13 @@ export default function Home() {
       const serverRead: Record<string, string> = {};
       for (const row of states) if (row.user_id === user.id) serverRead[row.conversation_id] = row.last_read_at;
       for (const [id, at] of Object.entries(serverRead)) if (!readCache.current[id] || readCache.current[id] < at) readCache.current[id] = at;
+      // Clear notifications for chats read on another device, on the next visible sync.
+      const newestIncoming: Record<string, string> = {};
+      for (const m of recent) if (m.sender_id !== user.id && !newestIncoming[m.conversation_id])
+        newestIncoming[m.conversation_id] = m.created_at;
+      for (const [id, at] of Object.entries(serverRead))
+        if (at && newestIncoming[id] && newestIncoming[id] <= at)
+          window.ConnectAndroid?.dismissConversationNotifications(id);
       const current = activeChatRef.current;
       setTyping(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.typing_until && new Date(st.typing_until).getTime() > Date.now())));
       setPeerRecording(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.recording_until && new Date(st.recording_until).getTime() > Date.now())));
@@ -1145,6 +1203,18 @@ export default function Home() {
     setNotice('Переписка скрыта на этом устройстве');
   }
   function enterChat(id: string) { resetChatTools(); setListActions(null); setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
+  useEffect(() => {
+    function openFromAndroid() {
+      const chatId=window.__connectAndroidPendingChat;
+      if(!chatId || !conversations.some(c=>c.id===chatId)) return;
+      delete window.__connectAndroidPendingChat;
+      enterChat(chatId);
+    }
+    window.addEventListener('connect:android-open-chat',openFromAndroid);
+    openFromAndroid();
+    return ()=>window.removeEventListener('connect:android-open-chat',openFromAndroid);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[conversations,user?.id]);
   function exitChat() { resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
   function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); }
   async function openContact(p: Profile) {
@@ -1350,7 +1420,10 @@ export default function Home() {
     let stream:MediaStream|null=null;
     try {
       stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      const formats=['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/webm;codecs=opus','audio/webm'];
+      // Android WebView records/plays Opus in WebM more reliably than MP4 audio.
+      const formats=window.ConnectAndroid
+        ? ['audio/webm;codecs=opus','audio/webm','audio/mp4;codecs=mp4a.40.2','audio/mp4']
+        : ['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/webm;codecs=opus','audio/webm'];
       const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
       const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);
       audioChunks.current=[];recordingStream.current=stream;mediaRecorder.current=recorder;
@@ -1377,7 +1450,7 @@ export default function Home() {
         const ext=type.includes('mp4')?'m4a':type.includes('ogg')?'ogg':'webm';
         void sendAttachment(new File([blob],`Голосовое-${Date.now()}.${ext}`,{type}),'audio');
       };
-      recorder.start();setRecording(true);setRecordSeconds(0);
+      recorder.start(250);setRecording(true);setRecordSeconds(0);
       void updateRecording(activeChat,true);
       recordInterval.current=window.setInterval(()=>{
         setRecordSeconds(Math.floor((Date.now()-recordingStarted.current)/1000));
