@@ -15,9 +15,9 @@ type Call = {
   answered_at: string | null;
   ended_at: string | null;
 };
-type Profile = { id: string; display_name: string };
+type Profile = { id: string; display_name: string; is_blocked: boolean };
 type Conversation = { id: string; user_a: string; user_b: string };
-type DialContact = { conversationId: string; peerId: string; peerName: string };
+type DialContact = { conversationId: string | null; peerId: string; peerName: string };
 type Filter = 'all' | 'missed';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -159,35 +159,59 @@ export default function ConnectCallsHub() {
     setLoading(false);
   }, [client, userId]);
 
-  // Dial by real conversation/user IDs, not by a duplicate-prone display name.
+  // Match Connect's Contacts screen: all current unblocked profiles, excluding self.
+  // Do not treat old conversations as an address book: blocked/deleted peers can remain
+  // in historical conversations and must not appear in the new-call picker.
   const loadContacts = useCallback(async () => {
     if (!client || !userId) return;
     setContactsLoading(true); setContactsError('');
     try {
-      const { data: rows, error: conversationError } = await client.from('conversations')
-        .select('id,user_a,user_b')
-        .or(`user_a.eq.${userId},user_b.eq.${userId}`).limit(250);
-      if (conversationError) throw conversationError;
-      const ids = Array.from(new Set(((rows || []) as Conversation[])
-        .map(row => row.user_a === userId ? row.user_b : row.user_a)));
-      if (!ids.length) { setContacts([]); return; }
-      const { data: people, error: profilesError } = await client.from('profiles')
-        .select('id,display_name').in('id', ids);
-      if (profilesError) throw profilesError;
-      const names = new Map(((people || []) as Profile[]).map(person => [person.id, person.display_name]));
-      setContacts(((rows || []) as Conversation[]).map(row => {
-        const peerId = row.user_a === userId ? row.user_b : row.user_a;
-        return { conversationId: row.id, peerId, peerName: names.get(peerId) || 'Собеседник' };
-      }).sort((a, b) => a.peerName.localeCompare(b.peerName, 'ru')));
+      const [peopleResult, conversationResult] = await Promise.all([
+        client.from('profiles').select('id,display_name,is_blocked').eq('is_blocked', false).neq('id', userId).limit(250),
+        client.from('conversations').select('id,user_a,user_b')
+          .or(`user_a.eq.${userId},user_b.eq.${userId}`).limit(250),
+      ]);
+      if (peopleResult.error) throw peopleResult.error;
+      if (conversationResult.error) throw conversationResult.error;
+      const conversations = (conversationResult.data || []) as Conversation[];
+      const chatByPeerId = new Map(conversations.map(row => [row.user_a === userId ? row.user_b : row.user_a, row.id]));
+      setContacts(((peopleResult.data || []) as Profile[])
+        .filter(profile => !profile.is_blocked && profile.id !== userId)
+        .map(profile => ({
+          conversationId: chatByPeerId.get(profile.id) || null,
+          peerId: profile.id,
+          peerName: profile.display_name,
+        }))
+        .sort((a, b) => a.peerName.localeCompare(b.peerName, 'ru')));
     } catch {
       setContactsError('Не удалось загрузить контакты. Проверьте подключение.');
     } finally { setContactsLoading(false); }
   }, [client, userId]);
 
-  function dial(target: DialContact) {
-    if (!userId || target.peerId === userId) return;
-    setPickerOpen(false);
-    window.dispatchEvent(new CustomEvent<DialContact>('connect:audio-call:start', { detail: target }));
+  // For an existing chat, dial immediately. For a new contact, create its
+  // conversation exactly as Connect's ordinary Contacts screen does.
+  const dialInProgress = useRef(false);
+  async function dial(target: DialContact) {
+    if (!client || !userId || target.peerId === userId || dialInProgress.current) return;
+    dialInProgress.current = true;
+    try {
+      let conversationId = target.conversationId;
+      if (!conversationId) {
+        const [user_a, user_b] = [userId, target.peerId].sort();
+        const { data, error: createError } = await client.from('conversations')
+          .upsert({ user_a, user_b }, { onConflict: 'user_a,user_b' })
+          .select('id').single();
+        if (createError || !data?.id) throw createError || new Error('Не удалось открыть переписку');
+        conversationId = data.id as string;
+        setContacts(prev => prev.map(p => p.peerId === target.peerId ? { ...p, conversationId } : p));
+      }
+      setPickerOpen(false);
+      window.dispatchEvent(new CustomEvent('connect:audio-call:start', {
+        detail: { conversationId, peerId: target.peerId, peerName: target.peerName },
+      }));
+    } catch {
+      setContactsError('Не удалось начать звонок. Повторите попытку.');
+    } finally { dialInProgress.current = false; }
   }
 
   const sendCallPush = useCallback(async (call: Call) => {
@@ -367,7 +391,7 @@ export default function ConnectCallsHub() {
             return <div className="connect-call-history-item" key={call.id}>
               <div className="connect-call-history-avatar" aria-hidden="true">{displayName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</div>
               <div className="connect-call-history-details"><strong>{displayName}</strong><small className={missedCall ? 'missed' : ''}><Arrow outgoing={outgoing}/>{statusText(call,userId)}</small></div>
-              <div className="connect-call-history-actions"><div className="connect-call-history-date"><time dateTime={call.created_at}>{formatDate(call.created_at)}</time><span>{formatTime(call.created_at)}</span></div><button type="button" className="connect-call-redial" title={`Позвонить: ${displayName}`} aria-label={`Позвонить: ${displayName}`} disabled={call.status === 'ringing' || call.status === 'active'} onClick={() => dial({ conversationId:call.conversation_id, peerId, peerName:displayName })}><CallIcon size={19}/></button></div>
+              <div className="connect-call-history-actions"><div className="connect-call-history-date"><time dateTime={call.created_at}>{formatDate(call.created_at)}</time><span>{formatTime(call.created_at)}</span></div><button type="button" className="connect-call-redial" title={`Позвонить: ${displayName}`} aria-label={`Позвонить: ${displayName}`} disabled={call.status === 'ringing' || call.status === 'active'} onClick={() => void dial({ conversationId:call.conversation_id, peerId, peerName:displayName })}><CallIcon size={19}/></button></div>
             </div>;
           })}</div>}
       </div>
@@ -375,7 +399,7 @@ export default function ConnectCallsHub() {
         <div className="connect-call-picker">
           <div className="connect-call-picker-head"><strong>Кому позвонить?</strong><button type="button" onClick={() => setPickerOpen(false)}>Закрыть</button></div>
           <input aria-label="Найти контакт" placeholder="Поиск контакта" value={contactSearch} onChange={event => setContactSearch(event.target.value)}/>
-          <div className="connect-call-picker-list">{contactsError ? <div className="connect-call-picker-empty" role="alert">{contactsError}<div><button type="button" onClick={() => void loadContacts()}>Повторить</button></div></div> : contactsLoading ? <div className="connect-call-picker-empty">Загружаем контакты…</div> : visibleContacts.length ? visibleContacts.map(contact => <button type="button" className="connect-call-picker-person" key={contact.conversationId} onClick={() => dial(contact)}><span className="connect-call-history-avatar" aria-hidden="true">{contact.peerName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</span><span>{contact.peerName}</span><CallIcon size={20}/></button>) : <div className="connect-call-picker-empty">{contactSearch ? 'Ничего не найдено' : 'Контактов пока нет'}</div>}</div>
+          <div className="connect-call-picker-list">{contactsError ? <div className="connect-call-picker-empty" role="alert">{contactsError}<div><button type="button" onClick={() => void loadContacts()}>Повторить</button></div></div> : contactsLoading ? <div className="connect-call-picker-empty">Загружаем контакты…</div> : visibleContacts.length ? visibleContacts.map(contact => <button type="button" className="connect-call-picker-person" key={contact.conversationId} onClick={() => void dial(contact)}><span className="connect-call-history-avatar" aria-hidden="true">{contact.peerName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</span><span>{contact.peerName}</span><CallIcon size={20}/></button>) : <div className="connect-call-picker-empty">{contactSearch ? 'Ничего не найдено' : 'Контактов пока нет'}</div>}</div>
         </div>
       </div>}
     </section>, main)}
