@@ -142,3 +142,34 @@
 .connect-gallery-arrow{position:absolute;z-index:2;top:50%;transform:translateY(-50%);width:36px;height:52px;border:0;border-radius:12px;background:#161b25a9;color:white;font-size:35px;display:grid;place-items:center;cursor:pointer}
 .connect-gallery-arrow.prev{left:4px}.connect-gallery-arrow.next{right:4px}
 @media (pointer:coarse){.connect-gallery-arrow{opacity:.45;width:25px;font-size:27px}}
+
+/* Media bubbles: remove the solid chat-color backing, retain a hairline border. */
+.bubble.sent:has(.connect-media-thumb),
+.bubble.received:has(.connect-media-thumb){
+  background:transparent!important;
+  color:var(--text)!important;
+  padding:2px!important;
+  gap:0!important;
+  border:1px solid color-mix(in srgb,var(--text) 25%,transparent)!important;
+  overflow:hidden;
+}
+.bubble:has(.connect-media-thumb) .bubble-body,
+.bubble:has(.connect-media-thumb) .attachment-preview{margin:0!important;padding:0!important;gap:0!important;width:100%!important;max-width:100%!important}
+.bubble:has(.connect-media-thumb) .connect-media-thumb{width:100%;border-radius:12px 12px 5px 5px}
+.bubble:has(.connect-media-thumb) .bubble-meta{padding:5px 7px 3px!important;background:rgba(16,20,30,.48)!important;color:#fff!important;width:100%;justify-content:flex-end;opacity:1}
+/* All sticker variants, including keyboard image stickers, stay frameless. */
+.bubble.sticker-bubble,
+.bubble.sent.sticker-bubble,
+.bubble.received.sticker-bubble,
+.bubble.sticker-bubble:has(.connect-media-thumb){
+  background:transparent!important;border:0!important;box-shadow:none!important;
+  padding:0!important;gap:0!important;min-width:0!important;
+}
+.bubble.sticker-bubble .bubble-body,
+.bubble.sticker-bubble .attachment-preview,
+.bubble.sticker-bubble .keyboard-sticker-preview,
+.bubble.sticker-bubble .connect-media-thumb{background:transparent!important;border:0!important;padding:0!important;box-shadow:none!important}
+.bubble.sticker-bubble .connect-media-thumb{width:auto!important;height:auto!important;max-width:160px!important;min-height:0!important;max-height:160px!important;border-radius:0!important}
+.bubble.sticker-bubble .connect-media-thumb img{width:auto!important;height:auto!important;max-width:160px!important;max-height:160px!important;object-fit:contain!important}
+.bubble.sticker-bubble .bubble-meta,
+.bubble.sticker-bubble:has(.connect-media-thumb) .bubble-meta{background:transparent!important;color:var(--text)!important;padding:2px 0!important;opacity:.7!important}
