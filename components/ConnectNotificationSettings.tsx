@@ -17,6 +17,8 @@ declare global {
       pickSound: (kind: string) => void;
       resetSound: (kind: string) => void;
       previewSound: (kind: string) => void;
+      stopPreviewSound: () => void;
+      canShowFullScreenCalls: () => boolean;
       setSilent: (kind: string, muted: boolean) => void;
       setSpeakerphone: (enabled: boolean) => void;
       getSoundSettings: () => string;
@@ -60,6 +62,7 @@ function nativeSounds(): NativeSounds | null {
 export default function ConnectNotificationSettings({supabase,userId}:{supabase:SupabaseClient,userId:string}) {
   const [prefs,setPrefs]=useState<Prefs>(defaults), [status,setStatus]=useState(''), [busy,setBusy]=useState(false);
   const [sounds,setSounds]=useState<NativeSounds|null>(null);
+  const [fullScreenAllowed,setFullScreenAllowed]=useState(true);
   const latest=useRef(defaults),revision=useRef(0),queue=useRef<Promise<void>>(Promise.resolve());
   const storageKey='connect-notification-prefs-'+userId;
   function apply(p: Prefs) {
@@ -68,16 +71,22 @@ export default function ConnectNotificationSettings({supabase,userId}:{supabase:
     window.ConnectAndroid?.setPreferences(JSON.stringify(p));
   }
   useEffect(()=>{
-    setSounds(nativeSounds());
-    function changed(){setSounds(nativeSounds());}
+    function changed(){
+      setSounds(nativeSounds());
+      try { setFullScreenAllowed(window.ConnectAndroid?.canShowFullScreenCalls?.() ?? true); }
+      catch { setFullScreenAllowed(true); }
+    }
+    changed();
     function pushStatus(event:Event){
       const detail=(event as CustomEvent<{ok:boolean}>).detail;
       setStatus(detail?.ok?'Android: уведомления подключены':'Android: ошибка регистрации уведомлений');
     }
     window.addEventListener('connect:android-sound-selected',changed);
+    window.addEventListener('focus',changed);
     window.addEventListener('connect:android-push-status',pushStatus);
     return ()=>{
       window.removeEventListener('connect:android-sound-selected',changed);
+      window.removeEventListener('focus',changed);
       window.removeEventListener('connect:android-push-status',pushStatus);
     };
   },[]);
@@ -150,25 +159,30 @@ export default function ConnectNotificationSettings({supabase,userId}:{supabase:
       <button type="button" onClick={()=>play(prefs.sound)}>Прослушать</button>
     </div>
     {sounds && <div className="connect-android-sounds">
-      <h3>Мелодии Android из памяти телефона</h3>
-      <p>Собственные мелодии имеют приоритет над сигналом чатов. Файлы сохраняются внутри приложения (до 20 МБ).</p>
+      <h3>Мелодии Android</h3>
+      <p>Собственные звуки применяются к новым уведомлениям. Выбор хранится на этом телефоне; прослушивание останавливается при сворачивании или через 10 секунд.</p>
       <div><strong>Входящий аудиозвонок</strong><p>{sounds.callSilent?'Без звука':sounds.call}</p>
         <button type="button" onClick={()=>window.ConnectAndroid?.pickSound('call')}>Выбрать мелодию</button>
-        <button type="button" onClick={()=>window.ConnectAndroid?.previewSound('call')}>Прослушать</button>
+        <button type="button" disabled={sounds.callSilent} onClick={()=>window.ConnectAndroid?.previewSound('call')}>Прослушать</button>
+        <button type="button" onClick={()=>window.ConnectAndroid?.stopPreviewSound?.()}>Остановить</button>
         <button type="button" onClick={()=>window.ConnectAndroid?.resetSound('call')}>Сбросить</button>
         <label><input type="checkbox" checked={sounds.callSilent} onChange={e=>window.ConnectAndroid?.setSilent('call',e.target.checked)}/> Без звука</label>
       </div>
       <div><strong>Сообщение</strong><p>{sounds.messageSilent?'Без звука':sounds.messageCustom?sounds.message:'Используется сигнал чатов'}</p>
         <button type="button" onClick={()=>window.ConnectAndroid?.pickSound('message')}>Выбрать звук</button>
-        <button type="button" onClick={()=>window.ConnectAndroid?.previewSound('message')}>Прослушать</button>
+        <button type="button" disabled={sounds.messageSilent || (!sounds.messageCustom && prefs.sound==='silent')} onClick={()=>window.ConnectAndroid?.previewSound('message')}>Прослушать</button>
+        <button type="button" onClick={()=>window.ConnectAndroid?.stopPreviewSound?.()}>Остановить</button>
         <button type="button" onClick={()=>window.ConnectAndroid?.resetSound('message')}>Сбросить</button>
         <label><input type="checkbox" checked={sounds.messageSilent} onChange={e=>window.ConnectAndroid?.setSilent('message',e.target.checked)}/> Без звука</label>
       </div>
-      <button type="button" onClick={()=>window.ConnectAndroid?.openCallNotificationSettings()}>Разрешить полноэкранные входящие вызовы (Android 14+)</button>
+      {!fullScreenAllowed && <p role="alert">Android запрещает полноэкранный показ. Разреши Connect показывать звонки поверх экрана блокировки в системных настройках.</p>}
+      <button type="button" onClick={()=>window.ConnectAndroid?.openCallNotificationSettings()}>
+        {fullScreenAllowed ? 'Полноэкранные звонки: разрешены (проверить)' : 'Разрешить показ звонков на заблокированном экране'}
+      </button>
     </div>}
     <label><input type="checkbox" checked={prefs.vibrate} onChange={e=>save({...latest.current,vibrate:e.target.checked})}/> Вибрация (где поддерживается)</label>
     <button type="button" disabled={busy} onClick={()=>void activate()}>{busy?'Подключаем…':'Подключить уведомления'}</button>
     <p role="status">{status}</p>
-    <small>На Android звук зависит также от разрешения системного канала уведомлений. Звонок можно принять в Connect, открыв уведомление.</small>
+    <small>Android может отдельно менять звук и полноэкранный показ через системные настройки уведомлений. Если система запретила их, приложение не может обойти запрет.</small>
   </section>;
 }
