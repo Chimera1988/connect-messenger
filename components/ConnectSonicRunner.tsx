@@ -10,7 +10,7 @@ import { createPortal } from 'react-dom';
  */
 
 type EnemyKind = 'motobug' | 'crabmeat' | 'buzzbomber';
-type Enemy = { id: number; kind: EnemyKind; x: number; w: number; h: number };
+type Enemy = { id: number; kind: EnemyKind; x: number; w: number; h: number; altitude: number };
 type Ring = { id: number; x: number; y: number; taken: boolean };
 type Mode = 'ready' | 'running' | 'over';
 type Game = {
@@ -86,9 +86,18 @@ function sonic(ctx: CanvasRenderingContext2D, x: number, ground: number, jumpOff
   ctx.restore();
 }
 
+// Low Buzz Bombers must be jumped; high ones are safe to run underneath.
+// A tiny hover movement is shared by drawing and collision detection.
+function enemyAltitude(enemy: Enemy, seconds: number): number {
+  return enemy.kind === 'buzzbomber'
+    ? enemy.altitude + Math.sin(seconds * 5.2 + enemy.id) * 2.5
+    : 0;
+}
+
 function badnik(ctx: CanvasRenderingContext2D, enemy: Enemy, ground: number, seconds: number) {
   ctx.save();
-  ctx.translate(Math.round(enemy.x), Math.round(ground - enemy.h));
+  const altitude = enemyAltitude(enemy, seconds);
+  ctx.translate(Math.round(enemy.x), Math.round(ground - enemy.h - altitude));
   const w = enemy.w, h = enemy.h;
   const move = Math.floor(seconds * 7) % 2;
   if (enemy.kind === 'motobug') {
@@ -133,8 +142,8 @@ function badnik(ctx: CanvasRenderingContext2D, enemy: Enemy, ground: number, sec
     pixel(ctx, 8, 20, 4, 2, '#e33c48');
   }
   ctx.restore();
-  // Give all robots a ground contact shadow.
-  ctx.fillStyle = '#28363755';
+  // A faint ground shadow also shows the position of hovering robots.
+  ctx.fillStyle = enemy.kind === 'buzzbomber' ? '#28363722' : '#28363755';
   ctx.fillRect(Math.round(enemy.x + 5), Math.round(ground + 1), Math.max(12, w - 9), 3);
 }
 
@@ -315,7 +324,12 @@ export default function ConnectSonicRunner() {
           const kind = types[Math.floor(Math.random() * types.length)];
           const enemyW = kind === 'crabmeat' ? 43 : 39;
           const enemyH = kind === 'buzzbomber' ? 47 : 42;
-          g.enemies.push({ id: g.nextId++, kind, x: width + 40, w: enemyW, h: enemyH });
+          // After a short introductory period, some flyers move high enough
+          // that the correct strategy is to stay on the ground, not jump.
+          const altitude = kind === 'buzzbomber'
+            ? (g.elapsed > 10 && Math.random() > 0.5 ? 75 : 18)
+            : 0;
+          g.enemies.push({ id: g.nextId++, kind, x: width + 40, w: enemyW, h: enemyH, altitude });
           if (Math.random() > .22) {
             g.rings.push({ id: g.nextId++, x: width + 56, y: height - 59 - 100, taken: false });
           }
@@ -329,9 +343,10 @@ export default function ConnectSonicRunner() {
         const playerTop = height - 59 - 48 + g.jumpOffset;
         const playerBottom = height - 59 + g.jumpOffset - 4;
         for (const enemy of g.enemies) {
-          const foeTop = height - 59 - enemy.h;
+          const foeBottom = height - 59 - enemyAltitude(enemy, g.elapsed);
+          const foeTop = foeBottom - enemy.h;
           if (playerRight > enemy.x + 5 && playerLeft < enemy.x + enemy.w - 5 &&
-              playerBottom > foeTop + 5 && playerTop < height - 59 - 5) {
+              playerBottom > foeTop + 5 && playerTop < foeBottom - 5) {
             finish(); break;
           }
         }
@@ -360,8 +375,27 @@ export default function ConnectSonicRunner() {
 
   return <>
     <style>{`
-      .connect-app .connect-runner-settings-item { border-top:1px solid rgba(194,218,244,.11); margin:0 !important; padding:0 !important; }
-      .connect-app .connect-runner-settings-item .settings-menu-row { width:100%; border:0; cursor:pointer; }
+      /* This item is mounted as an eighth child of the existing seven-item
+         settings menu. It MUST be its own rounded card, not a square row. */
+      .connect-app .settings-menu > div.connect-runner-settings-item {
+        margin: 14px 0 0 !important;
+        padding: 0 14px !important;
+        border: 1px solid var(--glass-stroke) !important;
+        border-radius: 22px !important;
+        overflow: hidden;
+        background: linear-gradient(130deg,
+          color-mix(in srgb, var(--wave-secondary) 6%, rgba(107,141,183,.16)),
+          rgba(27,38,58,.68) 35%, rgba(37,52,74,.53));
+        box-shadow: inset 0 1px 0 var(--glass-sheen), var(--glass-shadow);
+        -webkit-backdrop-filter: blur(23px) saturate(145%);
+        backdrop-filter: blur(23px) saturate(145%);
+      }
+      .connect-app .settings-menu > div.connect-runner-settings-item .settings-menu-row {
+        width: 100%; min-height: 65px; border: 0; cursor: pointer;
+      }
+      .connect-app.light .settings-menu > div.connect-runner-settings-item {
+        background: linear-gradient(135deg, rgba(255,255,255,.88), rgba(232,240,249,.72));
+      }
       .connect-app .connect-runner-screen { position:absolute; inset:0; z-index:8; display:flex;flex-direction:column; min-width:0; min-height:0; padding:13px 9px max(12px,env(safe-area-inset-bottom)); background:linear-gradient(155deg,color-mix(in srgb,var(--bg) 93%,#174672),color-mix(in srgb,var(--bg) 93%,#096c66)); overflow-y:auto; overscroll-behavior:contain; color:var(--text); }
       .connect-app .main-view:has(>.connect-runner-screen) { position:relative; }
       .connect-runner-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin:0 6px 12px; }
@@ -401,13 +435,13 @@ export default function ConnectSonicRunner() {
       </div>
       <div className="connect-runner-frame">
         <canvas ref={canvas} onPointerDown={() => jump()} aria-label="Игровое поле. Нажмите, чтобы прыгнуть."/>
-        {mode !== 'running' && <div className="connect-runner-message"><strong>{mode === 'over' ? 'Игра окончена!' : 'Готов к забегу?'}</strong><p>{mode === 'over' ? `Счёт: ${score}. Ещё одну попытку?` : 'Перепрыгивай Мотобагов, Крабмитов и Базз Бомберов. Лови золотые кольца!'}</p></div>}
+        {mode !== 'running' && <div className="connect-runner-message"><strong>{mode === 'over' ? 'Игра окончена!' : 'Готов к забегу?'}</strong><p>{mode === 'over' ? `Счёт: ${score}. Ещё одну попытку?` : 'Перепрыгивай наземных и низких роботов. Под высоко летящими Базз Бомберами пробегай снизу! Собирай кольца.'}</p></div>}
       </div>
       <div className="connect-runner-actions">
         <button type="button" className="primary" onClick={mode === 'running' ? jump : start}>{mode === 'running' ? '↑ Прыжок' : mode === 'over' ? '↻ Ещё раз' : '▶ Начать'}</button>
         <button type="button" onClick={closeGame}>Вернуться</button>
       </div>
-      <p className="connect-runner-tip">Коснись игрового поля для прыжка. На компьютере — пробел или ↑. Рекорд сохраняется на устройстве.</p>
+      <p className="connect-runner-tip">Наземных и низких роботов перепрыгивай, а под высокими пролети… точнее, пробеги! На iPhone — касание, на компьютере — пробел или ↑. Рекорд сохраняется.</p>
     </section>, main)}
   </>;
 }
