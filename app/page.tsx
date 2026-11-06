@@ -48,6 +48,15 @@ const supabase = supabaseUrl && supabaseKey
     })
   : null;
 
+type AlbumItem = {path:string;name:string;kind:'image'|'video'};
+const ALBUM_PREFIX = '[[connect-album:';
+function parseAlbum(body:string):AlbumItem[] {
+  const text=forwardedMessage(body).text;
+  if(!text.startsWith(ALBUM_PREFIX)||!text.endsWith(']]'))return [];
+  try {const v:unknown=JSON.parse(text.slice(ALBUM_PREFIX.length,-2));
+    return Array.isArray(v)&&v.length>0&&v.length<=20&&v.every(x=>x&&typeof x.path==='string'&&typeof x.name==='string'&&(x.kind==='image'||x.kind==='video'))?v as AlbumItem[]:[];
+  }catch{return []}
+}
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
 type Tab = 'chats' | 'contacts' | 'settings';
 type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'data' | 'privacy' | 'about';
@@ -151,7 +160,7 @@ function forwardBody(from: string, body: string): string {
 
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (stickerFromBody(forwardedMessage(m.body).text) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (parseAlbum(m.body).length ? `🖼 Альбом (${parseAlbum(m.body).length})` : stickerFromBody(forwardedMessage(m.body).text) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
@@ -332,6 +341,18 @@ function AvatarCropper({ url, onCancel, onSave, saving }: { url: string; onCance
   </div>;
 }
 
+function PendingAttachment({file,onRemove}:{file:File;onRemove:()=>void}){
+  const [url,setUrl]=useState('');
+  useEffect(()=>{if(!file.type.startsWith('image/')&&!file.type.startsWith('video/'))return;
+    const next=URL.createObjectURL(file);setUrl(next);return()=>URL.revokeObjectURL(next);
+  },[file]);
+  return <div className="connect-album-preview">
+    {url?(file.type.startsWith('image/')?<img src={url} alt={file.name}/>:<video src={url} muted playsInline preload="metadata"/>):<span className="connect-file-placeholder">📎</span>}
+    <span className="connect-album-filename" title={file.name}>{file.name}</span>
+    <button type="button" onClick={onRemove} aria-label={`Убрать ${file.name}`}>×</button>
+  </div>;
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [tab, setTab] = useState<Tab>('chats');
@@ -385,6 +406,7 @@ export default function Home() {
   const mediaTouchStart = useRef<{x:number;y:number}|null>(null);
   const [savingMedia, setSavingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [pendingFiles,setPendingFiles]=useState<File[]>([]);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const attachmentInput = useRef<HTMLInputElement | null>(null);
@@ -1014,7 +1036,7 @@ export default function Home() {
   useEffect(() => {
     if (!supabase || !user) return;
     let cancelled = false;
-    const paths = Array.from(new Set(messages.filter(m => m.attachment_path && !m.deleted_at).map(m => m.attachment_path!)));
+    const paths = Array.from(new Set(messages.filter(m=>!m.deleted_at).flatMap(m=>[...(m.attachment_path?[m.attachment_path]:[]),...parseAlbum(m.body).map(x=>x.path)])));
     const missing = paths.filter(path => !attachmentUrls[path]);
     if (!missing.length) return;
     void Promise.all(missing.map(async path => {
@@ -1048,6 +1070,66 @@ export default function Home() {
     void sendAttachment(image);
   }
 
+  function chooseAttachments(list:FileList|null){
+    const files=Array.from(list||[]);
+    if(!files.length)return;
+    setPendingFiles(prev=>[...prev,...files].slice(0,20));
+    if(files.length+pendingFiles.length>20)setNotice('Можно выбрать не более 20 файлов за раз');
+  }
+  async function sendSelectedFiles(){
+    if(!pendingFiles.length||busy)return;
+    const files=[...pendingFiles];
+    const media=files.filter(f=>f.type.startsWith('image/')||f.type.startsWith('video/'));
+    const docs=files.filter(f=>!f.type.startsWith('image/')&&!f.type.startsWith('video/'));
+    if(media.length&&docs.length){setNotice('Выберите отдельно медиа для альбома и документы');return}
+    if(files.some(f=>f.size<1||f.size>100*1024*1024)){setNotice('Максимальный размер одного файла — 100 МБ');return}
+    if(docs.length){
+      for(const file of docs)await sendAttachment(file);
+      setPendingFiles([]);
+      return;
+    }
+    if(media.length===1){await sendAttachment(media[0]);setPendingFiles([]);return}
+    await sendAlbum(media);
+  }
+  async function sendAlbum(files:File[]){
+    if(!supabase||!user||!activeChat||busy||files.length<2)return;
+    const client=supabase,uid=user.id,chatId=activeChat;
+    setBusy(true);setUploadProgress(0);setNotice('');
+    const items:AlbumItem[]=[];
+    try{
+      const {data:{session}}=await client.auth.getSession();
+      if(!session)throw Error('Сессия завершена');
+      for(let i=0;i<files.length;i++){
+        const file=files[i],path=`${chatId}/${uid}/${crypto.randomUUID()}`;
+        if(file.size<=6*1024*1024){
+          const {error}=await client.storage.from('connect-attachments').upload(path,file,{contentType:file.type||'application/octet-stream',upsert:false});
+          if(error)throw error;
+        }else{
+          await new Promise<void>((resolve,reject)=>{
+            const upload=new tus.Upload(file,{
+              endpoint:useSupabaseProxy?window.location.origin+'/supabase-storage/storage/v1/upload/resumable':`${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
+              retryDelays:[0,3000,5000,10000,20000],headers:{authorization:`Bearer ${session.access_token}`,'x-upsert':'false'},
+              uploadDataDuringCreation:true,removeFingerprintOnSuccess:true,
+              metadata:{bucketName:'connect-attachments',objectName:path,contentType:file.type||'application/octet-stream'},chunkSize:6*1024*1024,
+              onError:reject,onSuccess:()=>resolve(),onProgress:(done,total)=>setUploadProgress(Math.round(((i+done/total)/files.length)*100))
+            });upload.start();
+          });
+        }
+        items.push({path,name:file.name.slice(0,240),kind:file.type.startsWith('video/')?'video':'image'});
+        setUploadProgress(Math.round((i+1)/files.length*100));
+      }
+      const {data,error}=await client.from('messages').insert({conversation_id:chatId,sender_id:uid,body:ALBUM_PREFIX+JSON.stringify(items)+']]',reply_to:replyTo?.id||null}).select(MESSAGE_COLUMNS).single();
+      if(error||!data)throw error||Error('Не удалось создать альбом');
+      const m=data as Message;
+      setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
+      setLatest(prev=>({...prev,[chatId]:m}));
+      setReplyTo(null);setPendingFiles([]);
+      const urls=await Promise.all(items.map(async x=>({path:x.path,result:await client.storage.from('connect-attachments').createSignedUrl(x.path,3600)})));
+      setAttachmentUrls(prev=>{const next={...prev};urls.forEach(x=>{if(x.result.data?.signedUrl)next[x.path]=mediaUrl(x.result.data.signedUrl)});return next});
+      requestAnimationFrame(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight});
+    }catch(e){setNotice('Не удалось отправить альбом: '+(e instanceof Error?e.message:String(e)))}
+    finally{setBusy(false);setUploadProgress(null)}
+  }
   async function sendAttachment(file: File, kindOverride?: 'audio') {
     if (!supabase || !user || !activeChat || busy) return;
     if (file.size < 1 || file.size > 100*1024*1024) {setNotice('Максимальный размер файла — 100 МБ');return;}
@@ -1152,7 +1234,7 @@ export default function Home() {
       setNotice('Не удалось завершить запись: '+(e instanceof Error?e.message:String(e)));
     }
   }
-  const gallery = visibleMessages.filter(m => !m.deleted_at && m.attachment_path && (m.attachment_kind === 'image' || m.attachment_kind === 'video') && attachmentUrls[m.attachment_path]).map(m => ({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || (m.attachment_kind === 'video' ? 'Видео.mp4' : 'Фото.jpg'),kind:m.attachment_kind as 'image'|'video'}));
+  const gallery = visibleMessages.flatMap(m=>[...(m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video')?[{path:m.attachment_path,name:m.attachment_name || 'Медиа',kind:m.attachment_kind as 'image'|'video'}]:[]),...parseAlbum(m.body)]).filter(x=>Boolean(attachmentUrls[x.path])).map(x=>({...x,url:attachmentUrls[x.path]}));
   const galleryIndex = mediaViewer ? gallery.findIndex(item => item.path === mediaViewer.path) : -1;
   function stepGallery(delta:number) {
     if (!mediaViewer || galleryIndex < 0 || !gallery.length) return;
@@ -1332,9 +1414,10 @@ export default function Home() {
                       onContextMenu={e => { e.preventDefault(); if(selectionMode)selectOne(m.id);else openMenu(m, e.currentTarget); }}
                       onKeyDown={e => bubbleKey(e, m)} tabIndex={m.deleted_at ? -1 : 0}
                       role={m.deleted_at ? undefined : 'button'} aria-label={m.deleted_at ? 'Сообщение удалено' : 'Удерживайте, чтобы открыть действия с сообщением'}>
-                      {m.reply_to && <div className="quote-box"><strong>{replied?.sender_id === user.id ? 'Вы' : currentName}</strong><span>{!replied ? 'Исходное сообщение' : replied.deleted_at ? 'Сообщение удалено' : replied.body}</span></div>}
+                      {m.reply_to && <div className="quote-box"><strong>{replied?.sender_id === user.id ? 'Вы' : currentName}</strong><span>{!replied ? 'Исходное сообщение' : replied.deleted_at ? 'Сообщение удалено' : parseAlbum(replied.body).length ? `Альбом (${parseAlbum(replied.body).length})` : replied.body}</span></div>}
                       <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : <>
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
+                        {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?<img src={attachmentUrls[item.path]} alt={item.name} loading="lazy"/>:<><video src={attachmentUrls[item.path]} preload="metadata" playsInline/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
                           {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
                             : m.attachment_kind==='image' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>
@@ -1342,7 +1425,7 @@ export default function Home() {
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
                             : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
                         </div>}
-                        {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);return st?<img className="sent-sticker" src={customStickerUrl(st)} alt={st.name} loading="lazy"/>:<span>Стикер недоступен</span>})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
+                        {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);return st?<img className="sent-sticker" src={customStickerUrl(st)} alt={st.name} loading="lazy"/>:<span>Стикер недоступен</span>})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (parseAlbum(m.body).length ? null : forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
                       </>}</div>
                       <div className="bubble-meta">{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>
                     </div>
@@ -1353,9 +1436,14 @@ export default function Home() {
             </div>
             <form className="chat-composer" onSubmit={sendMessage}>
               {(replyTo || editing) && <div className="compose-context"><div className="context-stripe"/><div className="compose-context-text"><strong>{editing ? 'Редактирование' : `Ответ: ${replyTo?.sender_id === user.id ? 'Вы' : currentName}`}</strong><span>{editing?.body || replyTo?.body}</span></div><button type="button" className="icon-btn dismiss-context" onClick={cancelCompose} aria-label="Отменить"><Icon name="close" size={20}/></button></div>}
+              {pendingFiles.length>0 && <div className="connect-album-compose">
+                <div className="connect-album-heading"><strong>Выбрано: {pendingFiles.length}</strong><button type="button" onClick={()=>setPendingFiles([])}>Отмена</button></div>
+                <div className="connect-album-previews">{pendingFiles.map((file,i)=><PendingAttachment key={i} file={file} onRemove={()=>setPendingFiles(prev=>prev.filter((_,j)=>j!==i))}/>)}</div>
+                <button className="connect-album-send" type="button" disabled={busy} onClick={()=>void sendSelectedFiles()}>{busy?'Отправляем…':pendingFiles.length>1?'Отправить выбранное':'Отправить файл'}</button>
+              </div>}
               {uploadProgress!==null && <div className="upload-status">Отправка файла: {uploadProgress}%<progress max={100} value={uploadProgress}/></div>}
               {recording && <div className="recording-status"><span>● Запись {Math.floor(recordSeconds/60)}:{String(recordSeconds%60).padStart(2,'0')}</span><button type="button" onClick={()=>finishRecording(false)}>Отмена</button><button type="button" onClick={()=>finishRecording(true)}>Отправить</button></div>}
-              <input ref={attachmentInput} type="file" hidden onChange={e=>{const f=e.currentTarget.files?.[0];e.currentTarget.value='';if(f)void sendAttachment(f);}}/>
+              <input ref={attachmentInput} type="file" multiple hidden onChange={e=>{chooseAttachments(e.currentTarget.files);e.currentTarget.value='';}}/>
               {stickerPicker && <div className="sticker-picker">
                 <div className="sticker-picker-tabs">
                   {STICKER_PACKS.filter(p=>enabledPacks.includes(p.id)).map(p=><button key={p.id} type="button" className={stickerPack===p.id?'active':''} onClick={()=>{setStickerPack(p.id);setCustomPack('')}}>{p.emoji} {p.name}</button>)}

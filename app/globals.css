@@ -144,70 +144,58 @@
 @media (pointer:coarse){.connect-gallery-arrow{opacity:.45;width:25px;font-size:27px}}
 
 
-/* Media sizing correction: explicit width prevents flex shrink-to-content. */
+/* Connect media: consistent compact cards; full-size originals remain in the viewer. */
 .bubble.sent:has(.connect-media-thumb):not(.sticker-bubble),
 .bubble.received:has(.connect-media-thumb):not(.sticker-bubble){
-  width:min(300px,calc(100vw - 78px))!important;
-  min-width:0!important;
-  max-width:min(300px,calc(100vw - 78px))!important;
-  flex:0 0 auto!important;
-  padding:2px!important;
-  gap:0!important;
-  background:transparent!important;
-  border:1px solid rgba(220,230,245,.32)!important;
-  border-radius:15px!important;
-  color:var(--text)!important;
-  overflow:hidden;
+  width:min(290px,calc(100vw - 86px))!important;min-width:0!important;
+  max-width:min(290px,calc(100vw - 86px))!important;
+  padding:3px!important;gap:0!important;flex:0 0 auto!important;
+  background:transparent!important;color:var(--text)!important;
+  border:1px solid color-mix(in srgb,var(--text) 22%,transparent)!important;
+  border-radius:13px!important;overflow:hidden;
 }
 .bubble:has(.connect-media-thumb):not(.sticker-bubble) .bubble-body,
 .bubble:has(.connect-media-thumb):not(.sticker-bubble) .attachment-preview{
-  display:block!important;
-  width:100%!important;
-  min-width:0!important;
-  max-width:100%!important;
-  margin:0!important;
-  padding:0!important;
+  display:block!important;width:100%!important;min-width:0!important;max-width:100%!important;margin:0!important;padding:0!important;
 }
 .bubble:has(.connect-media-thumb):not(.sticker-bubble) .connect-media-thumb{
-  display:flex!important;
-  width:100%!important;
-  height:210px!important;
-  min-height:210px!important;
-  max-height:210px!important;
-  margin:0!important;
-  border:0!important;
-  border-radius:12px 12px 5px 5px!important;
-  overflow:hidden!important;
-  background:#141923!important;
+  display:block!important;width:100%!important;height:auto!important;min-height:0!important;max-height:none!important;
+  padding:0!important;margin:0!important;border:0!important;border-radius:10px!important;
+  overflow:hidden!important;background:transparent!important;
 }
-.bubble:has(.connect-media-thumb):not(.sticker-bubble) .connect-media-thumb img,
-.bubble:has(.connect-media-thumb):not(.sticker-bubble) .connect-media-thumb video{
-  display:block!important;
-  width:100%!important;
-  height:100%!important;
-  max-width:100%!important;
-  max-height:100%!important;
-  object-fit:contain!important;
+.bubble:has(.connect-media-thumb):not(.sticker-bubble) .attachment-preview .connect-media-thumb img{
+  display:block!important;width:100%!important;height:auto!important;max-height:300px!important;
+  object-fit:contain!important;background:transparent!important;
+}
+.bubble:has(.connect-media-thumb):not(.sticker-bubble) .attachment-preview .connect-media-thumb video{
+  display:block!important;width:100%!important;height:auto!important;max-height:300px!important;
+  aspect-ratio:4/3;object-fit:cover!important;background:#141923!important;
 }
 .bubble:has(.connect-media-thumb):not(.sticker-bubble) .bubble-meta{
-  width:100%!important;
-  padding:5px 7px 3px!important;
-  margin:0!important;
-  background:rgba(16,20,30,.48)!important;
-  color:#fff!important;
-  opacity:1!important;
+  width:100%!important;margin:0!important;padding:4px 6px 2px!important;
+  background:transparent!important;color:var(--text)!important;opacity:.7!important;
 }
-/* Keep stickers independent of photo/video sizing. */
-.bubble.sticker-bubble,.bubble.sent.sticker-bubble,.bubble.received.sticker-bubble{
-  width:auto!important;min-width:0!important;max-width:min(82vw,180px)!important;
-  background:transparent!important;border:0!important;box-shadow:none!important;
-  padding:0!important;gap:0!important;
+.connect-album-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;width:100%;overflow:hidden;border-radius:10px}
+.bubble:has(.connect-album-grid) .connect-album-grid .connect-media-thumb{
+  display:flex!important;width:100%!important;height:140px!important;min-height:0!important;max-height:none!important;
+  align-items:center;justify-content:center;border-radius:5px!important;background:#141923!important;position:relative;
 }
-.bubble.sticker-bubble .bubble-body,.bubble.sticker-bubble .attachment-preview,
-.bubble.sticker-bubble .keyboard-sticker-preview{
-  background:transparent!important;border:0!important;padding:0!important;box-shadow:none!important;
+.bubble:has(.connect-album-grid) .connect-album-grid img,
+.bubble:has(.connect-album-grid) .connect-album-grid video{
+  display:block!important;width:100%!important;height:100%!important;max-height:none!important;
+  object-fit:cover!important;border-radius:0!important;
 }
-.bubble.sticker-bubble .bubble-meta{
-  width:auto!important;background:transparent!important;color:var(--text)!important;
-  padding:2px 0!important;opacity:.7!important;
-}
+.connect-album-compose{display:flex;flex-direction:column;gap:8px;padding:10px;border-radius:12px;background:var(--panel);max-height:260px;overflow:auto}
+.connect-album-heading{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:13px}
+.connect-album-heading button{background:transparent;border:0;color:var(--text);padding:4px}
+.connect-album-previews{display:flex;gap:8px;overflow-x:auto;min-height:96px}
+.connect-album-preview{position:relative;flex:0 0 92px;width:92px;height:96px;border-radius:9px;overflow:hidden;background:color-mix(in srgb,var(--text) 8%,var(--panel));border:1px solid color-mix(in srgb,var(--text) 12%,transparent)}
+.connect-album-preview img,.connect-album-preview video{width:100%;height:70px;object-fit:cover;display:block}
+.connect-album-preview .connect-file-placeholder{display:grid;place-items:center;height:70px}
+.connect-album-filename{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;padding:2px 5px}
+.connect-album-preview>button{position:absolute;top:3px;right:3px;background:#121620d9;color:white;border:0;border-radius:50%;width:25px;height:25px;font-size:20px;line-height:20px}
+.connect-album-send{align-self:flex-end;border:0;border-radius:9px;padding:8px 14px;background:var(--accent);color:white;font-weight:600}
+/* Stickers retain their frameless layout. */
+.bubble.sticker-bubble,.bubble.sent.sticker-bubble,.bubble.received.sticker-bubble{width:auto!important;min-width:0!important;max-width:min(82vw,180px)!important;background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;gap:0!important}
+.bubble.sticker-bubble .bubble-body,.bubble.sticker-bubble .attachment-preview,.bubble.sticker-bubble .keyboard-sticker-preview{background:transparent!important;border:0!important;padding:0!important;box-shadow:none!important}
+.bubble.sticker-bubble .bubble-meta{width:auto!important;background:transparent!important;color:var(--text)!important;padding:2px 0!important;opacity:.7!important}
