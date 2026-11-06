@@ -4,6 +4,7 @@ import ConnectDynamicTheme from '../components/ConnectDynamicTheme';
 import ConnectUiCoordinator from '../components/ConnectUiCoordinator';
 import ConnectCallBridge from '../components/ConnectCallBridge';
 import ConnectCallsHub from '../components/ConnectCallsHub';
+import ConnectSonicRunner from '../components/ConnectSonicRunner';
 import './globals.css';
 import './liquid-glass.css';
 import './calls.css';
@@ -22,5 +23,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ru"><body>{children}<InvitationCodes /><ConnectDynamicTheme /><ConnectUiCoordinator /><ConnectCallBridge /><ConnectCallsHub /></body></html>;
+  return <html lang="ru"><body>{children}<InvitationCodes /><ConnectDynamicTheme /><ConnectUiCoordinator /><ConnectCallBridge /><ConnectCallsHub /><ConnectSonicRunner /></body></html>;
 }
