@@ -343,3 +343,513 @@
   .connect-app .settings-group,
   .connect-app .bottom-nav { background-color: var(--glass-surface-strong); }
 }
+
+/* ========================================================================
+   Connect Liquid Glass v4 — unified, mobile-first functional interface.
+   Progressive enhancement over v3; original app data and handlers unchanged.
+   ======================================================================== */
+
+.connect-app {
+  --v4-control: linear-gradient(145deg, rgba(70, 89, 119, .37), rgba(26, 36, 55, .72));
+  --v4-card: linear-gradient(145deg, rgba(56, 78, 108, .30), rgba(23, 34, 53, .72));
+  --v4-border: color-mix(in srgb, var(--wave-secondary) 10%, rgba(210, 232, 255, .20));
+  --v4-highlight: inset 0 1px 0 rgba(249, 253, 255, .14);
+  --v4-shadow: 0 12px 32px rgba(0, 0, 0, .21);
+  --v4-radius: 18px;
+}
+
+/* The chat popup must paint above the scrolling messages (the old stacking
+   context was behind the sibling message-scroll despite z-index:40 on popup). */
+.connect-app .chat-view { min-height: 0; isolation: isolate; }
+.connect-app .chat-header {
+  position: relative;
+  z-index: 35;
+  flex-shrink: 0;
+}
+.connect-app .chat-search-bar,
+.connect-app .selection-toolbar { position: relative; z-index: 34; }
+.connect-app .message-scroll { position: relative; z-index: 1; }
+.connect-app .chat-composer {
+  position: relative;
+  z-index: 20;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.connect-app .chat-actions-menu {
+  top: calc(100% - 2px);
+  right: 10px;
+  width: min(284px, calc(100vw - 38px));
+  min-width: 0;
+  max-height: min(45dvh, 300px);
+  overflow-y: auto;
+  border-radius: 20px;
+  padding: 6px;
+  z-index: 70;
+  background: linear-gradient(145deg, rgba(47, 68, 97, .90), rgba(17, 28, 45, .93));
+  border-color: var(--v4-border);
+  box-shadow: var(--v4-highlight), 0 16px 40px rgba(0,0,0,.37);
+  -webkit-backdrop-filter: blur(32px) saturate(160%);
+  backdrop-filter: blur(32px) saturate(160%);
+}
+.connect-app .chat-actions-menu button,
+.connect-app .list-chat-popover button {
+  border-radius: 12px;
+  min-height: 43px;
+  line-height: 1.35;
+  padding: 10px 13px;
+}
+.connect-app .chat-actions-menu button:active,
+.connect-app .list-chat-popover button:active { background: color-mix(in srgb, var(--accent) 11%, transparent); }
+.connect-app .list-chat-popover {
+  top: calc(100% - 8px);
+  right: 10px;
+  min-width: 194px;
+  z-index: 55;
+  border-radius: 17px;
+  padding: 5px;
+  background: linear-gradient(150deg, rgba(47, 65, 93, .90), rgba(19, 30, 49, .94));
+  border-color: var(--v4-border);
+  box-shadow: var(--v4-highlight), 0 16px 35px rgba(0,0,0,.32);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  backdrop-filter: blur(24px) saturate(145%);
+}
+.connect-app .chat-rows { isolation: isolate; }
+.connect-app .dialog-entry:has(.list-chat-popover) { z-index: 50; }
+.connect-app .dialog-entry:not(:has(.list-chat-popover)) { z-index: 0; }
+.connect-app:has(.sticker-picker) .chat-actions-menu,
+.connect-app:has(.connect-media-overlay) .chat-actions-menu,
+.connect-app:has(.connect-vnote-backdrop) .chat-actions-menu,
+.connect-app:has(.context-overlay) .chat-actions-menu { display: none; }
+
+/* Make the bottom items reachable; the floating dock is a separate layer. */
+.connect-app .main-view { min-height: 0; }
+.connect-app .settings-content,
+.connect-app .contact-rows,
+.connect-app .chat-rows {
+  padding-bottom: max(96px, calc(78px + env(safe-area-inset-bottom)));
+  scroll-padding-bottom: max(94px, calc(80px + env(safe-area-inset-bottom)));
+  overscroll-behavior-y: contain;
+}
+.connect-app .bottom-nav {
+  position: relative;
+  z-index: 60;
+  margin-bottom: max(10px, env(safe-area-inset-bottom));
+  box-shadow: var(--v4-highlight), 0 12px 36px rgba(0,0,0,.30);
+}
+.connect-app .nav-tab.selected {
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--wave-primary) 18%, rgba(114, 147, 181, .18)),
+    rgba(37, 64, 91, .22));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.21),
+              inset 0 -1px 0 rgba(255,255,255,.05);
+}
+
+/* A single button language: raised accent / translucent / destructive. */
+.connect-app .primary-action,
+.connect-app .settings-action,
+.connect-app .connect-album-send,
+.connect-app .connect-vnote-primary {
+  border-radius: 14px;
+  min-height: 42px;
+  border: 1px solid color-mix(in srgb, var(--accent) 66%, rgba(245,255,255,.31));
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 86%, #fff 14%), var(--accent));
+  color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.22),
+              0 6px 18px color-mix(in srgb, var(--accent) 16%, transparent);
+  font-weight: 650;
+  transition: filter .16s ease, transform .16s ease;
+}
+.connect-app .primary-action:active,
+.connect-app .settings-action:active,
+.connect-app .connect-album-send:active { transform: scale(.986); filter: brightness(.94); }
+.connect-app .settings-action.secondary,
+.connect-app .avatar-change,
+.connect-app .recording-status button,
+.connect-app .chat-search-bar button,
+.connect-app .selection-toolbar button,
+.connect-app .connect-media-toolbar button {
+  background: var(--v4-control);
+  color: var(--text);
+  border: 1px solid var(--v4-border);
+  border-radius: 13px;
+  box-shadow: var(--v4-highlight);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.connect-app .logout-button {
+  width: 100%;
+  min-height: 48px;
+  margin: 19px 0 8px;
+  border: 1px solid rgba(255, 110, 132, .32);
+  border-radius: 18px;
+  color: #ff879a;
+  background: linear-gradient(145deg, rgba(255, 95, 118, .11), rgba(27, 39, 58, .67));
+  box-shadow: var(--v4-highlight), var(--v4-shadow);
+  -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(22px);
+}
+.connect-app .logout-button:active { background: rgba(255, 95, 118, .19); }
+.connect-app .data-settings .settings-action.secondary,
+.connect-app .settings-action.secondary:has(+ .settings-hint) { box-shadow: var(--v4-highlight); }
+.connect-app .data-settings .settings-action.secondary:where(:not(:disabled)) { color: var(--text); }
+.connect-app .settings-group.data-settings:has(button.secondary) button.secondary { border-color: rgba(255, 120, 136, .15); }
+.connect-app .data-settings {
+  padding: 16px;
+  margin-bottom: 12px;
+  border-radius: 20px;
+}
+.connect-app .data-settings > p,
+.connect-app .profile-about p { line-height: 1.55; }
+.connect-app .settings-content h3 { margin: 16px 5px 9px; letter-spacing: .75px; }
+.connect-app .settings-hint { line-height: 1.5; }
+
+/* Accessible, styled checkbox on all settings screens. Native checkbox state,
+   labels and keyboard operation are unchanged. */
+.connect-app input[type="checkbox"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  flex: 0 0 22px;
+  margin: 0;
+  border-radius: 7px;
+  border: 1.5px solid rgba(204, 225, 249, .45);
+  background: rgba(7, 13, 26, .54);
+  display: inline-grid;
+  place-items: center;
+  position: relative;
+  cursor: pointer;
+  vertical-align: middle;
+}
+.connect-app input[type="checkbox"]::after {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 10px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: translateY(-2px) rotate(45deg) scale(0);
+  transition: transform .13s ease;
+}
+.connect-app input[type="checkbox"]:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.connect-app input[type="checkbox"]:checked::after { transform: translateY(-2px) rotate(45deg) scale(1); }
+.connect-app input[type="checkbox"]:focus-visible,
+.connect-app select:focus-visible,
+.connect-app textarea:focus-visible,
+.connect-app input:focus-visible,
+.connect-app button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.connect-app input[type="checkbox"]:disabled { opacity: .5; cursor: default; }
+
+/* Inputs, notification preferences and sticker-creation form. */
+.connect-app .field,
+.connect-app .settings-content input:not([type="checkbox"]):not([type="color"]):not([type="file"]),
+.connect-app .profile-edit input,
+.connect-app .profile-edit textarea,
+.connect-app .connect-notifications select {
+  background: rgba(18, 28, 46, .72);
+  border: 1px solid var(--v4-border);
+  border-radius: 14px;
+  box-shadow: var(--v4-highlight);
+  color: var(--text);
+  min-width: 0;
+}
+.connect-app .connect-notifications select {
+  width: min(100%, 270px);
+  min-height: 43px;
+  padding: 10px 13px;
+  color-scheme: dark;
+}
+.connect-app .connect-notifications button {
+  color: var(--text);
+  background: var(--v4-control);
+  border: 1px solid var(--v4-border);
+  border-radius: 13px;
+  box-shadow: var(--v4-highlight);
+  min-height: 41px;
+  font-weight: 550;
+}
+.connect-app .connect-notifications { padding: 14px 9px; gap: 13px; }
+.connect-app .connect-notifications label { line-height: 1.45; }
+.connect-app .connect-notifications small { line-height: 1.55; }
+.connect-app .connect-notifications input[type="checkbox"] { accent-color: var(--accent); }
+.connect-app .data-settings > .field { min-height: 43px; }
+.connect-app .data-settings > label.settings-hint {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin: 10px 6px 4px;
+}
+.connect-app .data-settings > label.settings-hint .field { width: 70px; }
+.connect-app .data-settings .settings-action { max-width: 100%; }
+.connect-app .sticker-pack-setting { gap: 9px; padding: 8px 0; }
+.connect-app .sticker-pack-setting > span:nth-child(2) { min-width: 0; }
+
+/* Profile is now a real hero surface, with the same glass controls. */
+.connect-app .profile-top {
+  position: relative;
+  z-index: 2;
+  background: linear-gradient(135deg, rgba(30, 43, 64, .88), rgba(16, 27, 43, .76));
+  border-bottom-color: var(--glass-stroke);
+  -webkit-backdrop-filter: blur(23px);
+  backdrop-filter: blur(23px);
+}
+.connect-app .profile-content {
+  padding: 16px 16px max(42px, env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+.connect-app .profile-hero {
+  margin: 0 0 14px;
+  padding: 22px 14px 21px;
+  border: 1px solid var(--v4-border);
+  border-radius: 24px;
+  background: var(--v4-card);
+  box-shadow: var(--v4-highlight), var(--v4-shadow);
+  -webkit-backdrop-filter: blur(25px) saturate(140%);
+  backdrop-filter: blur(25px) saturate(140%);
+}
+.connect-app .profile-hero .avatar-lg { width: 112px; height: 112px; }
+.connect-app .profile-hero h2 { font-size: 23px; margin-top: 15px; }
+.connect-app .profile-hero p { max-width: 100%; }
+.connect-app .avatar-change { margin-top: 16px; min-height: 39px; }
+.connect-app .profile-edit {
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid var(--v4-border);
+  border-radius: 22px;
+  background: var(--v4-card);
+  box-shadow: var(--v4-highlight);
+}
+.connect-app .profile-edit input,
+.connect-app .profile-edit textarea { width: 100%; font-size: 16px; }
+.connect-app .profile-edit textarea { min-height: 94px; }
+.connect-app .profile-edit .primary-action { width: 100%; }
+.connect-app .profile-about {
+  border: 1px solid var(--v4-border);
+  border-radius: 20px;
+  padding: 16px 18px;
+  background: var(--v4-card);
+  box-shadow: var(--v4-highlight);
+}
+
+/* Chat composer / recording, with unbroken access while iOS keyboard opens. */
+.connect-app .chat-composer .compose-line {
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+}
+.connect-app .chat-composer .composer-extra {
+  width: clamp(27px, 8vw, 36px);
+  min-width: 27px;
+  flex: 0 0 auto;
+}
+.connect-app .chat-composer .compose-line input { min-width: 0; }
+.connect-app .recording-status {
+  min-width: 0;
+  gap: 7px;
+  padding: 8px;
+  color: #ffa2ac;
+  border: 1px solid var(--v4-border);
+  border-radius: 15px;
+  background: linear-gradient(130deg, rgba(53, 72, 102, .44), rgba(18, 28, 45, .64));
+  box-shadow: var(--v4-highlight);
+}
+.connect-app .recording-status > span { min-width: 0; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.connect-app .recording-status button { padding: 6px 10px; min-height: 34px; white-space: nowrap; }
+.connect-app .recording-status button:last-child { color: var(--accent); }
+.connect-app .compose-context { border-radius: 15px; }
+.connect-app .connect-album-compose { background: var(--v4-card); border: 1px solid var(--v4-border); border-radius: 16px; }
+
+/* Keep sticker tabs fixed while only the grid scrolls, and never hide rows
+   behind the composer; chat messages flex down to make real room for picker. */
+.connect-app .sticker-picker {
+  position: relative;
+  z-index: 22;
+  flex: 0 0 auto;
+  height: min(340px, 43dvh);
+  max-height: 43dvh;
+  overflow: hidden;
+  border: 1px solid var(--v4-border);
+  border-radius: 21px 21px 14px 14px;
+  margin: 0 0 4px;
+  background: linear-gradient(140deg, rgba(41, 60, 89, .91), rgba(16, 26, 45, .93));
+  box-shadow: var(--v4-highlight), 0 -8px 30px rgba(0,0,0,.20);
+  -webkit-backdrop-filter: blur(26px) saturate(145%);
+  backdrop-filter: blur(26px) saturate(145%);
+}
+.connect-app .sticker-picker-tabs {
+  flex: 0 0 auto;
+  min-height: 49px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--glass-stroke);
+}
+.connect-app .sticker-picker-tabs button {
+  background: rgba(13, 24, 42, .44);
+  border: 1px solid rgba(216, 236, 255, .09);
+  border-radius: 12px;
+  min-height: 35px;
+}
+.connect-app .sticker-picker-tabs button.active {
+  border-color: color-mix(in srgb, var(--accent) 54%, transparent);
+  background: color-mix(in srgb, var(--accent) 72%, rgba(33, 47, 70, .45));
+}
+.connect-app .sticker-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  align-content: start;
+  padding: 10px 9px 16px;
+  gap: 9px;
+}
+.connect-app .sticker-choice > button:first-child { border-radius: 12px; }
+.connect-app .sticker-choice > button:first-child:active { background: rgba(255,255,255,.08); }
+.connect-app .sticker-fav { background: rgba(9, 17, 30, .74); }
+
+/* Compact voice notes, leaving playback, speed and save available. */
+.connect-app .bubble.sent:has(.connect-audio-download),
+.connect-app .bubble.received:has(.connect-audio-download) {
+  width: min(335px, 84vw) !important;
+  min-width: 0 !important;
+  max-width: 84vw !important;
+  border-radius: 19px !important;
+  padding: 10px 11px 8px !important;
+  box-shadow: var(--v4-highlight), 0 5px 17px rgba(0,0,0,.17) !important;
+}
+.connect-app .bubble.sent:has(.connect-audio-download) {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 87%, #fff 13%), var(--accent)) !important;
+}
+.connect-app .bubble.received:has(.connect-audio-download) { background: rgba(40, 57, 78, .91) !important; }
+.connect-app .bubble:has(.connect-audio-download) .bubble-body,
+.connect-app .bubble:has(.connect-audio-download) .attachment-preview {
+  width: 100% !important;
+  max-width: 100% !important;
+  overflow: visible !important;
+}
+.connect-app .connect-audio-download { width: 100%; gap: 3px; }
+.connect-app .connect-audio-download .voice-player { width: 100%; max-width: 100%; min-width: 0; }
+.connect-app .connect-audio-download .voice-play { flex-basis: 36px; width: 36px; height: 36px; }
+.connect-app .connect-audio-download .voice-wave { height: 26px; }
+.connect-app .connect-audio-download .voice-bottom { min-height: 16px; }
+.connect-app .connect-audio-download > button {
+  align-self: flex-end;
+  padding: 4px 9px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,.16);
+  background: rgba(10, 23, 36, .24);
+  color: inherit;
+  font-size: 11px;
+}
+.connect-app .bubble:has(.connect-audio-download) .bubble-meta { font-size: 10px; }
+
+/* A true blurred media viewer: media content remains sharp and uncropped. */
+.connect-app .connect-media-overlay {
+  z-index: 100000;
+  background: rgba(4, 9, 17, .97);
+  isolation: isolate;
+}
+.connect-app .connect-media-toolbar {
+  position: relative;
+  z-index: 2;
+  min-height: 60px;
+  padding: 8px 13px;
+  border-bottom: 1px solid rgba(206, 227, 255, .13);
+  background: rgba(29, 42, 62, .66);
+  -webkit-backdrop-filter: blur(24px) saturate(150%);
+  backdrop-filter: blur(24px) saturate(150%);
+}
+.connect-app .connect-media-toolbar button { min-height: 40px; padding: 8px 12px; }
+.connect-app .connect-media-toolbar span { font-size: 12px; line-height: 1.4; }
+.connect-app .connect-media-stage img,
+.connect-app .connect-media-stage video { max-width: 100%; }
+
+/* Video-circle recorder: one scrollable and responsive glass dialog. */
+.connect-app .connect-vnote-backdrop {
+  z-index: 100010;
+  padding: max(18px, env(safe-area-inset-top)) 13px max(18px, env(safe-area-inset-bottom));
+  background: rgba(3, 8, 17, .77);
+  -webkit-backdrop-filter: blur(15px) saturate(100%);
+  backdrop-filter: blur(15px) saturate(100%);
+}
+.connect-app .connect-vnote-panel {
+  width: min(100%, 390px);
+  max-height: calc(100dvh - 52px);
+  overflow-y: auto;
+  padding: 17px 15px 19px;
+  border: 1px solid var(--v4-border);
+  border-radius: 27px;
+  background: linear-gradient(138deg, rgba(48, 65, 92, .94), rgba(17, 26, 44, .97));
+  box-shadow: var(--v4-highlight), 0 22px 65px rgba(0,0,0,.50);
+  -webkit-backdrop-filter: blur(28px);
+  backdrop-filter: blur(28px);
+}
+.connect-app .connect-vnote-preview {
+  width: min(264px, 67vw, 33dvh);
+  flex: 0 0 auto;
+  border: 2px solid color-mix(in srgb, var(--accent) 28%, rgba(222,245,255,.30));
+  box-shadow: 0 7px 24px rgba(0,0,0,.20);
+}
+.connect-app .connect-vnote-header button,
+.connect-app .connect-vnote-actions button {
+  border: 1px solid var(--v4-border);
+  border-radius: 13px;
+  background: var(--v4-control);
+  box-shadow: var(--v4-highlight);
+  min-height: 40px;
+  color: #fff;
+}
+.connect-app .connect-vnote-actions { flex-wrap: wrap; }
+.connect-app .connect-vnote-actions .connect-vnote-primary { background: var(--accent); border-color: var(--accent); }
+
+/* Light mode: keep text and native forms legible, not dark-on-dark. */
+.connect-app.light {
+  --v4-control: linear-gradient(145deg, rgba(255,255,255,.91), rgba(227,237,249,.84));
+  --v4-card: linear-gradient(145deg, rgba(255,255,255,.79), rgba(228,240,252,.74));
+  --v4-border: rgba(67, 102, 148, .22);
+  --v4-highlight: inset 0 1px 0 rgba(255,255,255,.82);
+  --v4-shadow: 0 9px 25px rgba(52, 78, 118, .10);
+}
+.connect-app.light .settings-content input:not([type="checkbox"]):not([type="color"]):not([type="file"]),
+.connect-app.light .profile-edit input,
+.connect-app.light .profile-edit textarea,
+.connect-app.light .connect-notifications select,
+.connect-app.light .field { background: rgba(255,255,255,.80); color: #16243b; }
+.connect-app.light .connect-notifications select { color-scheme: light; }
+.connect-app.light .connect-notifications button { color: var(--text); background: var(--v4-control); }
+.connect-app.light input[type="checkbox"] { background: rgba(255,255,255,.88); border-color: rgba(80,110,150,.44); }
+.connect-app.light input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+.connect-app.light .chat-actions-menu,
+.connect-app.light .list-chat-popover { background: rgba(245,249,255,.96); }
+.connect-app.light .sticker-picker { background: rgba(241,247,255,.96); }
+.connect-app.light .sticker-picker-tabs button { color: var(--text); background: rgba(211,225,240,.74); }
+.connect-app.light .sticker-picker-tabs button.active { color: #fff; background: var(--accent); }
+.connect-app.light .connect-vnote-panel { background: rgba(232,241,252,.96); color: var(--text); }
+.connect-app.light .connect-vnote-actions button,
+.connect-app.light .connect-vnote-header button { color: var(--text); }
+.connect-app.light .connect-vnote-actions .connect-vnote-primary { color: #fff; }
+.connect-app.light .profile-top { background: rgba(242,248,255,.84); }
+.connect-app.light .connect-media-toolbar { background: rgba(31,45,65,.85); }
+
+@media (max-width: 380px) {
+  .connect-app .chat-composer .compose-line { gap: 3px; }
+  .connect-app .chat-composer .composer-extra { width: 27px; min-width: 26px; }
+  .connect-app .sticker-grid { gap: 5px; padding-left: 6px; padding-right: 6px; }
+  .connect-app .recording-status { gap: 4px; padding: 5px; }
+  .connect-app .recording-status button { padding: 5px 7px; font-size: 11px; }
+}
+@media (max-height: 680px) {
+  .connect-app .sticker-picker { height: min(220px, 36dvh); max-height: 36dvh; }
+  .connect-app .connect-vnote-preview { width: min(210px, 30dvh); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .connect-app .settings-action,
+  .connect-app .primary-action,
+  .connect-app input[type="checkbox"]::after { transition: none; }
+}
