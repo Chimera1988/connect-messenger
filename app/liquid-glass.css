@@ -853,3 +853,199 @@
   .connect-app .primary-action,
   .connect-app input[type="checkbox"]::after { transition: none; }
 }
+
+
+/* ========================================================================
+   Connect Liquid Glass v4 — targeted compact mobile polish.
+   2026-11-06. Keep the existing theme, waves and message handlers intact.
+   ======================================================================== */
+
+/* Smaller dock, nearer the bottom edge. Keep a small gesture-area clearance. */
+.connect-app .bottom-nav {
+  align-self: center;
+  width: calc(100% - 18px);
+  min-height: 52px !important;
+  margin: 0 9px max(7px, calc(env(safe-area-inset-bottom) - 19px)) !important;
+  padding: 3px 4px !important;
+  border-radius: 21px;
+  border-color: color-mix(in srgb, var(--glass-stroke-hi) 78%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.13), 0 8px 24px rgba(0,0,0,.23);
+}
+.connect-app .nav-tab {
+  min-height: 43px !important;
+  padding: 2px 3px !important;
+  gap: 0 !important;
+  border-radius: 17px;
+}
+.connect-app .nav-symbol { height: 23px !important; width: 31px; }
+.connect-app .nav-symbol svg { width: 21px; height: 21px; }
+.connect-app .nav-tab small {
+  font-size: 9.7px !important;
+  line-height: 1.15;
+}
+.connect-app .nav-tab.selected {
+  border-color: color-mix(in srgb, var(--wave-primary) 13%, rgba(230,245,255,.10));
+  background: linear-gradient(135deg,
+    color-mix(in srgb, var(--wave-primary) 10%, rgba(120,157,184,.15)),
+    rgba(49,76,104,.16));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.13);
+}
+
+/* Rounded, inset contact header. Its menu can extend beyond the header. */
+.connect-app .chat-header {
+  align-self: center;
+  width: calc(100% - 16px);
+  margin: 5px 8px 5px;
+  padding: 5px 9px 6px 4px;
+  min-height: 54px;
+  border: 1px solid var(--v4-border);
+  border-radius: 19px;
+  background: linear-gradient(135deg, rgba(43,62,88,.64), rgba(18,30,48,.67));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 5px 16px rgba(0,0,0,.14);
+  -webkit-backdrop-filter: blur(18px) saturate(133%);
+  backdrop-filter: blur(18px) saturate(133%);
+}
+.connect-app .chat-header .person-avatar { width: 36px; height: 36px; }
+.connect-app .chat-header-person { gap: 2px; }
+.connect-app .chat-header-person strong { font-size: 14.5px; }
+.connect-app .chat-header-person small { font-size: 10.5px; }
+
+/* Less visual noise in the composer without removing any working features.
+   The disabled Send control only hides while the text field is empty. */
+.connect-app .chat-composer {
+  align-self: center;
+  width: calc(100% - 16px);
+  margin: 0 8px max(7px, calc(env(safe-area-inset-bottom) - 19px));
+  padding: 5px 6px !important;
+  gap: 5px;
+  min-height: 49px;
+  background: linear-gradient(135deg, rgba(39,57,81,.69), rgba(17,29,46,.73));
+  border: 1px solid var(--v4-border);
+  border-radius: 23px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.13), 0 8px 22px rgba(0,0,0,.23);
+  -webkit-backdrop-filter: blur(21px) saturate(132%);
+  backdrop-filter: blur(21px) saturate(132%);
+}
+.connect-app .chat-composer .compose-line {
+  min-height: 38px !important;
+  gap: clamp(3px, .9vw, 6px) !important;
+}
+.connect-app .chat-composer .composer-extra {
+  width: 29px !important;
+  min-width: 27px !important;
+  height: 37px !important;
+  border: 0 !important;
+  border-radius: 13px;
+  opacity: .83;
+  background: transparent;
+  box-shadow: none;
+}
+.connect-app .chat-composer .composer-extra svg { width: 21px; height: 21px; }
+.connect-app .chat-composer .composer-extra:active {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 12%, rgba(255,255,255,.03));
+}
+.connect-app .chat-composer .compose-line > .composer-extra:first-child {
+  font-size: 21px;
+}
+.connect-app .chat-composer .compose-line input {
+  height: 38px !important;
+  min-height: 38px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(204,230,252,.14);
+  background: rgba(16,27,44,.31);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.09);
+  font-size: 15px;
+}
+.connect-app .chat-composer .send-button {
+  flex: 0 0 auto;
+  width: 35px !important;
+  height: 35px !important;
+  background: var(--accent);
+  box-shadow: none;
+  border-radius: 50%;
+}
+.connect-app .chat-composer .send-button svg { width: 20px; height: 20px; }
+.connect-app .chat-composer .compose-line:has(input:placeholder-shown) .send-button:disabled {
+  display: none !important;
+}
+.connect-app.keyboard-open .chat-composer {
+  margin-bottom: 3px !important;
+}
+.connect-app .chat-composer .sticker-picker {
+  border-radius: 18px;
+}
+
+/* Compact voice messages. Hide only the redundant Save action on voice notes.
+   Photos, files and videos still retain their existing download controls. */
+.connect-app .bubble.sent:has(.connect-audio-download),
+.connect-app .bubble.received:has(.connect-audio-download) {
+  width: min(260px, 76vw) !important;
+  max-width: min(260px, 76vw) !important;
+  min-width: 0 !important;
+  padding: 8px 9px 6px !important;
+  border-radius: 17px !important;
+  gap: 2px !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 5px 13px rgba(0,0,0,.13) !important;
+}
+.connect-app .bubble:has(.connect-audio-download) .bubble-body,
+.connect-app .bubble:has(.connect-audio-download) .attachment-preview {
+  gap: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.connect-app .connect-audio-download {
+  gap: 0 !important;
+}
+.connect-app .connect-audio-download > button {
+  display: none !important;
+}
+.connect-app .connect-audio-download .voice-player {
+  width: 100%;
+  min-width: 0;
+  gap: 7px;
+}
+.connect-app .connect-audio-download .voice-play {
+  flex: 0 0 33px;
+  width: 33px;
+  height: 33px;
+}
+.connect-app .connect-audio-download .voice-play svg {
+  width: 18px; height: 18px;
+}
+.connect-app .connect-audio-download .voice-wave {
+  height: 21px;
+  gap: 1.5px;
+}
+.connect-app .connect-audio-download .voice-bar {
+  min-width: 1.5px;
+}
+.connect-app .connect-audio-download .voice-content { gap: 2px; }
+.connect-app .connect-audio-download .voice-bottom {
+  min-height: 15px;
+  font-size: 10px;
+}
+.connect-app .connect-audio-download .voice-speed {
+  padding: 1px 5px;
+  border-radius: 7px;
+  font-size: 9.5px;
+}
+.connect-app .bubble:has(.connect-audio-download) .bubble-meta {
+  font-size: 9.5px;
+  line-height: 1;
+  margin: 0 !important;
+}
+
+/* Keep controls tappable on narrow phones; no fixed positioning or hard crops. */
+@media (max-width: 380px) {
+  .connect-app .bottom-nav { width: calc(100% - 12px); margin-left: 6px !important; margin-right: 6px !important; }
+  .connect-app .chat-composer { width: calc(100% - 12px); margin-left: 6px; margin-right: 6px; padding: 4px 5px !important; }
+  .connect-app .chat-composer .composer-extra { width: 26px !important; min-width: 25px !important; }
+  .connect-app .chat-composer .compose-line input { padding-inline: 10px; }
+  .connect-app .chat-header { width: calc(100% - 12px); margin-left: 6px; margin-right: 6px; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .connect-app .chat-composer,
+  .connect-app .chat-header { -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
