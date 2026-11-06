@@ -237,6 +237,8 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
         payload => { if (active) void onUpdatedCall(payload.new as CallRow); })
       .subscribe(status => { if (status === 'SUBSCRIBED') void refreshIncoming(); });
     async function refreshIncoming() {
+      // A re-render can clear the session: guard inside the async callback too.
+      if (!active || !client || !userId) return;
       const { data } = await client.from('connect_calls').select('*')
         .eq('callee_id', userId).eq('status', 'ringing')
         .gte('created_at', new Date(Date.now() - 59000).toISOString())
