@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import InvitationCodes from '../components/InvitationCodes';
 import ConnectDynamicTheme from '../components/ConnectDynamicTheme';
 import ConnectUiCoordinator from '../components/ConnectUiCoordinator';
+import ConnectCallBridge from '../components/ConnectCallBridge';
 import './globals.css';
 import './liquid-glass.css';
 import './calls.css';
@@ -20,5 +21,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ru"><body>{children}<InvitationCodes /><ConnectDynamicTheme /><ConnectUiCoordinator /></body></html>;
+  return <html lang="ru"><body>{children}<InvitationCodes /><ConnectDynamicTheme /><ConnectUiCoordinator /><ConnectCallBridge /></body></html>;
 }
