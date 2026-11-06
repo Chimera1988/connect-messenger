@@ -382,6 +382,7 @@ export default function Home() {
   const [draft, setDraft] = useState('');
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string,string>>({});
   const [mediaViewer, setMediaViewer] = useState<{url:string;path:string;name:string;kind:'image'|'video'} | null>(null);
+  const mediaTouchStart = useRef<{x:number;y:number}|null>(null);
   const [savingMedia, setSavingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [recording, setRecording] = useState(false);
@@ -1151,6 +1152,23 @@ export default function Home() {
       setNotice('Не удалось завершить запись: '+(e instanceof Error?e.message:String(e)));
     }
   }
+  const gallery = visibleMessages.filter(m => !m.deleted_at && m.attachment_path && (m.attachment_kind === 'image' || m.attachment_kind === 'video') && attachmentUrls[m.attachment_path]).map(m => ({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || (m.attachment_kind === 'video' ? 'Видео.mp4' : 'Фото.jpg'),kind:m.attachment_kind as 'image'|'video'}));
+  const galleryIndex = mediaViewer ? gallery.findIndex(item => item.path === mediaViewer.path) : -1;
+  function stepGallery(delta:number) {
+    if (!mediaViewer || galleryIndex < 0 || !gallery.length) return;
+    const next = galleryIndex + delta;
+    if (next >= 0 && next < gallery.length) setMediaViewer(gallery[next]);
+  }
+  useEffect(() => {
+    if (!mediaViewer) return;
+    const onKey = (event:KeyboardEvent) => {
+      if (event.key === 'Escape') setMediaViewer(null);
+      if (event.key === 'ArrowLeft') stepGallery(-1);
+      if (event.key === 'ArrowRight') stepGallery(1);
+    };
+    window.addEventListener('keydown',onKey);
+    return () => window.removeEventListener('keydown',onKey);
+  },[mediaViewer,galleryIndex,gallery.length]);
   async function saveAttachment(path: string, name: string) {
     if (!supabase) return;
     setSavingMedia(true);
@@ -1159,10 +1177,18 @@ export default function Home() {
       const {data, error} = await supabase.storage.from('connect-attachments').download(path);
       if (error || !data) throw error || new Error('Файл недоступен');
       const file = new File([data], filename, {type:data.type || 'application/octet-stream'});
-      // Android share sheet supports Save to Files and other installed handlers.
+      // Native share sheets can save media in installed Files/Gallery apps.
       if (navigator.canShare?.({files:[file]}) && navigator.share) {
         try { await navigator.share({files:[file],title:filename}); return; }
         catch (e) { if ((e as Error).name === 'AbortError') return; }
+      }
+      // Android WebView often ignores blob: downloads. Use a real HTTPS download URL.
+      if (/Android/i.test(navigator.userAgent)) {
+        const signed = await supabase.storage.from('connect-attachments').createSignedUrl(path,120,{download:filename});
+        if (!signed.error && signed.data?.signedUrl) {
+          const a=document.createElement('a');a.href=mediaUrl(signed.data.signedUrl);a.target='_blank';a.rel='noopener noreferrer';
+          document.body.appendChild(a);a.click();a.remove();return;
+        }
       }
       const url = URL.createObjectURL(data);
       const a = document.createElement('a'); a.href=url; a.download=filename;
@@ -1298,7 +1324,7 @@ export default function Home() {
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming') + (selectedIds.includes(m.id)?' is-selected':'')}>
                     {selectionMode&&<input className="message-select-check" type="checkbox" aria-label="Выбрать сообщение" checked={selectedIds.includes(m.id)} onChange={()=>selectOne(m.id)}/>}
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
-                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(forwardedMessage(m.body).text) || isKeyboardSticker(m)) ? ' sticker-bubble' : '')}
+                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(forwardedMessage(m.body).text) || /^\[\[connect-custom-sticker:[0-9a-f-]{36}\]\]$/.test(forwardedMessage(m.body).text) || isKeyboardSticker(m) || (!m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()))) ? ' sticker-bubble' : '')}
                       style={{ transform: `translate3d(${swipe?.id === m.id ? swipe.offset : 0}px,0,0)` }}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
@@ -1399,11 +1425,15 @@ export default function Home() {
     {mediaViewer && <div className="connect-media-overlay" role="dialog" aria-modal="true" aria-label="Просмотр вложения" onClick={()=>setMediaViewer(null)}>
       <div className="connect-media-toolbar" onClick={e=>e.stopPropagation()}>
         <button type="button" onClick={()=>setMediaViewer(null)} aria-label="Закрыть">✕</button>
-        <span>{mediaViewer.name}</span>
+        <span>{mediaViewer.name}{galleryIndex>=0 && gallery.length>1 ? ` · ${galleryIndex+1} из ${gallery.length}` : ''}</span>
         <button type="button" disabled={savingMedia} onClick={()=>void saveAttachment(mediaViewer.path,mediaViewer.name)}>{savingMedia?'Сохранение…':'Сохранить'}</button>
       </div>
-      <div className="connect-media-stage" onClick={e=>e.stopPropagation()}>
-        {mediaViewer.kind==='image' ? <img src={mediaViewer.url} alt={mediaViewer.name}/> : <video src={mediaViewer.url} controls playsInline autoPlay/>}
+      <div className="connect-media-gallery" onClick={e=>e.stopPropagation()} onTouchStart={e=>{mediaTouchStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY}}} onTouchEnd={e=>{const start=mediaTouchStart.current;mediaTouchStart.current=null;if(!start)return;const dx=e.changedTouches[0].clientX-start.x;const dy=e.changedTouches[0].clientY-start.y;if(Math.abs(dx)>65 && Math.abs(dx)>Math.abs(dy)*1.5)stepGallery(dx<0?1:-1)}}>
+        {galleryIndex>0 && <button type="button" className="connect-gallery-arrow prev" aria-label="Предыдущее вложение" onClick={()=>stepGallery(-1)}>‹</button>}
+        <div className="connect-media-stage" key={mediaViewer.path}>
+          {mediaViewer.kind==='image' ? <img src={mediaViewer.url} alt={mediaViewer.name} draggable={false}/> : <video src={mediaViewer.url} controls playsInline autoPlay/>}
+        </div>
+        {galleryIndex>=0 && galleryIndex<gallery.length-1 && <button type="button" className="connect-gallery-arrow next" aria-label="Следующее вложение" onClick={()=>stepGallery(1)}>›</button>}
       </div>
     </div>}
     {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>

@@ -130,3 +130,15 @@
 .connect-media-stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:10px;overflow:hidden}
 .connect-media-stage img,.connect-media-stage video{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;touch-action:pan-x pan-y}
 .connect-audio-download{display:flex;flex-direction:column;gap:4px}.connect-audio-download>button{align-self:flex-end;border:0;border-radius:8px;padding:5px 9px;background:#273446;color:#fff}
+
+/* Compact media bubbles and edge-to-edge stickers / emoji */
+.bubble.sent:has(.connect-media-thumb),.bubble.received:has(.connect-media-thumb){padding:3px 3px 5px;gap:3px;border:1px solid color-mix(in srgb,var(--text) 17%,transparent);border-radius:15px;max-width:min(82vw,340px)}
+.bubble:has(.connect-media-thumb) .attachment-preview{width:min(72vw,300px)}
+.bubble:has(.connect-media-thumb) .bubble-meta{padding:0 5px 1px}
+.bubble.sticker-bubble,.bubble.sticker-bubble.sent,.bubble.sticker-bubble.received{background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important}
+.bubble.sticker-bubble .bubble-meta{background:transparent!important;padding:2px 0!important;color:var(--text)!important}
+.connect-media-gallery{position:relative;display:flex;flex:1;min-height:0;min-width:0;align-items:stretch;touch-action:pan-y}
+.connect-media-gallery .connect-media-stage{width:100%}
+.connect-gallery-arrow{position:absolute;z-index:2;top:50%;transform:translateY(-50%);width:36px;height:52px;border:0;border-radius:12px;background:#161b25a9;color:white;font-size:35px;display:grid;place-items:center;cursor:pointer}
+.connect-gallery-arrow.prev{left:4px}.connect-gallery-arrow.next{right:4px}
+@media (pointer:coarse){.connect-gallery-arrow{opacity:.45;width:25px;font-size:27px}}
