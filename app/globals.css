@@ -199,3 +199,37 @@
 .bubble.sticker-bubble,.bubble.sent.sticker-bubble,.bubble.received.sticker-bubble{width:auto!important;min-width:0!important;max-width:min(82vw,180px)!important;background:transparent!important;border:0!important;box-shadow:none!important;padding:0!important;gap:0!important}
 .bubble.sticker-bubble .bubble-body,.bubble.sticker-bubble .attachment-preview,.bubble.sticker-bubble .keyboard-sticker-preview{background:transparent!important;border:0!important;padding:0!important;box-shadow:none!important}
 .bubble.sticker-bubble .bubble-meta{width:auto!important;background:transparent!important;color:var(--text)!important;padding:2px 0!important;opacity:.7!important}
+
+/* Frameless photo/video messages: media unchanged, timestamp in its own chip. */
+.bubble.media-only.sent,.bubble.media-only.received{
+  background:transparent!important;border:0!important;box-shadow:none!important;
+  padding:0!important;gap:5px!important;overflow:visible!important;
+  border-radius:0!important;color:var(--text)!important;
+}
+.bubble.media-only .bubble-body,.bubble.media-only .attachment-preview{
+  background:transparent!important;border:0!important;box-shadow:none!important;
+  padding:0!important;margin:0!important;
+}
+.bubble.media-only .bubble-meta{
+  width:max-content!important;max-width:100%!important;align-self:flex-end!important;
+  margin:0!important;padding:4px 8px!important;
+  border:0!important;border-radius:10px!important;
+  background:var(--panel)!important;color:var(--text)!important;
+  opacity:.9!important;box-shadow:0 1px 4px #0002!important;
+}
+/* Emoji-only messages have no dark bubble, glow or shadow. */
+.bubble.emoji-only,.bubble.emoji-only.sent,.bubble.emoji-only.received{
+  background:transparent!important;background-image:none!important;
+  border:0!important;box-shadow:none!important;filter:none!important;
+  padding:0!important;min-width:0!important;gap:4px!important;
+}
+.bubble.emoji-only .bubble-body{
+  background:transparent!important;background-image:none!important;
+  box-shadow:none!important;text-shadow:none!important;filter:none!important;
+  font-size:36px!important;line-height:1.18!important;
+}
+.bubble.emoji-only .bubble-meta{
+  width:max-content!important;align-self:flex-end!important;
+  background:var(--panel)!important;color:var(--text)!important;
+  padding:4px 8px!important;border-radius:10px!important;opacity:.9!important;
+}
