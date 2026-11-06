@@ -1,47 +1,50 @@
-/* Connect Messenger — Liquid Glass / PWA visual layer (phase 1)
-   Presentation only: no changes to chat, storage, network, or notifications.
-   The ambient waves follow the existing --accent value.
+/* Connect Messenger — Liquid Glass v2 (PWA)
+   Visual-only refinement matched to the original dark navy / teal reference.
+   CSS affects no Supabase, messaging, voice, or notification behavior.
+   The selected user accent is preserved for existing actionable elements.
 */
 .connect-app {
-  --glass-surface: color-mix(in srgb, var(--panel) 74%, transparent);
-  --glass-surface-strong: color-mix(in srgb, var(--nav) 83%, transparent);
-  --glass-outline: color-mix(in srgb, var(--text) 13%, transparent);
-  --glass-sheen: color-mix(in srgb, var(--text) 8%, transparent);
-  --glass-shadow: 0 9px 30px rgba(0, 0, 0, .15);
+  --glass-surface: rgba(24, 34, 52, .62);
+  --glass-surface-soft: rgba(24, 36, 54, .46);
+  --glass-surface-strong: rgba(16, 25, 41, .77);
+  --glass-stroke: rgba(198, 225, 255, .14);
+  --glass-stroke-hi: rgba(231, 245, 255, .24);
+  --glass-sheen: rgba(255, 255, 255, .10);
+  --glass-shadow: 0 10px 38px rgba(0, 0, 0, .24);
+  --glass-glow: color-mix(in srgb, var(--accent) 20%, #00cdbd);
+  --glass-background: #070c15;
+  background: var(--glass-background);
 }
+.connect-app:has(.chat-view) { background: var(--glass-background); }
 
-/* The canvas lives behind all interactive views and never catches touches. */
-.connect-app::before {
+/* Light & glow are deliberately concentrated below the list.
+   No broad opaque ribbons at the top of the screen. */
+.connect-app::before,
+.connect-app::after {
   content: "";
   position: absolute;
-  inset: -12% -22%;
-  z-index: 0;
+  inset: 0;
   pointer-events: none;
+  z-index: 0;
+}
+.connect-app::before {
   background:
-    radial-gradient(ellipse 85% 36% at 28% 23%, color-mix(in srgb, var(--accent) 46%, transparent), transparent 75%),
-    radial-gradient(ellipse 90% 44% at 88% 52%, color-mix(in srgb, var(--accent) 35%, #9585de 12%), transparent 77%),
-    radial-gradient(ellipse 78% 42% at 16% 87%, color-mix(in srgb, var(--accent) 34%, #a2caff 12%), transparent 77%);
-  -webkit-mask-image: url('/connect-ambient-waves.svg');
-  mask-image: url('/connect-ambient-waves.svg');
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: 100% 100%;
-  mask-size: 100% 100%;
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  filter: blur(24px);
-  opacity: .76;
-  transform: translate3d(0, 0, 0) scale(1.04);
+    radial-gradient(ellipse 53% 22% at 15% 72%, color-mix(in srgb, var(--glass-glow) 24%, transparent), transparent 84%),
+    radial-gradient(ellipse 55% 28% at 89% 86%, rgba(87, 135, 223, .20), transparent 83%),
+    radial-gradient(ellipse 67% 47% at 92% 13%, rgba(45, 76, 122, .13), transparent 80%),
+    radial-gradient(ellipse 52% 21% at 44% 100%, rgba(92, 130, 184, .10), transparent 88%);
+}
+.connect-app::after {
+  background-image: url('/connect-ambient-waves.svg');
+  background-size: 100% 100%;
+  background-position: center bottom;
+  background-repeat: no-repeat;
+  opacity: .92;
+  transform: translateZ(0);
+  will-change: transform;
 }
 
-.connect-app.light {
-  --glass-surface: rgba(255, 255, 255, .72);
-  --glass-surface-strong: rgba(253, 254, 255, .84);
-  --glass-shadow: 0 9px 28px rgba(37, 54, 89, .07);
-}
-.connect-app.light::before { opacity: .3; }
-
-/* Keep the wave layer underneath the actual application and overlays. */
+/* Keep overlays and content above the waves, while the canvas stays visible. */
 .connect-app > .main-view,
 .connect-app > .chat-view,
 .connect-app > .profile-view,
@@ -52,121 +55,210 @@
   z-index: 1;
 }
 .connect-app .chat-rows { background: transparent; }
+.connect-app .main-view { background: transparent; }
 
-/* Translucent navigation and chat chrome. */
-.connect-app .bottom-nav,
+/* The mockup uses one rounded floating dock, not three outlined tiles. */
+.connect-app .bottom-nav {
+  position: relative;
+  z-index: 4;
+  align-items: stretch !important;
+  flex: 0 0 auto;
+  width: calc(100% - 28px);
+  margin: 0 14px max(12px, env(safe-area-inset-bottom));
+  padding: 5px 6px !important;
+  min-height: 67px !important;
+  border: 1px solid var(--glass-stroke-hi);
+  border-radius: 25px;
+  background: linear-gradient(140deg, rgba(104, 148, 197, .18), rgba(24, 37, 59, .80) 44%, rgba(64, 88, 120, .34));
+  box-shadow: 0 14px 32px rgba(0, 0, 0, .36), inset 0 1px 0 rgba(255, 255, 255, .18);
+  -webkit-backdrop-filter: blur(26px) saturate(150%);
+  backdrop-filter: blur(26px) saturate(150%);
+}
+.connect-app .nav-tab {
+  min-height: 56px !important;
+  gap: 2px !important;
+  padding: 4px 2px !important;
+  border-radius: 20px;
+  color: #aebcd0;
+  transition: background .18s ease, color .18s ease;
+}
+.connect-app .nav-symbol {
+  height: 27px !important;
+  width: 36px;
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  box-shadow: none;
+}
+.connect-app .nav-tab small { font-size: 10.5px !important; }
+.connect-app .nav-tab.selected {
+  color: var(--accent);
+  background: linear-gradient(155deg, rgba(201, 229, 245, .13), rgba(51, 91, 118, .22));
+  border: 1px solid rgba(209, 238, 248, .12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .16), 0 5px 15px rgba(0, 0, 0, .12);
+}
+.connect-app .nav-tab.selected .nav-symbol svg {
+  filter: drop-shadow(0 0 7px color-mix(in srgb, var(--accent) 29%, transparent));
+}
+
+/* One continuous translucent top and bottom bar for chat. */
 .connect-app .chat-header,
 .connect-app .chat-composer,
 .connect-app .chat-search-bar,
 .connect-app .selection-toolbar {
-  background: var(--glass-surface-strong);
-  border-color: var(--glass-outline);
-  -webkit-backdrop-filter: blur(19px) saturate(140%);
-  backdrop-filter: blur(19px) saturate(140%);
-  box-shadow: inset 0 1px 0 var(--glass-sheen);
+  background: linear-gradient(125deg, rgba(30, 43, 63, .83), rgba(12, 21, 36, .71));
+  border-color: var(--glass-stroke);
+  -webkit-backdrop-filter: blur(25px) saturate(135%);
+  backdrop-filter: blur(25px) saturate(135%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
 }
-.connect-app .bottom-nav { z-index: 4; }
 
-/* Glass-backed tab symbols: retain the existing SVG icons and tab actions. */
-.connect-app .nav-symbol {
-  width: 34px;
-  height: 32px !important;
-  border-radius: 12px;
-  background: linear-gradient(145deg, var(--glass-sheen), color-mix(in srgb, var(--panel) 47%, transparent));
-  border: 1px solid var(--glass-outline);
-  box-shadow: inset 0 1px 0 var(--glass-sheen), 0 4px 12px rgba(0, 0, 0, .10);
-  transition: background .2s ease, border-color .2s ease, box-shadow .2s ease;
-}
-.connect-app .nav-tab.selected .nav-symbol {
-  background: linear-gradient(145deg,
-    color-mix(in srgb, var(--accent) 33%, transparent),
-    color-mix(in srgb, var(--accent) 12%, var(--glass-surface)));
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--glass-outline));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 23%, transparent),
-    0 3px 14px color-mix(in srgb, var(--accent) 22%, transparent);
-}
-.connect-app .nav-tab.selected .nav-symbol svg { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 38%, transparent)); }
-.connect-app .icon-btn:active { background: color-mix(in srgb, var(--accent) 13%, transparent); }
-
-/* Search, settings, and popovers share one restrained glass material. */
+/* Search & content cards have bright top edges and genuine background bleed. */
 .connect-app .search-field,
-.connect-app .settings-group,
 .connect-app .settings-profile,
+.connect-app .settings-group:not(.settings-menu),
 .connect-app .login-form,
 .connect-app .floating-menu,
 .connect-app .list-chat-popover,
 .connect-app .chat-actions-menu,
-.connect-app .compose-context {
-  background: var(--glass-surface);
-  border: 1px solid var(--glass-outline);
+.connect-app .compose-context,
+.connect-app .settings-menu > div {
+  background: linear-gradient(130deg, rgba(107, 141, 183, .16), rgba(27, 38, 58, .68) 35%, rgba(37, 52, 74, .53));
+  border: 1px solid var(--glass-stroke);
   box-shadow: inset 0 1px 0 var(--glass-sheen), var(--glass-shadow);
-  -webkit-backdrop-filter: blur(16px) saturate(125%);
-  backdrop-filter: blur(16px) saturate(125%);
+  -webkit-backdrop-filter: blur(23px) saturate(145%);
+  backdrop-filter: blur(23px) saturate(145%);
 }
-.connect-app .search-field { border-radius: 15px; }
-.connect-app .settings-group { border-radius: 17px; }
-.connect-app .settings-profile { border-radius: 17px; }
+.connect-app .search-field {
+  border-radius: 19px;
+  min-height: 43px;
+}
+.connect-app .search-field input { height: 43px; }
+.connect-app .settings-profile { border-radius: 23px; }
+.connect-app .settings-group:not(.settings-menu) { border-radius: 23px; }
+.connect-app .home-brand img { border-radius: 12px; box-shadow: 0 2px 13px rgba(26, 107, 218, .15); }
+
+/* Give settings a three-card visual hierarchy (3 / 3 / 1).
+   The source menu actions and order are completely unchanged. */
+.connect-app .settings-group.settings-menu {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  overflow: visible;
+  padding: 0;
+}
+.connect-app .settings-menu > div {
+  padding: 0 14px;
+  border-radius: 0;
+  border-bottom-color: rgba(255,255,255,.04);
+}
+.connect-app .settings-menu > div .setting-divider { display: none; }
+.connect-app .settings-menu > div:nth-child(1),
+.connect-app .settings-menu > div:nth-child(4),
+.connect-app .settings-menu > div:nth-child(7) {
+  border-top-left-radius: 22px;
+  border-top-right-radius: 22px;
+}
+.connect-app .settings-menu > div:nth-child(3),
+.connect-app .settings-menu > div:nth-child(6),
+.connect-app .settings-menu > div:nth-child(7) {
+  border-bottom-left-radius: 22px;
+  border-bottom-right-radius: 22px;
+}
+.connect-app .settings-menu > div:nth-child(4),
+.connect-app .settings-menu > div:nth-child(7) { margin-top: 14px; }
+.connect-app .settings-menu-row { min-height: 65px; }
 .connect-app .setting-icon {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--glass-outline));
-  box-shadow: inset 0 1px 0 var(--glass-sheen);
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 28%, rgba(255,255,255,.04)), rgba(23, 60, 78, .30));
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, rgba(195,231,250,.12));
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 3px 10px rgba(0,0,0,.18);
+}
+
+/* Chats & contacts: subtle separators over glass, without opaque bands. */
+.connect-app .chat-rows .dialog-entry {
+  background: linear-gradient(110deg, rgba(40, 57, 76, .33), rgba(25, 35, 51, .21));
+  -webkit-backdrop-filter: blur(13px);
+  backdrop-filter: blur(13px);
+}
+.connect-app .chat-rows .dialog-entry:first-child { border-radius: 18px 18px 0 0; }
+.connect-app .chat-rows .dialog-entry:last-child { border-radius: 0 0 18px 18px; }
+.connect-app .dialog-row,
+.connect-app .contact-row { border-bottom-color: var(--glass-stroke); }
+.connect-app .dialog-row:active,
+.connect-app .contact-row:active { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.connect-app .bubble.received {
+  background: linear-gradient(135deg, rgba(47, 62, 80, .95), rgba(27, 39, 54, .90));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.09);
+}
+.connect-app .date-separator span {
+  background: rgba(34, 48, 63, .68);
+  border-color: var(--glass-stroke);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 .connect-app .theme-buttons button,
 .connect-app .compose-line input {
-  border: 1px solid var(--glass-outline);
-  background: color-mix(in srgb, var(--panel) 76%, transparent);
+  background: rgba(43, 56, 76, .64);
+  border: 1px solid var(--glass-stroke);
 }
-.connect-app .theme-buttons button.current {
-  background: var(--accent);
-  border-color: var(--accent);
-}
-.connect-app .dialog-row,
-.connect-app .contact-row { border-bottom-color: var(--glass-outline); }
-.connect-app .dialog-row:active,
-.connect-app .contact-row:active {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-.connect-app .bubble.received {
-  background: color-mix(in srgb, var(--chat-in) 87%, transparent);
-  box-shadow: inset 0 1px 0 var(--glass-sheen);
-}
-.connect-app .date-separator span {
-  background: var(--glass-surface-strong);
-  border-color: var(--glass-outline);
-  -webkit-backdrop-filter: blur(9px);
-  backdrop-filter: blur(9px);
-}
-.connect-app .send-button {
-  box-shadow: 0 4px 15px color-mix(in srgb, var(--accent) 25%, transparent);
-}
+.connect-app .theme-buttons button.current { background: var(--accent); border-color: var(--accent); }
+.connect-app .send-button { box-shadow: 0 3px 16px color-mix(in srgb, var(--accent) 24%, transparent); }
+.connect-app .message-scroll.has-wallpaper { background-position: center; background-size: cover; }
 
-/* If a user chooses a photo wallpaper, keep that photo and its inline background intact. */
-.connect-app .message-scroll.has-wallpaper {
-  background-position: center;
-  background-size: cover;
+/* Native light mode remains usable; don't put black glass on white surfaces. */
+.connect-app.light {
+  --glass-background: #edf3fa;
+  --glass-surface: rgba(255,255,255,.70);
+  --glass-surface-strong: rgba(255,255,255,.84);
+  --glass-stroke: rgba(47, 76, 120, .16);
+  --glass-stroke-hi: rgba(63, 99, 139, .24);
+  --glass-sheen: rgba(255,255,255,.72);
+  --glass-shadow: 0 9px 28px rgba(47, 70, 120, .09);
 }
+.connect-app.light::before { opacity: .35; }
+.connect-app.light::after { opacity: .18; }
+.connect-app.light .bottom-nav,
+.connect-app.light .search-field,
+.connect-app.light .settings-profile,
+.connect-app.light .settings-group:not(.settings-menu),
+.connect-app.light .settings-menu > div,
+.connect-app.light .chat-header,
+.connect-app.light .chat-composer,
+.connect-app.light .chat-search-bar,
+.connect-app.light .selection-toolbar,
+.connect-app.light .chat-rows .dialog-entry {
+  background: linear-gradient(135deg, rgba(255,255,255,.88), rgba(232,240,249,.72));
+}
+.connect-app.light .nav-tab { color:#5e6d7f; }
+.connect-app.light .nav-tab.selected { color:var(--accent); background:rgba(128, 164, 209, .19); }
+.connect-app.light .bubble.received { background:rgba(237,243,250,.94); }
 
 @media (prefers-reduced-motion: no-preference) {
-  .connect-app::before { animation: connect-ambient-drift 25s ease-in-out infinite alternate; }
-  @keyframes connect-ambient-drift {
-    0% { transform: translate3d(-2%, -1%, 0) scale(1.04); }
-    50% { transform: translate3d(2%, 1.5%, 0) scale(1.08); }
-    100% { transform: translate3d(-1%, 3%, 0) scale(1.05); }
+  .connect-app::after { animation: connect-glass-waves 28s ease-in-out infinite alternate; }
+  @keyframes connect-glass-waves {
+    from { transform: translate3d(-1%,0,0) scale(1.02); opacity: .72; }
+    to { transform: translate3d(1.5%,-1%,0) scale(1.05); opacity: .95; }
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .connect-app::before { animation: none; transform: none; }
-  .connect-app .nav-symbol { transition: none; }
+  .connect-app::after { animation: none; transform: none; will-change: auto; }
+  .connect-app .nav-tab { transition: none; }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .connect-app { --glass-surface: var(--panel); --glass-surface-strong: var(--nav); }
-  .connect-app::before { opacity: .12; }
+  .connect-app::before,
+  .connect-app::after { opacity: .1; }
   .connect-app .bottom-nav,
-  .connect-app .chat-header,
-  .connect-app .chat-composer,
   .connect-app .search-field,
-  .connect-app .settings-group { -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .connect-app .settings-profile,
+  .connect-app .settings-group,
+  .connect-app .chat-header,
+  .connect-app .chat-composer { -webkit-backdrop-filter: none; backdrop-filter: none; }
 }
 @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
-  .connect-app { --glass-surface: var(--panel); --glass-surface-strong: var(--nav); }
+  .connect-app .settings-profile,
+  .connect-app .settings-group,
+  .connect-app .bottom-nav { background-color: var(--glass-surface-strong); }
 }
