@@ -50,6 +50,129 @@ export function ConnectCallButton({ peerName, disabled = false }: { peerName: st
   </button>;
 }
 
+
+/**
+ * Lightweight synthesized call sounds. No media files, no microphone access.
+ * Incoming and ringback repeat while their phase is on screen; the connection
+ * chime is played only when the WebRTC peer actually reaches "connected".
+ * WebKit may block unsolicited playback until the user has tapped the PWA.
+ */
+type RingTone = 'incoming' | 'ringback';
+class ConnectCallSound {
+  private context: AudioContext | null = null;
+  private output: GainNode | null = null;
+  private repeating: ReturnType<typeof setInterval> | null = null;
+  private current: RingTone | null = null;
+  private lastPatternAt = -Infinity;
+
+  unlock() {
+    if (typeof window === 'undefined') return;
+    if (!this.context) {
+      try { this.context = new window.AudioContext(); }
+      catch { return; }
+    }
+    const context = this.context;
+    if (context.state === 'running') {
+      this.playCycle();
+      return;
+    }
+    void context.resume().then(() => {
+      if (this.context === context) this.playCycle();
+    }).catch(() => { /* iOS requires a user gesture to allow sound. */ });
+  }
+
+  private beep(bus: GainNode, frequency: number, delay: number, length: number, volume: number) {
+    const context = this.context;
+    if (!context || context.state !== 'running') return;
+    const t = context.currentTime + delay;
+    const osc = context.createOscillator();
+    const envelope = context.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(frequency, t);
+    envelope.gain.setValueAtTime(0, t);
+    envelope.gain.linearRampToValueAtTime(volume, t + Math.min(.025, length / 4));
+    envelope.gain.setValueAtTime(volume, t + Math.max(.035, length - .065));
+    envelope.gain.linearRampToValueAtTime(0, t + length);
+    osc.connect(envelope);
+    envelope.connect(bus);
+    osc.start(t);
+    osc.stop(t + length + .02);
+    osc.onended = () => { osc.disconnect(); envelope.disconnect(); };
+  }
+
+  private makeOutput(): GainNode | null {
+    if (!this.context || this.context.state !== 'running') return null;
+    const output = this.context.createGain();
+    output.gain.value = .8;
+    output.connect(this.context.destination);
+    return output;
+  }
+
+  private playCycle() {
+    if (!this.current || !this.context || this.context.state !== 'running') return;
+    if (this.context.currentTime - this.lastPatternAt < 1.6) return;
+    if (!this.output) this.output = this.makeOutput();
+    if (!this.output) return;
+    this.lastPatternAt = this.context.currentTime;
+    if (this.current === 'incoming') {
+      // Gentle three-note Connect ringtone, approximately every 3.4 seconds.
+      this.beep(this.output, 659.25, 0, .21, .075);
+      this.beep(this.output, 880, .27, .23, .068);
+      this.beep(this.output, 783.99, .59, .35, .073);
+    } else {
+      // Familiar paired ringback pulses (locally generated, not live call audio).
+      for (const start of [0, .64]) {
+        this.beep(this.output, 440, start, .45, .046);
+        this.beep(this.output, 480, start, .45, .037);
+      }
+    }
+  }
+
+  start(mode: RingTone) {
+    if (this.current === mode) return;
+    this.stop();
+    this.current = mode;
+    this.lastPatternAt = -Infinity;
+    this.unlock();
+    this.repeating = setInterval(() => this.playCycle(), mode === 'incoming' ? 3400 : 3600);
+  }
+
+  stop() {
+    this.current = null;
+    if (this.repeating) clearInterval(this.repeating);
+    this.repeating = null;
+    if (this.output) {
+      const output = this.output;
+      this.output = null;
+      if (this.context && this.context.state !== 'closed') {
+        const t = this.context.currentTime;
+        output.gain.cancelScheduledValues(t);
+        output.gain.setValueAtTime(output.gain.value, t);
+        output.gain.linearRampToValueAtTime(0, t + .035);
+      }
+      setTimeout(() => { try { output.disconnect(); } catch { /* Already detached. */ } }, 100);
+    }
+  }
+
+  connected() {
+    this.stop();
+    this.unlock();
+    const output = this.makeOutput();
+    if (!output) return;
+    // Short rising confirmation chime; never repeat during an active call.
+    this.beep(output, 740, 0, .12, .055);
+    this.beep(output, 988, .12, .19, .060);
+    setTimeout(() => { try { output.disconnect(); } catch { /* Unmounted. */ } }, 500);
+  }
+
+  close() {
+    this.stop();
+    const context = this.context;
+    this.context = null;
+    if (context && context.state !== 'closed') void context.close().catch(() => {});
+  }
+}
+
 export default function ConnectAudioCalls({ client, userId, conversationId, peerId, peerName }: Props) {
   const [phase, setPhase] = useState<Phase>('idle');
   const [shown, setShown] = useState<CallRow | null>(null);
@@ -73,6 +196,29 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const syncingRef = useRef(false);
   const iceSyncingRef = useRef(false);
   const missedCheckedRef = useRef(false);
+  // A single sound engine is kept for this component's lifetime.
+  const soundRef = useRef<ConnectCallSound | null>(null);
+  if (!soundRef.current) soundRef.current = new ConnectCallSound();
+
+  useEffect(() => {
+    // iPhone Safari/PWA generally needs an explicit gesture to unlock audio.
+    // This does not request or activate the microphone.
+    const unlock = () => soundRef.current?.unlock();
+    document.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    document.addEventListener('keydown', unlock, true);
+    return () => {
+      document.removeEventListener('pointerdown', unlock, true);
+      document.removeEventListener('keydown', unlock, true);
+      soundRef.current?.close();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (phase === 'incoming') soundRef.current?.start('incoming');
+    else if (phase === 'ringing') soundRef.current?.start('ringback');
+    else soundRef.current?.stop();
+  }, [phase]);
+
 
   async function getIceServers(): Promise<RTCIceServer[]> {
     if (!client) return STUN;
@@ -154,6 +300,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   }
 
   function cleanup() {
+    soundRef.current?.stop();
     generationRef.current++;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     ringTimeoutRef.current = null;
@@ -205,7 +352,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     };
     pc.onconnectionstatechange = () => {
       if (pc !== pcRef.current) return;
-      if (pc.connectionState === 'connected') { enteredRef.current = true; setPhase('active'); setError(''); }
+      if (pc.connectionState === 'connected') { if (!enteredRef.current) soundRef.current?.connected(); enteredRef.current = true; setPhase('active'); setError(''); }
       if (pc.connectionState === 'failed') { setToast('Связь прервалась. Для некоторых сетей необходим TURN-сервер.'); void finish('failed'); }
     };
     return pc;
@@ -335,6 +482,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     if (!client || !userId || !selectedConversation || !selectedPeer ||
         !uuidPattern.test(selectedConversation) || !uuidPattern.test(selectedPeer) ||
         selectedPeer === userId || callRef.current || phase !== 'idle') return;
+    soundRef.current?.unlock();
     const generation = ++generationRef.current;
     setShownName(selectedName); setError(''); setToast(''); setPhase('preparing');
     try {
@@ -399,6 +547,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   async function acceptIncoming() {
     const row = callRef.current;
     if (!row || !client || row.status !== 'ringing' || phase !== 'incoming') return;
+    soundRef.current?.unlock();
     const generation = generationRef.current;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     setError(''); setPhase('connecting');
