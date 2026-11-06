@@ -1,7 +1,6 @@
 'use client';
 
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
-import InviteShareButton from '../components/InviteShareButton';
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
 import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
 
@@ -382,6 +381,8 @@ export default function Home() {
   const [clock, setClock] = useState(Date.now());
   const [draft, setDraft] = useState('');
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string,string>>({});
+  const [mediaViewer, setMediaViewer] = useState<{url:string;path:string;name:string;kind:'image'|'video'} | null>(null);
+  const [savingMedia, setSavingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [recording, setRecording] = useState(false);
   const [recordSeconds, setRecordSeconds] = useState(0);
@@ -1150,6 +1151,31 @@ export default function Home() {
       setNotice('Не удалось завершить запись: '+(e instanceof Error?e.message:String(e)));
     }
   }
+  async function saveAttachment(path: string, name: string) {
+    if (!supabase) return;
+    setSavingMedia(true);
+    try {
+      const filename = (name || 'connect-file').replace(/[\\/\x00-\x1f]/g, '_');
+      const {data, error} = await supabase.storage.from('connect-attachments').download(path);
+      if (error || !data) throw error || new Error('Файл недоступен');
+      const file = new File([data], filename, {type:data.type || 'application/octet-stream'});
+      // Android share sheet supports Save to Files and other installed handlers.
+      if (navigator.canShare?.({files:[file]}) && navigator.share) {
+        try { await navigator.share({files:[file],title:filename}); return; }
+        catch (e) { if ((e as Error).name === 'AbortError') return; }
+      }
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a'); a.href=url; a.download=filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+    } catch (e) {
+      // A signed URL with Content-Disposition=attachment is a fallback for
+      // Android WebViews that do not handle blob: downloads.
+      const {data,error} = await supabase.storage.from('connect-attachments').createSignedUrl(path,120,{download:name || 'connect-file'});
+      if (!error && data?.signedUrl) window.open(mediaUrl(data.signedUrl),'_blank','noopener,noreferrer');
+      else setNotice('Не удалось сохранить вложение: '+(e instanceof Error?e.message:String(e)));
+    } finally { setSavingMedia(false); }
+  }
   function openMenu(m: Message, element: HTMLElement) {
     if (m.deleted_at) return;
     const rect = element.getBoundingClientRect(); const root = shellRef.current?.getBoundingClientRect();
@@ -1285,10 +1311,10 @@ export default function Home() {
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
                           {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
-                            : m.attachment_kind==='image' ? <a href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></a>
-                            : m.attachment_kind==='video' ? <video controls playsInline preload="metadata" src={attachmentUrls[m.attachment_path]}/>
-                            : m.attachment_kind==='audio' ? <VoicePlayer src={attachmentUrls[m.attachment_path]}/>
-                            : <a className="attachment-file" href={attachmentUrls[m.attachment_path]} target="_blank" rel="noopener noreferrer" download={m.attachment_name || 'Файл'}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''}</small></span></a>}
+                            : m.attachment_kind==='image' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>
+                            : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><video playsInline preload="metadata" src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
+                            : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
+                            : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
                         </div>}
                         {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);return st?<img className="sent-sticker" src={customStickerUrl(st)} alt={st.name} loading="lazy"/>:<span>Стикер недоступен</span>})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
                       </>}</div>
@@ -1358,7 +1384,7 @@ export default function Home() {
                   {settingsPage==='stickers' && <><p className="settings-hint">Общие наборы доступны всем пользователям. Выбирайте, какие показывать в чате.</p><div className="settings-group">{STICKER_PACKS.map((p,i)=><div key={p.id}>{i>0&&<div className="setting-divider"/>}<label className="sticker-pack-setting"><span className="sticker-pack-emoji">{p.emoji}</span><span><strong>{p.name}</strong><small>{p.description} · {p.stickers.length} шт.</small></span><input type="checkbox" checked={enabledPacks.includes(p.id)} onChange={()=>togglePack(p.id)}/></label></div>)}</div><h3>Мои наборы</h3><div className="settings-group data-settings"><input className="field" placeholder="Название нового набора" maxLength={60} value={packName} onChange={e=>setPackName(e.target.value)}/><label className="settings-hint">Эмодзи набора <input className="field" style={{maxWidth:75}} value={packEmoji} onChange={e=>setPackEmoji(e.target.value)}/></label><label className="settings-hint"><input type="checkbox" checked={packPublic} onChange={e=>setPackPublic(e.target.checked)}/> Доступен всем участникам Connect</label><button type="button" className="settings-action" disabled={busy||!packName.trim()} onClick={()=>void createCustomPack()}>Создать набор</button></div>
                     {customPacks.filter(p=>p.owner_id===user.id).map(p=><div key={p.id} className="settings-group data-settings"><strong>{p.emoji} {p.name} · {customStickers.filter(st=>st.pack_id===p.id).length} шт.</strong><small>{p.is_public?'Общий набор':'Личный набор'}</small><div className="connect-custom-grid">{customStickers.filter(st=>st.pack_id===p.id).map(st=><button key={st.id} type="button" onClick={()=>void deleteCustomSticker(st)} title="Удалить стикер"><img src={customStickerUrl(st)} alt={st.name}/></button>)}</div><button className="settings-action" type="button" onClick={()=>{setCustomPack(p.id);setTimeout(()=>document.getElementById('connect-sticker-upload')?.click(),0)}}>Добавить стикеры</button><button className="settings-action secondary" type="button" onClick={()=>void deleteCustomPack(p)}>Удалить набор</button>{customPack===p.id&&<input id="connect-sticker-upload" type="file" accept="image/png,image/webp,image/gif" multiple hidden onChange={e=>void uploadCustomStickers(e.target.files)}/>}</div>)}
                     <p className="settings-hint">В чате нажмите ☺ рядом с полем сообщения. Есть избранное и недавно отправленные.</p></>}
-                  {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Пригласить участника</strong><p className="settings-hint">Только администратор может создавать приглашения. Ссылка предназначена для одного адреса электронной почты.</p><input className="field" type="email" placeholder="Электронная почта" value={inviteEmail} onChange={e=>setInviteEmail(e.target.value)}/><button type="button" className="settings-action" disabled={busy||!inviteEmail.includes('@')} onClick={()=>void inviteMember()}>Создать приглашение</button>{inviteLink&&<><input className="field" readOnly value={inviteLink}/><button type="button" className="settings-action" onClick={()=>void navigator.clipboard.writeText(inviteLink)}>Скопировать ссылку</button><InviteShareButton link={inviteLink} /></>}</div>}
+                  {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Приглашения</strong><p className="settings-hint">Создавайте одноразовые коды для новых участников. Код действует 24 часа.</p><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-invitations'))}>Коды приглашений</button></div>}
                   {settingsPage==='data' && <><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
                   {settingsPage==='privacy' && <><div className="settings-group data-settings"><strong>Личные переписки</strong><p className="settings-hint">Сообщения доступны участникам диалога в рамках настроенных правил доступа. Это не означает сквозное шифрование.</p></div><div className="settings-group data-settings"><strong>Удаление аккаунта</strong><p className="settings-hint">Учётная запись и личные данные будут удалены. Отправленные сообщения останутся у собеседников от имени «Удалённый пользователь».</p><button type="button" className="settings-action secondary" disabled={busy} onClick={()=>void deleteMyAccount()}>Удалить аккаунт навсегда</button></div></>}
                   {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 1.5</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
@@ -1370,6 +1396,16 @@ export default function Home() {
     {crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}
     {notice && <button type="button" className="notice-toast"  role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
     {forwardIds.length>0&&<div className="forward-overlay"><div className="forward-dialog"><header><strong>Переслать сообщения</strong><button type="button" onClick={()=>setForwardIds([])}><Icon name="close" size={21}/></button></header><p>Выберите получателя · {forwardIds.length} сообщ.</p><div className="forward-contacts">{contacts.map(p=><button type="button" key={p.id} disabled={busy} onClick={()=>void forwardTo(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span>{p.display_name}</span><Icon name="chevron" size={18}/></button>)}</div></div></div>}
+    {mediaViewer && <div className="connect-media-overlay" role="dialog" aria-modal="true" aria-label="Просмотр вложения" onClick={()=>setMediaViewer(null)}>
+      <div className="connect-media-toolbar" onClick={e=>e.stopPropagation()}>
+        <button type="button" onClick={()=>setMediaViewer(null)} aria-label="Закрыть">✕</button>
+        <span>{mediaViewer.name}</span>
+        <button type="button" disabled={savingMedia} onClick={()=>void saveAttachment(mediaViewer.path,mediaViewer.name)}>{savingMedia?'Сохранение…':'Сохранить'}</button>
+      </div>
+      <div className="connect-media-stage" onClick={e=>e.stopPropagation()}>
+        {mediaViewer.kind==='image' ? <img src={mediaViewer.url} alt={mediaViewer.name}/> : <video src={mediaViewer.url} controls playsInline autoPlay/>}
+      </div>
+    </div>}
     {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
       <button type="button" onClick={() => beginForward([menuMessage.id])}><Icon name="forward" size={22}/>Переслать</button>
       <button type="button" onClick={() => startSelection([menuMessage.id])}><Icon name="check" size={22}/>Выбрать</button>
