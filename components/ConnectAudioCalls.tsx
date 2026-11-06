@@ -11,6 +11,9 @@ type CallRow = {
 };
 type IceRow = { id: number; call_id: string; sender_id: string; candidate: RTCIceCandidateInit };
 type Phase = 'idle' | 'preparing' | 'ringing' | 'incoming' | 'connecting' | 'active';
+// A contact chosen directly from the Calls tab, not inferred from a chat title.
+type OutgoingTarget = { conversationId: string; peerId: string; peerName: string };
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Props = {
   client: SupabaseClient | null;
@@ -67,6 +70,9 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const generationRef = useRef(0);
   const answerPendingRef = useRef(false);
   const enteredRef = useRef(false);
+  const syncingRef = useRef(false);
+  const iceSyncingRef = useRef(false);
+  const missedCheckedRef = useRef(false);
 
   async function getIceServers(): Promise<RTCIceServer[]> {
     if (!client) return STUN;
@@ -117,6 +123,22 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     catch { /* A withdrawn candidate is non-fatal. */ }
   }
 
+  // Postgres Realtime is an optimization, not a guarantee. On a reconnect its
+  // INSERT event may be dropped; resync ICE from the authoritative table.
+  async function pullIce() {
+    const call = callRef.current;
+    if (!client || !call || !pcRef.current || iceSyncingRef.current) return;
+    iceSyncingRef.current = true;
+    try {
+      const { data, error } = await client.from('connect_call_ice')
+        .select('id,call_id,sender_id,candidate')
+        .eq('call_id', call.id).order('id', { ascending: true }).limit(250);
+      if (error || !data || callRef.current?.id !== call.id) return;
+      for (const candidate of data) await receiveIce(candidate as IceRow);
+    } catch { /* A transient fetch failure is retried on the next sync. */ }
+    finally { iceSyncingRef.current = false; }
+  }
+
   function watchIce(callId: string) {
     if (!client) return;
     if (iceChannelRef.current) void client.removeChannel(iceChannelRef.current);
@@ -125,13 +147,10 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'connect_call_ice', filter: `call_id=eq.${callId}` },
         payload => { void receiveIce(payload.new as IceRow); })
       .subscribe(status => {
-        if (status === 'SUBSCRIBED') {
-          void client.from('connect_call_ice').select('id,call_id,sender_id,candidate')
-            .eq('call_id', callId).order('id', { ascending: true }).limit(250)
-            .then(({ data }) => { for (const row of data || []) void receiveIce(row as IceRow); });
-        }
+        if (status === 'SUBSCRIBED') void pullIce();
       });
     iceChannelRef.current = channel;
+    void pullIce();
   }
 
   function cleanup() {
@@ -167,11 +186,13 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === 'undefined') {
       throw new Error('Для звонков нужен современный браузер с доступом к микрофону и HTTPS.');
     }
-    const iceServers = await getIceServers();
+    // On iOS request microphone access inside the original tap handler, before
+    // waiting for the TURN configuration over the network.
     const stream = await navigator.mediaDevices.getUserMedia({ audio: {
       echoCancellation: true, noiseSuppression: true, autoGainControl: true,
     }, video: false });
     streamRef.current = stream;
+    const iceServers = await getIceServers();
     const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
     pcRef.current = pc;
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
@@ -228,53 +249,75 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   useEffect(() => {
     if (!client || !userId) { cleanup(); return; }
     let active = true;
+    missedCheckedRef.current = false;
     const inbox = client.channel(`connect-calls-inbox-${userId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'connect_calls', filter: `callee_id=eq.${userId}` },
-        payload => { if (active) presentIncoming(payload.new as CallRow); })
+        payload => { if (active) { presentIncoming(payload.new as CallRow); void refreshIncoming(); } })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'connect_calls', filter: `caller_id=eq.${userId}` },
         payload => { if (active) void onUpdatedCall(payload.new as CallRow); })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'connect_calls', filter: `callee_id=eq.${userId}` },
         payload => { if (active) void onUpdatedCall(payload.new as CallRow); })
       .subscribe(status => { if (status === 'SUBSCRIBED') void refreshIncoming(); });
+
     async function refreshIncoming() {
-      // A re-render can clear the session: guard inside the async callback too.
-      if (!active || !client || !userId) return;
-      const { data } = await client.from('connect_calls').select('*')
-        .eq('callee_id', userId).eq('status', 'ringing')
-        .gte('created_at', new Date(Date.now() - 59000).toISOString())
-        .order('created_at', { ascending: false }).limit(1).maybeSingle();
-      if (active && data) presentIncoming(data as CallRow);
-      // An unanswered call is still visible after reopening the PWA.
-      if (active && !data && !callRef.current) {
-        const { data: lastMissed } = await client.from('connect_calls')
-          .select('id').eq('callee_id', userId).eq('status', 'missed')
-          .gte('created_at', new Date(Date.now() - 86400000).toISOString())
-          .order('created_at', { ascending: false }).limit(1).maybeSingle();
-        if (lastMissed?.id) {
-          const key = 'connect-last-missed-audio-call:' + userId;
-          try {
-            if (localStorage.getItem(key) !== lastMissed.id) {
-              localStorage.setItem(key, lastMissed.id);
-              setToast('Пропущенный аудиозвонок');
+      if (!active || !client || !userId || syncingRef.current) return;
+      syncingRef.current = true;
+      try {
+        const existing = callRef.current;
+        if (existing) {
+          const { data } = await client.from('connect_calls').select('*')
+            .eq('id', existing.id).maybeSingle();
+          if (active && data) await onUpdatedCall(data as CallRow);
+        } else {
+          const { data } = await client.from('connect_calls').select('*')
+            .eq('callee_id', userId).eq('status', 'ringing')
+            .gte('created_at', new Date(Date.now() - 59000).toISOString())
+            .order('created_at', { ascending: false }).limit(1).maybeSingle();
+          if (active && data) presentIncoming(data as CallRow);
+          if (active && !data && !callRef.current && !missedCheckedRef.current) {
+            missedCheckedRef.current = true;
+            const { data: lastMissed } = await client.from('connect_calls')
+              .select('id').eq('callee_id', userId).eq('status', 'missed')
+              .gte('created_at', new Date(Date.now() - 86400000).toISOString())
+              .order('created_at', { ascending: false }).limit(1).maybeSingle();
+            if (active && lastMissed?.id) {
+              const key = 'connect-last-missed-audio-call:' + userId;
+              try {
+                if (localStorage.getItem(key) !== lastMissed.id) {
+                  localStorage.setItem(key, lastMissed.id);
+                  setToast('Пропущенный аудиозвонок');
+                }
+              } catch { /* Persistent storage may be unavailable. */ }
             }
-          } catch { /* Private browsing: show without persistent deduplication. */ }
+          }
         }
-      }
-      const existing = callRef.current;
-      if (active && existing) {
-        const { data: fresh } = await client.from('connect_calls').select('*').eq('id', existing.id).maybeSingle();
-        if (fresh) void onUpdatedCall(fresh as CallRow);
-      }
+        if (active && callRef.current && pcRef.current) await pullIce();
+      } catch { /* Realtime or the next poll will retry transient errors. */ }
+      finally { syncingRef.current = false; }
     }
     function visible() { if (document.visibilityState === 'visible') void refreshIncoming(); }
+    function fromPush(event: MessageEvent) {
+      if (event.data?.type === 'CONNECT_INCOMING_CALL') void refreshIncoming();
+    }
+    // WebKit can suspend the websocket while the PWA is backgrounded, and
+    // a Realtime event can be missed when resuming. Re-fetch while visible.
+    const poll = setInterval(visible, 2400);
     document.addEventListener('visibilitychange', visible);
+    window.addEventListener('focus', visible);
+    window.addEventListener('pageshow', visible);
+    navigator.serviceWorker?.addEventListener('message', fromPush);
+    void refreshIncoming();
     return () => {
       active = false;
+      clearInterval(poll);
       document.removeEventListener('visibilitychange', visible);
+      window.removeEventListener('focus', visible);
+      window.removeEventListener('pageshow', visible);
+      navigator.serviceWorker?.removeEventListener('message', fromPush);
       void client.removeChannel(inbox);
       cleanup();
     };
-    // Subscription lifetime depends only on user identity, never on selected chat.
+    // Subscription lifetime depends only on user identity, not on selected tab/chat.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, userId]);
 
@@ -285,17 +328,22 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     return () => clearInterval(id);
   }, [phase, shown?.answered_at]);
 
-  async function startOutgoing() {
-    if (!client || !userId || !conversationId || !peerId || callRef.current || phase !== 'idle') return;
+  async function startOutgoing(target?: OutgoingTarget) {
+    const selectedConversation = target?.conversationId || conversationId;
+    const selectedPeer = target?.peerId || peerId;
+    const selectedName = target?.peerName || peerName;
+    if (!client || !userId || !selectedConversation || !selectedPeer ||
+        !uuidPattern.test(selectedConversation) || !uuidPattern.test(selectedPeer) ||
+        selectedPeer === userId || callRef.current || phase !== 'idle') return;
     const generation = ++generationRef.current;
-    setShownName(peerName); setError(''); setToast(''); setPhase('preparing');
+    setShownName(selectedName); setError(''); setToast(''); setPhase('preparing');
     try {
       const pc = await createPeer();
       if (generation !== generationRef.current) { pc.close(); streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null; return; }
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       const { data, error: rpcError } = await client.rpc('connect_start_audio_call', {
-        p_conversation_id: conversationId, p_offer: pc.localDescription?.toJSON(),
+        p_conversation_id: selectedConversation, p_offer: pc.localDescription?.toJSON(),
       });
       if (rpcError || !data) throw new Error(rpcError?.message || 'Не удалось начать звонок');
       const row = data as CallRow;
@@ -304,6 +352,17 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
         return;
       }
       callRef.current = row; setShown(row); setPhase('ringing');
+      // Push directly from the call controller. The Calls tab also retains its
+      // Realtime fallback; the server deduplicates both attempts by call ID.
+      void client.auth.getSession().then(({ data }) => {
+        const token = data.session?.access_token;
+        if (!token) return;
+        return fetch('/api/push/call', {
+          method: 'POST', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ callId: row.id }),
+        }).catch(() => {});
+      }).catch(() => {});
       watchIce(row.id); await flushLocalIce();
       ringTimeoutRef.current = setTimeout(() => {
         if (callRef.current?.id === row.id && callRef.current?.status === 'ringing') {
@@ -315,14 +374,23 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       if (latest) void onUpdatedCall(latest as CallRow);
     } catch (e) {
       const msg = friendlyError(e);
-      cleanup(); setToast(msg.includes('duplicate key') ? 'В этом чате уже идёт звонок' : `Звонок не начат: ${msg}`);
+      const failed = callRef.current;
+      cleanup();
+      if (failed) void client.rpc('connect_finish_audio_call', { p_call_id: failed.id, p_reason: 'failed' });
+      setToast(msg.includes('duplicate key') ? 'В этом чате уже идёт звонок' : `Звонок не начат: ${msg}`);
     }
   }
 
   // The explicit button above emits this event; it no longer depends on DOM queries.
   // The call controller stays mounted for incoming calls even outside a conversation.
   useEffect(() => {
-    const onStart = () => { void startOutgoing(); };
+    const onStart = (event: Event) => {
+      const detail = event instanceof CustomEvent ? event.detail as Partial<OutgoingTarget> | null : null;
+      const target = detail && typeof detail.conversationId === 'string' &&
+        typeof detail.peerId === 'string' && typeof detail.peerName === 'string'
+        ? detail as OutgoingTarget : undefined;
+      void startOutgoing(target);
+    };
     window.addEventListener('connect:audio-call:start', onStart);
     return () => window.removeEventListener('connect:audio-call:start', onStart);
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -16,6 +16,8 @@ type Call = {
   ended_at: string | null;
 };
 type Profile = { id: string; display_name: string };
+type Conversation = { id: string; user_a: string; user_b: string };
+type DialContact = { conversationId: string; peerId: string; peerName: string };
 type Filter = 'all' | 'missed';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
@@ -90,6 +92,11 @@ export default function ConnectCallsHub() {
   const [names, setNames] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [contacts, setContacts] = useState<DialContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsError, setContactsError] = useState('');
+  const [contactSearch, setContactSearch] = useState('');
   const pushedRef = useRef(new Set<string>());
   const refreshGeneration = useRef(0);
 
@@ -123,7 +130,7 @@ export default function ConnectCallsHub() {
   }, []);
 
   useEffect(() => {
-    if (!nav || !main || !userId) setOpen(false);
+    if (!nav || !main || !userId) { setOpen(false); setPickerOpen(false); }
   }, [nav, main, userId]);
 
   const refresh = useCallback(async () => {
@@ -151,6 +158,37 @@ export default function ConnectCallsHub() {
     } else setNames({});
     setLoading(false);
   }, [client, userId]);
+
+  // Dial by real conversation/user IDs, not by a duplicate-prone display name.
+  const loadContacts = useCallback(async () => {
+    if (!client || !userId) return;
+    setContactsLoading(true); setContactsError('');
+    try {
+      const { data: rows, error: conversationError } = await client.from('conversations')
+        .select('id,user_a,user_b')
+        .or(`user_a.eq.${userId},user_b.eq.${userId}`).limit(250);
+      if (conversationError) throw conversationError;
+      const ids = Array.from(new Set(((rows || []) as Conversation[])
+        .map(row => row.user_a === userId ? row.user_b : row.user_a)));
+      if (!ids.length) { setContacts([]); return; }
+      const { data: people, error: profilesError } = await client.from('profiles')
+        .select('id,display_name').in('id', ids);
+      if (profilesError) throw profilesError;
+      const names = new Map(((people || []) as Profile[]).map(person => [person.id, person.display_name]));
+      setContacts(((rows || []) as Conversation[]).map(row => {
+        const peerId = row.user_a === userId ? row.user_b : row.user_a;
+        return { conversationId: row.id, peerId, peerName: names.get(peerId) || 'Собеседник' };
+      }).sort((a, b) => a.peerName.localeCompare(b.peerName, 'ru')));
+    } catch {
+      setContactsError('Не удалось загрузить контакты. Проверьте подключение.');
+    } finally { setContactsLoading(false); }
+  }, [client, userId]);
+
+  function dial(target: DialContact) {
+    if (!userId || target.peerId === userId) return;
+    setPickerOpen(false);
+    window.dispatchEvent(new CustomEvent<DialContact>('connect:audio-call:start', { detail: target }));
+  }
 
   const sendCallPush = useCallback(async (call: Call) => {
     if (!client || !userId || call.caller_id !== userId || call.status !== 'ringing') return;
@@ -233,13 +271,14 @@ export default function ConnectCallsHub() {
     function onOtherTab(event: PointerEvent) {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      if (target.closest('.bottom-nav .nav-tab:not(.connect-calls-tab)')) setOpen(false);
+      if (target.closest('.bottom-nav .nav-tab:not(.connect-calls-tab)')) { setOpen(false); setPickerOpen(false); }
     }
     document.addEventListener('pointerdown', onOtherTab, true);
     return () => document.removeEventListener('pointerdown', onOtherTab, true);
   }, [open]);
 
   const list = filter === 'missed' && userId ? calls.filter(call => missed(call, userId)) : calls;
+  const visibleContacts = contacts.filter(c => c.peerName.toLocaleLowerCase('ru-RU').includes(contactSearch.trim().toLocaleLowerCase('ru-RU')));
   return <>
     <style>{`
       .connect-app .main-view { position: relative; }
@@ -259,9 +298,16 @@ export default function ConnectCallsHub() {
         background: color-mix(in srgb, var(--bg) 83%, transparent);
         -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
       }
-      .connect-call-history-head { margin: 5px 3px 17px; display:flex; align-items: center; justify-content: space-between; }
+      .connect-call-history-head { margin: 5px 3px 17px; display:flex; align-items: center; justify-content: space-between; gap:8px; }
       .connect-call-history-head h1 { font-size: 27px; letter-spacing: -.6px; margin: 0; font-weight: 760; }
       .connect-call-history-head span { color: var(--muted); font-size: 12px; }
+      .connect-call-history-head-actions { display:flex; gap:10px; align-items:center; }
+      .connect-call-new, .connect-call-redial { display:grid; place-items:center; flex:0 0 auto; border:1px solid color-mix(in srgb, var(--accent) 28%, rgba(213,239,255,.19)); background:color-mix(in srgb,var(--accent) 13%,rgba(35,53,77,.61)); color:var(--accent); border-radius:14px; width:42px; height:42px; }
+      .connect-call-redial { width:38px; height:38px; border-radius:13px; }
+      .connect-call-new:active,.connect-call-redial:active { transform:scale(.97); }
+      .connect-call-redial:disabled { opacity:.35; }
+      .connect-call-history-actions { display:flex; flex:0 0 auto; align-items:center; gap:11px; }
+
       .connect-call-history-filters { display:flex; gap:8px; margin: 0 2px 15px; }
       .connect-call-history-filters button {
         border: 1px solid rgba(190,211,236,.12); border-radius: 999px; padding: 9px 16px;
@@ -286,6 +332,18 @@ export default function ConnectCallsHub() {
       .connect-call-history-date { flex:0 0 auto; display:flex;flex-direction:column;align-items:flex-end;gap:5px;color:var(--muted);font-size:11px; }
       .connect-call-history-empty { margin: 65px 12px; text-align:center;color:var(--muted);font-size:14px;line-height:1.5; }
       .connect-call-history-empty button { margin-top:15px; border:0; border-radius:12px; background:var(--accent); color:white; padding:11px 20px; }
+      .connect-call-picker-scrim { position:absolute; inset:0; z-index:8; display:flex; flex-direction:column; justify-content:flex-end; background:rgba(2,7,15,.55); -webkit-backdrop-filter:blur(5px); backdrop-filter:blur(5px); }
+      .connect-call-picker { max-height:min(75%,650px); display:flex; flex-direction:column; padding:17px 16px max(19px,env(safe-area-inset-bottom)); background:linear-gradient(145deg,rgba(35,55,78,.98),rgba(15,25,43,.99)); border-radius:27px 27px 0 0; border:1px solid rgba(218,236,255,.2); box-shadow:0 -18px 45px rgba(0,0,0,.34); }
+      .connect-call-picker-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:15px; }
+      .connect-call-picker-head strong { font-size:19px; }
+      .connect-call-picker-head button { background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.1); border-radius:12px; color:var(--text); padding:8px 12px; }
+      .connect-call-picker input { color:var(--text); background:rgba(10,20,34,.53); border:1px solid rgba(225,244,255,.17); border-radius:17px; padding:12px 13px; margin-bottom:10px; font-size:15px; outline-offset:2px; }
+      .connect-call-picker-list { flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+      .connect-call-picker-person { display:flex; width:100%; align-items:center; gap:11px; padding:12px 4px; background:transparent; color:var(--text); border:0; border-bottom:1px solid rgba(200,222,255,.10); text-align:left; font-size:15px; }
+      .connect-call-picker-person span:nth-child(2) { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .connect-call-picker-person .connect-call-history-avatar { width:40px;height:40px;flex-basis:40px;font-size:17px; }
+      .connect-call-picker-empty { color:var(--muted); padding:18px 5px; text-align:center; font-size:13px; }
+
       @media(max-width:370px) { .connect-call-history-item {padding-inline:9px;gap:9px;} .connect-call-history-avatar{width:40px;height:40px;flex-basis:40px;} .connect-call-history-date{font-size:10px;} }
     `}</style>
     {nav && main && userId && createPortal(<button type="button" className={'nav-tab connect-calls-tab' + (open ? ' selected' : '')}
@@ -293,7 +351,7 @@ export default function ConnectCallsHub() {
       <span className="nav-symbol"><CallIcon /></span><small>Звонки</small>
     </button>, nav)}
     {main && nav && userId && open && createPortal(<section className="connect-call-history-screen" aria-label="История звонков">
-      <div className="connect-call-history-head"><h1>Звонки</h1><span>{calls.length} записей</span></div>
+      <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{calls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button></div></div>
       <div className="connect-call-history-filters">
         <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Все</button>
         <button type="button" aria-pressed={filter === 'missed'} onClick={() => setFilter('missed')}>Пропущенные</button>
@@ -309,10 +367,17 @@ export default function ConnectCallsHub() {
             return <div className="connect-call-history-item" key={call.id}>
               <div className="connect-call-history-avatar" aria-hidden="true">{displayName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</div>
               <div className="connect-call-history-details"><strong>{displayName}</strong><small className={missedCall ? 'missed' : ''}><Arrow outgoing={outgoing}/>{statusText(call,userId)}</small></div>
-              <div className="connect-call-history-date"><time dateTime={call.created_at}>{formatDate(call.created_at)}</time><span>{formatTime(call.created_at)}</span></div>
+              <div className="connect-call-history-actions"><div className="connect-call-history-date"><time dateTime={call.created_at}>{formatDate(call.created_at)}</time><span>{formatTime(call.created_at)}</span></div><button type="button" className="connect-call-redial" title={`Позвонить: ${displayName}`} aria-label={`Позвонить: ${displayName}`} disabled={call.status === 'ringing' || call.status === 'active'} onClick={() => dial({ conversationId:call.conversation_id, peerId, peerName:displayName })}><CallIcon size={19}/></button></div>
             </div>;
           })}</div>}
       </div>
+      {pickerOpen && <div className="connect-call-picker-scrim" role="dialog" aria-modal="true" aria-label="Новый аудиозвонок" onPointerDown={event => { if (event.target === event.currentTarget) setPickerOpen(false); }}>
+        <div className="connect-call-picker">
+          <div className="connect-call-picker-head"><strong>Кому позвонить?</strong><button type="button" onClick={() => setPickerOpen(false)}>Закрыть</button></div>
+          <input aria-label="Найти контакт" placeholder="Поиск контакта" value={contactSearch} onChange={event => setContactSearch(event.target.value)}/>
+          <div className="connect-call-picker-list">{contactsError ? <div className="connect-call-picker-empty" role="alert">{contactsError}<div><button type="button" onClick={() => void loadContacts()}>Повторить</button></div></div> : contactsLoading ? <div className="connect-call-picker-empty">Загружаем контакты…</div> : visibleContacts.length ? visibleContacts.map(contact => <button type="button" className="connect-call-picker-person" key={contact.conversationId} onClick={() => dial(contact)}><span className="connect-call-history-avatar" aria-hidden="true">{contact.peerName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</span><span>{contact.peerName}</span><CallIcon size={20}/></button>) : <div className="connect-call-picker-empty">{contactSearch ? 'Ничего не найдено' : 'Контактов пока нет'}</div>}</div>
+        </div>
+      </div>}
     </section>, main)}
   </>;
 }
