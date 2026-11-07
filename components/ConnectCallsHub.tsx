@@ -96,6 +96,14 @@ export default function ConnectCallsHub() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
+  // Journal preferences are per-account: no changes to actual call signaling or peer history.
+  const [callMenuOpen, setCallMenuOpen] = useState(false);
+  const [callSelecting, setCallSelecting] = useState(false);
+  const [markedCalls, setMarkedCalls] = useState<string[]>([]);
+  const [hiddenCallIds, setHiddenCallIds] = useState<string[]>([]);
+  const [callsClearedBefore, setCallsClearedBefore] = useState<string | null>(null);
+  const [callEditingBusy, setCallEditingBusy] = useState(false);
+  const [callEditingError, setCallEditingError] = useState('');
   const [contacts, setContacts] = useState<DialContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [contactsError, setContactsError] = useState('');
@@ -145,6 +153,32 @@ export default function ConnectCallsHub() {
   useEffect(() => {
     if (!nav || !main || !userId) { setOpen(false); setPickerOpen(false); }
   }, [nav, main, userId]);
+
+  useEffect(() => {
+    if (!client || !userId) {
+      setHiddenCallIds([]);setCallsClearedBefore(null);setMarkedCalls([]);setCallSelecting(false);return;
+    }
+    let alive=true;
+    void client.from('connect_call_journal_settings')
+      .select('hidden_ids,cleared_before').eq('owner_id',userId).maybeSingle()
+      .then(({data,error})=>{
+        if (!alive)return;
+        if(error){setCallEditingError('Не удалось загрузить настройки журнала: '+error.message);return;}
+        setHiddenCallIds(Array.isArray(data?.hidden_ids)?data.hidden_ids:[]);
+        setCallsClearedBefore(data?.cleared_before||null);
+        setCallEditingError('');
+      });
+    return()=>{alive=false;};
+  },[client,userId]);
+
+  useEffect(()=>{
+    if(!callMenuOpen)return;
+    const close=(e:PointerEvent)=>{
+      if(e.target instanceof Element && !e.target.closest('.connect-call-editor-menu'))setCallMenuOpen(false);
+    };
+    document.addEventListener('pointerdown',close);
+    return()=>document.removeEventListener('pointerdown',close);
+  },[callMenuOpen]);
 
   const refresh = useCallback(async () => {
     if (!client || !userId) return;
@@ -322,16 +356,51 @@ export default function ConnectCallsHub() {
     return () => document.removeEventListener('pointerdown', onOtherTab, true);
   }, [open]);
 
-  const unseenMissed = userId ? calls.filter(call =>
+  const visibleCalls=useMemo(()=>calls.filter(call=>
+    !hiddenCallIds.includes(call.id) && (!callsClearedBefore || Date.parse(call.created_at)>Date.parse(callsClearedBefore))
+  ),[calls,hiddenCallIds,callsClearedBefore]);
+  const unseenMissed = userId ? visibleCalls.filter(call =>
     missed(call, userId) && Date.parse(call.ended_at || call.created_at) > lastViewed).length : 0;
   function openCalls() {
     const now = Date.now();
     setLastViewed(now);
     if (userId) try { localStorage.setItem('connect-last-viewed-calls:' + userId, String(now)); } catch {}
-    setOpen(true); setFilter('all');
+    setOpen(true); setFilter('all'); setCallMenuOpen(false); setCallSelecting(false); setMarkedCalls([]);
   }
-  const list = filter === 'missed' && userId ? calls.filter(call => missed(call, userId)) : calls;
+  const list = filter === 'missed' && userId ? visibleCalls.filter(call => missed(call, userId)) : visibleCalls;
   const visibleContacts = contacts.filter(c => c.peerName.toLocaleLowerCase('ru-RU').includes(contactSearch.trim().toLocaleLowerCase('ru-RU')));
+  function startCallSelection(){setCallMenuOpen(false);setMarkedCalls([]);setCallSelecting(true);setCallEditingError('');}
+  function stopCallSelection(){setCallSelecting(false);setMarkedCalls([]);setCallMenuOpen(false);}
+  function markCall(id:string,selected:boolean){setMarkedCalls(prev=>selected?Array.from(new Set([...prev,id])):prev.filter(x=>x!==id));}
+  async function deleteMarkedCalls(){
+    if(!client||!userId||callEditingBusy||markedCalls.length===0)return;
+    if(!window.confirm(`Удалить отмеченные записи (${markedCalls.length}) только из вашего журнала?`))return;
+    const nextIds=Array.from(new Set([...hiddenCallIds,...markedCalls]));
+    setCallEditingBusy(true);setCallEditingError('');
+    try{
+      const {error}=await client.from('connect_call_journal_settings').upsert({
+        owner_id:userId,hidden_ids:nextIds,cleared_before:callsClearedBefore,updated_at:new Date().toISOString(),
+      },{onConflict:'owner_id'});
+      if(error)throw error;
+      setHiddenCallIds(nextIds);stopCallSelection();
+    }catch(e){setCallEditingError('Не удалось удалить записи: '+(e instanceof Error?e.message:String(e)));}
+    finally{setCallEditingBusy(false);}
+  }
+  async function clearCallJournal(){
+    if(!client||!userId||callEditingBusy||!visibleCalls.length)return;
+    setCallMenuOpen(false);
+    if(!window.confirm('Очистить свой журнал вызовов? У собеседников история останется.'))return;
+    const cutoff=new Date().toISOString();
+    setCallEditingBusy(true);setCallEditingError('');
+    try{
+      const {error}=await client.from('connect_call_journal_settings').upsert({
+        owner_id:userId,hidden_ids:hiddenCallIds,cleared_before:cutoff,updated_at:cutoff,
+      },{onConflict:'owner_id'});
+      if(error)throw error;
+      setCallsClearedBefore(cutoff);stopCallSelection();
+    }catch(e){setCallEditingError('Не удалось очистить журнал: '+(e instanceof Error?e.message:String(e)));}
+    finally{setCallEditingBusy(false);}
+  }
   return <>
     <style>{`
       .connect-app .main-view { position: relative; }
@@ -414,8 +483,10 @@ export default function ConnectCallsHub() {
       aria-label={unseenMissed ? `Звонки: пропущенных ${unseenMissed}` : "Звонки"} aria-pressed={open} onClick={openCalls}>
       <span className="nav-symbol"><CallIcon />{unseenMissed > 0 && <span className="connect-nav-count" aria-hidden="true">{unseenMissed > 99 ? '99+' : unseenMissed}</span>}</span><small>Звонки</small>
     </button>, nav)}
-    {main && nav && userId && open && createPortal(<section className="connect-call-history-screen" aria-label="История звонков">
-      <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{calls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button></div></div>
+    {main && nav && userId && open && createPortal(<section className={"connect-call-history-screen"+(callSelecting?" is-selecting":"")} aria-label="История звонков">
+      <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{visibleCalls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setCallMenuOpen(false);setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button><div className="connect-call-editor-menu"><button type="button" className="connect-call-editor-more" aria-label="Действия с журналом вызовов" aria-expanded={callMenuOpen} onClick={()=>setCallMenuOpen(!callMenuOpen)}>•••</button>{callMenuOpen && <div className="connect-call-editor-popup" role="menu"><button type="button" role="menuitem" disabled={callEditingBusy} onClick={startCallSelection}>Выбрать</button><button type="button" role="menuitem" disabled={callEditingBusy||!visibleCalls.length} onClick={startCallSelection}>Удалить…</button><button type="button" role="menuitem" className="danger" disabled={callEditingBusy||!visibleCalls.length} onClick={()=>void clearCallJournal()}>Очистить журнал</button></div>}</div></div></div>
+      {callEditingError && <div role="alert" className="connect-call-editor-error">{callEditingError}</div>}
+      {callSelecting && <div className="connect-call-editor-toolbar"><button type="button" onClick={stopCallSelection}>Отмена</button><span>Выбрано: {markedCalls.length}</span><button type="button" onClick={()=>setMarkedCalls(list.map(c=>c.id))} disabled={callEditingBusy||!list.length}>Выбрать все</button><button type="button" className="danger" disabled={callEditingBusy||!markedCalls.length} onClick={()=>void deleteMarkedCalls()}>Удалить ({markedCalls.length})</button></div>}
       <div className="connect-call-history-filters">
         <button type="button" aria-pressed={filter === 'all'} onClick={() => setFilter('all')}>Все</button>
         <button type="button" aria-pressed={filter === 'missed'} onClick={() => setFilter('missed')}>Пропущенные</button>
@@ -429,6 +500,7 @@ export default function ConnectCallsHub() {
             const displayName = names[peerId] || 'Собеседник';
             const missedCall = missed(call, userId);
             return <div className="connect-call-history-item" key={call.id}>
+              {callSelecting && <input type="checkbox" className="connect-call-editor-check" aria-label={`Выбрать звонок: ${displayName}, ${formatTime(call.created_at)}`} checked={markedCalls.includes(call.id)} onChange={e=>markCall(call.id,e.currentTarget.checked)}/>}
               <ConnectCallAvatar className="connect-call-history-avatar" name={displayName} url={avatarUrls[peerId]}/>
               <div className="connect-call-history-details"><strong>{displayName}</strong><small className={missedCall ? 'missed' : ''}><Arrow outgoing={outgoing}/>{statusText(call,userId)}</small></div>
               <div className="connect-call-history-actions"><div className="connect-call-history-date"><time dateTime={call.created_at}>{formatDate(call.created_at)}</time><span>{formatTime(call.created_at)}</span></div><button type="button" className="connect-call-redial" title={`Позвонить: ${displayName}`} aria-label={`Позвонить: ${displayName}`} disabled={call.status === 'ringing' || call.status === 'active'} onClick={() => void dial({ conversationId:call.conversation_id, peerId, peerName:displayName })}><CallIcon size={19}/></button></div>

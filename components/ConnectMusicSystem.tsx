@@ -79,6 +79,9 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
   const [volume,setVolume]=useState(.85);
   const [muted,setMuted]=useState(false);
   const [musicPageOpen,setMusicPageOpen]=useState(false);
+  const [miniBottom,setMiniBottom]=useState(112);
+  const miniBottomRef=useRef(112);
+  const miniDrag=useRef<{pointerId:number;startY:number;startBottom:number}|null>(null);
   const [shell,setShell]=useState<Element|null>(null);
   const [listenerId,setListenerId]=useState<string|null>(null);
   const [shareNowPlaying,setShareNowPlaying]=useState(false);
@@ -98,6 +101,15 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
     return()=>observer.disconnect();
   },[]);
   useEffect(()=>{const audio=audioRef.current;if(audio){audio.volume=volume;audio.muted=muted;}},[volume,muted]);
+  useEffect(()=>{
+    try{
+      const saved=Number(localStorage.getItem('connect-music-mini-bottom-v1'));
+      if(Number.isFinite(saved)&&saved>=108){
+        const bottom=Math.min(saved,Math.max(108,window.innerHeight-128));
+        miniBottomRef.current=bottom;setMiniBottom(bottom);
+      }
+    }catch{/* Default location if localStorage is unavailable. */}
+  },[]);
 
   const registerPlaylist=useCallback((id:string,list:ConnectMusicTrack[])=>{
     const sameOwner=ownerRef.current===id;
@@ -214,7 +226,23 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
       if(Date.now()-persistRef.current>2500){persistRef.current=Date.now();savePlayback(n);}
     }} onDurationChange={e=>setDuration(Number.isFinite(e.currentTarget.duration)?e.currentTarget.duration:0)}
       onPlay={()=>setPlaying(true)} onPause={()=>setPlaying(false)} onEnded={()=>adjacent(1,true)}/>
-    {showMini && createPortal(<div className="connect-music-mini" role="region" aria-label="Мини-плеер">
+    {showMini && createPortal(<div className="connect-music-mini" role="region" aria-label="Мини-плеер" style={{bottom:miniBottom}}>
+      <button type="button" className="connect-music-mini-drag" aria-label="Переместить мини-плеер вверх или вниз" title="Перетащить мини-плеер"
+        onPointerDown={e=>{if(e.button!==0)return;e.currentTarget.setPointerCapture(e.pointerId);miniDrag.current={pointerId:e.pointerId,startY:e.clientY,startBottom:miniBottomRef.current};}}
+        onPointerMove={e=>{
+          const d=miniDrag.current;if(!d||d.pointerId!==e.pointerId)return;
+          const height=shell?.getBoundingClientRect().height||window.innerHeight;
+          const ceiling=Math.max(108,height-135);
+          const bottom=Math.max(108,Math.min(ceiling,d.startBottom+d.startY-e.clientY));
+          miniBottomRef.current=bottom;setMiniBottom(bottom);
+        }}
+        onPointerUp={e=>{
+          if(miniDrag.current?.pointerId!==e.pointerId)return;
+          miniDrag.current=null;
+          try{localStorage.setItem('connect-music-mini-bottom-v1',String(miniBottomRef.current));}catch{/* ignore */}
+        }}
+        onPointerCancel={()=>{miniDrag.current=null;}}
+        ><span aria-hidden="true">⠿</span></button>
       <button type="button" className="connect-music-mini-title" onClick={()=>window.dispatchEvent(new CustomEvent('connect:music-open',{detail:{ownerId}}))} title="Открыть музыку">
         {icon('music',17)}<span>{current?.name}</span></button>
       <button type="button" aria-label="Предыдущий трек" onClick={()=>adjacent(-1)}>{icon('previous',19)}</button>
@@ -244,7 +272,7 @@ export function ConnectMusicLibrary({client, ownerId, items, isOwner, busy, onRe
         <strong className="connect-minimal-player-title" title={active.name}>{active.name}</strong>
         <div className="connect-music-volume">
           <button type="button" aria-label={music.muted?'Включить звук':'Выключить звук'} onClick={()=>music.setMuted(!music.muted)}>{icon(music.muted?'mute':'volume',18)}</button>
-          <input type="range" min="0" max="1" step="0.05" value={music.volume} aria-label="Громкость музыки" onChange={e=>{music.setVolume(Number(e.currentTarget.value));if(Number(e.currentTarget.value)>0)music.setMuted(false);}}/>
+          {/* iOS controls physical volume; use only mute/unmute in Connect. */}
         </div>
       </div>
       <div className="connect-minimal-progress">

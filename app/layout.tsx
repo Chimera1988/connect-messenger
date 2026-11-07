@@ -9,6 +9,7 @@ import { ConnectMusicProvider } from '../components/ConnectMusicSystem';
 import './globals.css';
 import './liquid-glass.css';
 import './calls.css';
+import './call-journal-editor.css';
 import './profile-media.css';
 import './music-system.css';
 

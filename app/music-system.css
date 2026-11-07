@@ -64,3 +64,21 @@
 .connect-app .connect-profile-photo-overlay .connect-gallery-name{max-width:80%;min-width:0;text-align:center;color:#fff9;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;font-size:12px;}
 .connect-app .connect-profile-photo-overlay video{display:block;max-width:90%;max-height:74%;width:auto;height:auto;background:#000;border-radius:12px;}
 @media(max-width:370px){.connect-app .connect-minimal-player{padding:11px 10px}.connect-app .connect-minimal-controls button{width:37px;height:40px}.connect-app .connect-music-volume input{width:35px}}
+
+/* Adjustable compact mini-player and single mute button; theme colors inherited. */
+.connect-app .connect-music-mini .connect-music-mini-drag{
+  display:grid;place-items:center;flex:0 0 25px;width:25px;height:38px;
+  padding:0;border:0;border-radius:9px;background:transparent;
+  color:var(--accent);font-size:18px;touch-action:none;cursor:grab;
+  user-select:none;-webkit-user-select:none;
+}
+.connect-app .connect-music-mini .connect-music-mini-drag:active{cursor:grabbing;background:color-mix(in srgb,var(--accent) 14%,transparent)}
+.connect-app .connect-music-volume{margin-left:auto;}
+.connect-app .connect-music-volume button{width:36px;height:36px;color:var(--accent);border-radius:12px;
+  border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);}
+.connect-app .connect-music-volume input{display:none;}
+/* Allow scrolling to controls when a floating music player is near the bottom. */
+.connect-app:has(.connect-music-mini) .profile-content,
+.connect-app:has(.connect-music-mini) .connect-profile-media-page,
+.connect-app:has(.connect-music-mini) .chat-messages,
+.connect-app:has(.connect-music-mini) .main-content{padding-bottom:max(85px,env(safe-area-inset-bottom))}
