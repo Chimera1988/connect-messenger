@@ -1,0 +1,247 @@
+name: Connect - adaptive single photo bubbles
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-adaptive-single-photos.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Connect
+        uses: actions/checkout@v4
+      - name: Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply adaptive photo layout and preserve scroll anchor
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          page_path = Path('app/page.tsx')
+          css_path = Path('app/liquid-glass.css')
+          page = page_path.read_text(encoding='utf-8')
+          css = css_path.read_text(encoding='utf-8')
+          marker = '/* Connect: adaptive single-image footprint v1 */'
+          helper_marker = 'function connectPhotoFrameStyle(path: string)'
+
+          if helper_marker not in page:
+              helpers = r'''type ConnectPhotoSize = { width: number; height: number };
+          const connectPhotoSizeCache = new Map<string, ConnectPhotoSize>();
+
+          function connectPhotoDimensions(path: string): ConnectPhotoSize | null {
+            const match = /__img_(\d{1,5})x(\d{1,5})$/.exec(path);
+            if (match) {
+              const width = Number(match[1]), height = Number(match[2]);
+              if (width > 0 && height > 0) return { width, height };
+            }
+            return connectPhotoSizeCache.get(path) ?? null;
+          }
+
+          function connectPhotoFrameValues(size: ConnectPhotoSize): { width: string; ratio: string } {
+            // The image stays proportionate and fits within 280 x 340 CSS pixels.
+            const ratio = Math.max(0.35, Math.min(4, size.width / size.height));
+            return { width: `${Math.round(Math.min(280, 340 * ratio))}px`, ratio: String(ratio) };
+          }
+
+          function connectPhotoFrameStyle(path: string): CSSProperties | undefined {
+            const dimensions = connectPhotoDimensions(path);
+            if (!dimensions) return undefined;
+            const values = connectPhotoFrameValues(dimensions);
+            return { '--connect-photo-width': values.width, '--connect-photo-ratio': values.ratio } as CSSProperties;
+          }
+
+          async function connectImageFileSize(file: File): Promise<ConnectPhotoSize | null> {
+            if (!file.type.startsWith('image/')) return null;
+            const url = URL.createObjectURL(file);
+            try {
+              return await new Promise(resolve => {
+                const img = new Image();
+                img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0
+                  ? { width: img.naturalWidth, height: img.naturalHeight } : null);
+                img.onerror = () => resolve(null);
+                img.src = url;
+              });
+            } finally { URL.revokeObjectURL(url); }
+          }
+
+          function connectUpdatePhotoSize(image: HTMLImageElement, path: string) {
+            if (!image.naturalWidth || !image.naturalHeight) return;
+            const frame = image.closest<HTMLElement>('.attachment-preview.connect-adaptive-photo');
+            if (!frame) return;
+            const dimensions = { width: image.naturalWidth, height: image.naturalHeight };
+            connectPhotoSizeCache.set(path, dimensions);
+            const values = connectPhotoFrameValues(dimensions);
+            if (frame.style.getPropertyValue('--connect-photo-width') === values.width &&
+                frame.style.getPropertyValue('--connect-photo-ratio') === values.ratio) return;
+
+            const scroll = frame.closest<HTMLElement>('.message-scroll');
+            const viewport = scroll?.getBoundingClientRect();
+            const anchor = scroll && viewport
+              ? Array.from(scroll.querySelectorAll<HTMLElement>('.message-day-group'))
+                  .find(el => el.getBoundingClientRect().bottom > viewport.top + 8)
+              : undefined;
+            const originalTop = anchor?.getBoundingClientRect().top;
+            const nearBottom = scroll ? scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 100 : false;
+
+            frame.style.setProperty('--connect-photo-width', values.width);
+            frame.style.setProperty('--connect-photo-ratio', values.ratio);
+            // The first view of older files lacks dimensions. Keep the reading position
+            // steady while correcting their footprint on image decode.
+            if (scroll) {
+              if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+              else if (anchor && originalTop !== undefined)
+                scroll.scrollTop += anchor.getBoundingClientRect().top - originalTop;
+            }
+          }
+
+          '''
+              anchor = 'function VideoThumbnail({src}:{src:string}) {'
+              if page.count(anchor) != 1:
+                  raise SystemExit('Unsupported page: cannot locate video thumbnail helper')
+              page = page.replace(anchor, helpers + anchor, 1)
+              print('Adaptive image helpers inserted')
+
+          old_path = '    const path=`${chatId}/${user.id}/${crypto.randomUUID()}`;\n    setBusy(true);setUploadProgress(0);setNotice(\'\');\n    try {'
+          new_path = '''    let path=`${chatId}/${user.id}/${crypto.randomUUID()}`;
+              setBusy(true);setUploadProgress(0);setNotice('');
+              try {
+                // The dimensions travel with the storage path, so the recipient can reserve
+                // an accurate layout before downloading a newly sent photo.
+                if (kind === 'image' && !/^sticker-\\d+\\.(?:png|webp|gif|jpe?g)$/i.test(file.name)) {
+                  const size = await connectImageFileSize(file);
+                  if (size && size.width < 100000 && size.height < 100000)
+                    path += `__img_${size.width}x${size.height}`;
+                }'''
+          if 'path += `__img_${size.width}x${size.height}`' not in page:
+              if page.count(old_path) != 1:
+                  raise SystemExit('Unsupported page: attachment path insertion changed')
+              page = page.replace(old_path, new_path, 1)
+
+          old_forward = '          path = `${chat.id}/${user.id}/${crypto.randomUUID()}`;'
+          new_forward = '''          // Keep image dimensions when forwarding, without changing the DB schema.
+          const imageSuffix = m.attachment_kind === 'image'
+            ? (m.attachment_path.match(/__img_\\d{1,5}x\\d{1,5}$/)?.[0] || '') : '';
+          path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;'''
+          if 'const imageSuffix = m.attachment_kind' not in page:
+              if page.count(old_forward) != 1:
+                  raise SystemExit('Unsupported page: forwarding path insertion changed')
+              page = page.replace(old_forward, new_forward, 1)
+
+          old_preview = 'm.attachment_kind === \'image\' ?'  # The actual branch has no spaces, use its nearby attribute instead.
+          old_attr = 'className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}'
+          new_attr = 'className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : m.attachment_kind===\'image\' ? "attachment-preview connect-adaptive-photo" : "attachment-preview"} style={m.attachment_kind===\'image\' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : undefined}'
+          if 'attachment-preview connect-adaptive-photo' not in page:
+              if page.count(old_attr) != 1:
+                  raise SystemExit('Unsupported page: attachment preview class changed')
+              page = page.replace(old_attr, new_attr, 1)
+
+          old_thumb = '''<button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>'''
+          new_thumb = '''<button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy" onLoad={e=>connectUpdatePhotoSize(e.currentTarget,m.attachment_path!)}/></button>'''
+          if 'className="connect-media-thumb connect-adaptive-image"' not in page:
+              if page.count(old_thumb) != 1:
+                  raise SystemExit('Unsupported page: single photo thumbnail changed')
+              page = page.replace(old_thumb, new_thumb, 1)
+
+          styles = r'''
+          /* Connect: adaptive single-image footprint v1 */
+          /* No fixed 4:3 letterbox for a single photo. Video, albums and
+             keyboard stickers retain their existing geometry and handlers. */
+          .connect-app .bubble.sent.media-only:not(.sticker-bubble):has(.connect-adaptive-photo),
+          .connect-app .bubble.received.media-only:not(.sticker-bubble):has(.connect-adaptive-photo) {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            width: fit-content !important;
+            max-width: min(280px, calc(100vw - 84px)) !important;
+            min-width: 0 !important;
+            flex: 0 0 auto !important;
+            overflow: visible !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) > .bubble-body {
+            display: block !important;
+            flex: 0 0 auto !important;
+            width: fit-content !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo {
+            position: relative !important;
+            display: block !important;
+            flex: 0 0 auto !important;
+            width: min(var(--connect-photo-width, 280px), calc(100vw - 84px)) !important;
+            max-width: 100% !important;
+            height: auto !important;
+            aspect-ratio: var(--connect-photo-ratio, 4 / 3) !important;
+            min-height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            overflow: hidden !important;
+            border-radius: 12px !important;
+            background: transparent !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            max-height: none !important;
+            max-width: none !important;
+            min-height: 0 !important;
+            aspect-ratio: auto !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: hidden !important;
+            background: transparent !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image > img {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            background: transparent !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .bubble-meta {
+            align-self: flex-end !important;
+          }
+          '''
+          if marker not in css:
+              css_path.write_text(css.rstrip() + '\n' + styles, encoding='utf-8')
+              print('Adaptive photo CSS appended')
+          else:
+              print('Adaptive photo CSS already present')
+          page_path.write_text(page, encoding='utf-8')
+          PY
+      - name: Check changes
+        run: git diff --check
+      - name: Install TypeScript dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Validate TypeScript
+        run: npx tsc --noEmit
+      - name: Commit and push application update
+        shell: bash
+        run: |
+          git add app/page.tsx app/liquid-glass.css
+          if git diff --cached --quiet; then
+            echo "No changes needed"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style: adaptive photo bubbles with preserved scroll'
+          git push origin HEAD:main
