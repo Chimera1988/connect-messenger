@@ -1,0 +1,112 @@
+name: Fix Connect invitation button layout and theme
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-connect-invite-button.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current Connect Messenger
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Anchor invite button inside the login screen
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          invitation_file = Path('components/InvitationCodes.tsx')
+          page_file = Path('app/page.tsx')
+          css_file = Path('app/globals.css')
+          invitation = invitation_file.read_text(encoding='utf-8')
+          page = page_file.read_text(encoding='utf-8')
+          css = css_file.read_text(encoding='utf-8')
+
+          old_button = """ {!signed&&<button type="button" onClick={()=>{setOpen(true);setError('')}} style={{...btn,position:'fixed',zIndex:9000,bottom:'max(20px, env(safe-area-inset-bottom))',left:'50%',transform:'translateX(-50%)',whiteSpace:'nowrap'}}>У меня есть код приглашения</button>}"""
+          hook_anchor = """ useEffect(()=>{const openInvites=()=>{if(!admin)return;setOpen(true);setError('');void load()};window.addEventListener('connect:open-invitations',openInvites);return()=>window.removeEventListener('connect:open-invitations',openInvites)},[admin]);"""
+          registration_hook = """ useEffect(()=>{const openRegistration=()=>{if(signed)return;setOpen(true);setError('')};window.addEventListener('connect:open-registration-invite',openRegistration);return()=>window.removeEventListener('connect:open-registration-invite',openRegistration)},[signed]);"""
+          page_anchor = '            <p className="login-hint">Вход доступен только участникам с учётной записью.</p>\n          </form>\n        </div>'
+          page_replacement = '            <p className="login-hint">Вход доступен только участникам с учётной записью.</p>\n          </form>\n          {!setup && <button type="button" className="connect-invite-register" onClick={() => window.dispatchEvent(new Event(\'connect:open-registration-invite\'))}>У меня есть код приглашения</button>}\n        </div>'
+          marker = '/* Connect UI: anchored invitation registration action */'
+          styles = r'''
+          /* Connect UI: anchored invitation registration action */
+          /* The login screen, not the visual viewport, owns the invitation button. */
+          .connect-app .login-screen {
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            -webkit-overflow-scrolling: touch;
+            justify-content: safe center;
+          }
+          .connect-app .login-screen > .login-brand,
+          .connect-app .login-screen > .login-form { flex-shrink: 0; }
+          .connect-app .login-screen > .connect-invite-register {
+            position: relative;
+            flex: 0 0 auto;
+            align-self: center;
+            width: min(365px, 100%);
+            min-height: 44px;
+            margin: 0;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: var(--panel);
+            color: var(--text);
+            font: 600 13px/1.35 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+            text-align: center;
+            box-shadow: none;
+            white-space: normal;
+            transition: background-color .16s ease, border-color .16s ease;
+          }
+          .connect-app .login-screen > .connect-invite-register:active { background: var(--panel2); }
+          .connect-app .login-screen > .connect-invite-register:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+          }
+          '''
+
+          already = registration_hook in invitation and old_button not in invitation and page_replacement in page and marker in css
+          if already:
+              print('Invitation layout is already updated.')
+          else:
+              if invitation.count(old_button) != 1 or invitation.count(hook_anchor) != 1 or page.count(page_anchor) != 1 or marker in css:
+                  raise SystemExit('Unexpected source version; no changes applied. Check the source files.')
+              invitation = invitation.replace(old_button, '', 1)
+              invitation = invitation.replace(hook_anchor, hook_anchor + '\n' + registration_hook, 1)
+              page = page.replace(page_anchor, page_replacement, 1)
+              css = css.rstrip() + '\n' + styles
+              invitation_file.write_text(invitation, encoding='utf-8')
+              page_file.write_text(page, encoding='utf-8')
+              css_file.write_text(css, encoding='utf-8')
+              print('Invite button is now inside the login screen and uses Connect theme colors.')
+          PY
+      - name: Validate patch and TypeScript
+        shell: bash
+        run: |
+          git diff --check
+          npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+          npx tsc --noEmit
+      - name: Commit only the fixed PWA files
+        shell: bash
+        run: |
+          git config user.name 'Connect UI fixer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add components/InvitationCodes.tsx app/page.tsx app/globals.css
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: anchor invitation button in themed login screen'
+            git push origin HEAD:main
+          else
+            echo 'Already applied; no commit necessary.'
+          fi
