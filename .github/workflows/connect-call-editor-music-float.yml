@@ -1,0 +1,293 @@
+name: Connect - call journal editor and movable music player
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-call-editor-music-float.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Connect Messenger
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply call editor and audio player improvements
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+
+          def once(s, old, new, label):
+              # Some inserted blocks preserve the original marker within the new code.
+              # Check the complete new block first for safe reruns.
+              if new in s:
+                  print('Already installed:',label)
+                  return s
+              if old in s:
+                  if s.count(old)!=1:
+                      raise RuntimeError(f'{label}: {s.count(old)} matches (expected 1)')
+                  print('Install:',label)
+                  return s.replace(old,new,1)
+              raise RuntimeError(f'{label}: source has changed; refusing to modify')
+
+          calls_file=Path('components/ConnectCallsHub.tsx')
+          player_file=Path('components/ConnectMusicSystem.tsx')
+          style_file=Path('app/music-system.css')
+          layout_file=Path('app/layout.tsx')
+          for f in [calls_file,player_file,style_file,layout_file]:
+              assert f.exists(),f'Missing existing project file: {f}'
+
+          calls=calls_file.read_text(encoding='utf-8')
+          calls=once(calls,
+              "  const [pickerOpen, setPickerOpen] = useState(false);",
+              """  const [pickerOpen, setPickerOpen] = useState(false);
+            // Journal preferences are per-account: no changes to actual call signaling or peer history.
+            const [callMenuOpen, setCallMenuOpen] = useState(false);
+            const [callSelecting, setCallSelecting] = useState(false);
+            const [markedCalls, setMarkedCalls] = useState<string[]>([]);
+            const [hiddenCallIds, setHiddenCallIds] = useState<string[]>([]);
+            const [callsClearedBefore, setCallsClearedBefore] = useState<string | null>(null);
+            const [callEditingBusy, setCallEditingBusy] = useState(false);
+            const [callEditingError, setCallEditingError] = useState('');""",
+              'call editor state')
+          calls=once(calls,
+              "  const refresh = useCallback(async () => {",
+              """  useEffect(() => {
+              if (!client || !userId) {
+                setHiddenCallIds([]);setCallsClearedBefore(null);setMarkedCalls([]);setCallSelecting(false);return;
+              }
+              let alive=true;
+              void client.from('connect_call_journal_settings')
+                .select('hidden_ids,cleared_before').eq('owner_id',userId).maybeSingle()
+                .then(({data,error})=>{
+                  if (!alive)return;
+                  if(error){setCallEditingError('Не удалось загрузить настройки журнала: '+error.message);return;}
+                  setHiddenCallIds(Array.isArray(data?.hidden_ids)?data.hidden_ids:[]);
+                  setCallsClearedBefore(data?.cleared_before||null);
+                  setCallEditingError('');
+                });
+              return()=>{alive=false;};
+            },[client,userId]);
+
+            useEffect(()=>{
+              if(!callMenuOpen)return;
+              const close=(e:PointerEvent)=>{
+                if(e.target instanceof Element && !e.target.closest('.connect-call-editor-menu'))setCallMenuOpen(false);
+              };
+              document.addEventListener('pointerdown',close);
+              return()=>document.removeEventListener('pointerdown',close);
+            },[callMenuOpen]);
+
+            const refresh = useCallback(async () => {""",
+              'load user journal preferences')
+          calls=once(calls,
+              "  const unseenMissed = userId ? calls.filter(call =>",
+              """  const visibleCalls=useMemo(()=>calls.filter(call=>
+              !hiddenCallIds.includes(call.id) && (!callsClearedBefore || Date.parse(call.created_at)>Date.parse(callsClearedBefore))
+            ),[calls,hiddenCallIds,callsClearedBefore]);
+            const unseenMissed = userId ? visibleCalls.filter(call =>""",
+              'hide deleted journal rows from missed badge')
+          calls=once(calls,
+              "    setOpen(true); setFilter('all');",
+              "    setOpen(true); setFilter('all'); setCallMenuOpen(false); setCallSelecting(false); setMarkedCalls([]);",
+              'reset call editor on open')
+          calls=once(calls,
+              "  const list = filter === 'missed' && userId ? calls.filter(call => missed(call, userId)) : calls;",
+              "  const list = filter === 'missed' && userId ? visibleCalls.filter(call => missed(call, userId)) : visibleCalls;",
+              'use journal-filtered calls')
+          calls=once(calls,
+              "  const visibleContacts = contacts.filter(c => c.peerName.toLocaleLowerCase('ru-RU').includes(contactSearch.trim().toLocaleLowerCase('ru-RU')));",
+              """  const visibleContacts = contacts.filter(c => c.peerName.toLocaleLowerCase('ru-RU').includes(contactSearch.trim().toLocaleLowerCase('ru-RU')));
+            function startCallSelection(){setCallMenuOpen(false);setMarkedCalls([]);setCallSelecting(true);setCallEditingError('');}
+            function stopCallSelection(){setCallSelecting(false);setMarkedCalls([]);setCallMenuOpen(false);}
+            function markCall(id:string,selected:boolean){setMarkedCalls(prev=>selected?Array.from(new Set([...prev,id])):prev.filter(x=>x!==id));}
+            async function deleteMarkedCalls(){
+              if(!client||!userId||callEditingBusy||markedCalls.length===0)return;
+              if(!window.confirm(`Удалить отмеченные записи (${markedCalls.length}) только из вашего журнала?`))return;
+              const nextIds=Array.from(new Set([...hiddenCallIds,...markedCalls]));
+              setCallEditingBusy(true);setCallEditingError('');
+              try{
+                const {error}=await client.from('connect_call_journal_settings').upsert({
+                  owner_id:userId,hidden_ids:nextIds,cleared_before:callsClearedBefore,updated_at:new Date().toISOString(),
+                },{onConflict:'owner_id'});
+                if(error)throw error;
+                setHiddenCallIds(nextIds);stopCallSelection();
+              }catch(e){setCallEditingError('Не удалось удалить записи: '+(e instanceof Error?e.message:String(e)));}
+              finally{setCallEditingBusy(false);}
+            }
+            async function clearCallJournal(){
+              if(!client||!userId||callEditingBusy||!visibleCalls.length)return;
+              setCallMenuOpen(false);
+              if(!window.confirm('Очистить свой журнал вызовов? У собеседников история останется.'))return;
+              const cutoff=new Date().toISOString();
+              setCallEditingBusy(true);setCallEditingError('');
+              try{
+                const {error}=await client.from('connect_call_journal_settings').upsert({
+                  owner_id:userId,hidden_ids:hiddenCallIds,cleared_before:cutoff,updated_at:cutoff,
+                },{onConflict:'owner_id'});
+                if(error)throw error;
+                setCallsClearedBefore(cutoff);stopCallSelection();
+              }catch(e){setCallEditingError('Не удалось очистить журнал: '+(e instanceof Error?e.message:String(e)));}
+              finally{setCallEditingBusy(false);}
+            }""",
+              'user-only call journal edit operations')
+          # Header: phone button first, then more button on right. Menu has select/remove/clear.
+          old_header='''      <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{calls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button></div></div>'''
+          new_header='''      <div className="connect-call-history-head"><h1>Звонки</h1><div className="connect-call-history-head-actions"><span>{visibleCalls.length} записей</span><button type="button" className="connect-call-new" aria-label="Позвонить контакту" title="Новый звонок" onClick={() => { setCallMenuOpen(false);setContactSearch(''); setPickerOpen(true); void loadContacts(); }}><CallIcon size={22}/></button><div className="connect-call-editor-menu"><button type="button" className="connect-call-editor-more" aria-label="Действия с журналом вызовов" aria-expanded={callMenuOpen} onClick={()=>setCallMenuOpen(!callMenuOpen)}>•••</button>{callMenuOpen && <div className="connect-call-editor-popup" role="menu"><button type="button" role="menuitem" disabled={callEditingBusy} onClick={startCallSelection}>Выбрать</button><button type="button" role="menuitem" disabled={callEditingBusy||!visibleCalls.length} onClick={startCallSelection}>Удалить…</button><button type="button" role="menuitem" className="danger" disabled={callEditingBusy||!visibleCalls.length} onClick={()=>void clearCallJournal()}>Очистить журнал</button></div>}</div></div></div>
+                {callEditingError && <div role="alert" className="connect-call-editor-error">{callEditingError}</div>}
+                {callSelecting && <div className="connect-call-editor-toolbar"><button type="button" onClick={stopCallSelection}>Отмена</button><span>Выбрано: {markedCalls.length}</span><button type="button" onClick={()=>setMarkedCalls(list.map(c=>c.id))} disabled={callEditingBusy||!list.length}>Выбрать все</button><button type="button" className="danger" disabled={callEditingBusy||!markedCalls.length} onClick={()=>void deleteMarkedCalls()}>Удалить ({markedCalls.length})</button></div>}'''
+          calls=once(calls,old_header,new_header,'journal three-dots after phone')
+          calls=once(calls,
+              '    {main && nav && userId && open && createPortal(<section className="connect-call-history-screen" aria-label="История звонков">',
+              '    {main && nav && userId && open && createPortal(<section className={"connect-call-history-screen"+(callSelecting?" is-selecting":"")} aria-label="История звонков">',
+              'selection state CSS class')
+          calls=once(calls,
+              '            return <div className="connect-call-history-item" key={call.id}>\n              <ConnectCallAvatar',
+              '            return <div className="connect-call-history-item" key={call.id}>\n              {callSelecting && <input type="checkbox" className="connect-call-editor-check" aria-label={`Выбрать звонок: ${displayName}, ${formatTime(call.created_at)}`} checked={markedCalls.includes(call.id)} onChange={e=>markCall(call.id,e.currentTarget.checked)}/>}\n              <ConnectCallAvatar',
+              'call selection checkboxes')
+          calls_file.write_text(calls,encoding='utf-8')
+
+          music=player_file.read_text(encoding='utf-8')
+          music=once(music,
+              '  const [musicPageOpen,setMusicPageOpen]=useState(false);',
+              """  const [musicPageOpen,setMusicPageOpen]=useState(false);
+            const [miniBottom,setMiniBottom]=useState(112);
+            const miniBottomRef=useRef(112);
+            const miniDrag=useRef<{pointerId:number;startY:number;startBottom:number}|null>(null);""",
+              'music mini drag state')
+          music=once(music,
+              "  useEffect(()=>{const audio=audioRef.current;if(audio){audio.volume=volume;audio.muted=muted;}},[volume,muted]);",
+              """  useEffect(()=>{const audio=audioRef.current;if(audio){audio.volume=volume;audio.muted=muted;}},[volume,muted]);
+            useEffect(()=>{
+              try{
+                const saved=Number(localStorage.getItem('connect-music-mini-bottom-v1'));
+                if(Number.isFinite(saved)&&saved>=108){
+                  const bottom=Math.min(saved,Math.max(108,window.innerHeight-128));
+                  miniBottomRef.current=bottom;setMiniBottom(bottom);
+                }
+              }catch{/* Default location if localStorage is unavailable. */}
+            },[]);""",
+              'restore mini player position')
+          music=once(music,
+              '    {showMini && createPortal(<div className="connect-music-mini" role="region" aria-label="Мини-плеер">\n      <button type="button" className="connect-music-mini-title"',
+              '''    {showMini && createPortal(<div className="connect-music-mini" role="region" aria-label="Мини-плеер" style={{bottom:miniBottom}}>
+                <button type="button" className="connect-music-mini-drag" aria-label="Переместить мини-плеер вверх или вниз" title="Перетащить мини-плеер"
+                  onPointerDown={e=>{if(e.button!==0)return;e.currentTarget.setPointerCapture(e.pointerId);miniDrag.current={pointerId:e.pointerId,startY:e.clientY,startBottom:miniBottomRef.current};}}
+                  onPointerMove={e=>{
+                    const d=miniDrag.current;if(!d||d.pointerId!==e.pointerId)return;
+                    const height=shell?.getBoundingClientRect().height||window.innerHeight;
+                    const ceiling=Math.max(108,height-135);
+                    const bottom=Math.max(108,Math.min(ceiling,d.startBottom+d.startY-e.clientY));
+                    miniBottomRef.current=bottom;setMiniBottom(bottom);
+                  }}
+                  onPointerUp={e=>{
+                    if(miniDrag.current?.pointerId!==e.pointerId)return;
+                    miniDrag.current=null;
+                    try{localStorage.setItem('connect-music-mini-bottom-v1',String(miniBottomRef.current));}catch{/* ignore */}
+                  }}
+                  onPointerCancel={()=>{miniDrag.current=null;}}
+                  ><span aria-hidden="true">⠿</span></button>
+                <button type="button" className="connect-music-mini-title"''',
+              'draggable mini player grip and position')
+          # Important: remove iOS-disabled volume range, retain mute toggle aligned to far right
+          music=once(music,
+              '''          <input type="range" min="0" max="1" step="0.05" value={music.volume} aria-label="Громкость музыки" onChange={e=>{music.setVolume(Number(e.currentTarget.value));if(Number(e.currentTarget.value)>0)music.setMuted(false);}}/>''',
+              '''          {/* iOS controls physical volume; use only mute/unmute in Connect. */}''',
+              'replace broken volume slider with mute')
+          player_file.write_text(music,encoding='utf-8')
+
+          styles=style_file.read_text(encoding='utf-8')
+          additional_css='''
+          /* Adjustable compact mini-player and single mute button; theme colors inherited. */
+          .connect-app .connect-music-mini .connect-music-mini-drag{
+            display:grid;place-items:center;flex:0 0 25px;width:25px;height:38px;
+            padding:0;border:0;border-radius:9px;background:transparent;
+            color:var(--accent);font-size:18px;touch-action:none;cursor:grab;
+            user-select:none;-webkit-user-select:none;
+          }
+          .connect-app .connect-music-mini .connect-music-mini-drag:active{cursor:grabbing;background:color-mix(in srgb,var(--accent) 14%,transparent)}
+          .connect-app .connect-music-volume{margin-left:auto;}
+          .connect-app .connect-music-volume button{width:36px;height:36px;color:var(--accent);border-radius:12px;
+            border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);}
+          .connect-app .connect-music-volume input{display:none;}
+          /* Allow scrolling to controls when a floating music player is near the bottom. */
+          .connect-app:has(.connect-music-mini) .profile-content,
+          .connect-app:has(.connect-music-mini) .connect-profile-media-page,
+          .connect-app:has(.connect-music-mini) .chat-messages,
+          .connect-app:has(.connect-music-mini) .main-content{padding-bottom:max(85px,env(safe-area-inset-bottom))}
+          '''
+          if additional_css not in styles:
+              styles += additional_css
+              print('Install: music player CSS')
+          else:print('Already installed: music player CSS')
+          style_file.write_text(styles,encoding='utf-8')
+
+          layout=layout_file.read_text(encoding='utf-8')
+          layout=once(layout,
+              "import './calls.css';",
+              "import './calls.css';\nimport './call-journal-editor.css';",
+              'call editor stylesheet import')
+          layout_file.write_text(layout,encoding='utf-8')
+
+          call_css_file=Path('app/call-journal-editor.css')
+          call_css='''/* Connect: per-user call history editor. Three-dots AFTER dial action. */
+          .connect-app .connect-call-editor-menu{position:relative;z-index:25;flex:0 0 auto;}
+          .connect-app .connect-call-editor-more{width:42px;height:42px;display:grid;place-items:center;
+            border:1px solid color-mix(in srgb,var(--accent) 25%,var(--v4-border,var(--border)));
+            border-radius:14px;background:color-mix(in srgb,var(--panel) 85%,transparent);
+            color:var(--accent);font-size:19px;letter-spacing:1px;}
+          .connect-app .connect-call-editor-popup{position:absolute;right:0;top:calc(100% + 9px);width:205px;
+            border:1px solid color-mix(in srgb,var(--accent) 29%,var(--v4-border,var(--border)));
+            border-radius:15px;padding:6px;display:flex;flex-direction:column;gap:2px;
+            background:var(--panel);color:var(--text);z-index:200;
+            box-shadow:0 12px 30px rgba(0,0,0,.33);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+          .connect-app .connect-call-editor-popup button{background:transparent;border:0;color:var(--text);text-align:left;
+            padding:12px;border-radius:10px;font-size:14px;}
+          .connect-app .connect-call-editor-popup button:active{background:color-mix(in srgb,var(--accent) 14%,transparent)}
+          .connect-app .connect-call-editor-popup button.danger{color:#f58692;}
+          .connect-app .connect-call-editor-popup button:disabled{opacity:.4;}
+          .connect-app .connect-call-editor-toolbar{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:0 4px 11px;}
+          .connect-app .connect-call-editor-toolbar button{padding:7px 10px;background:color-mix(in srgb,var(--accent) 11%,var(--panel));
+            color:var(--text);border:1px solid var(--v4-border,var(--border));border-radius:10px;font-size:12px;}
+          .connect-app .connect-call-editor-toolbar span{font-size:12px;color:var(--muted);margin:0 auto 0 2px;}
+          .connect-app .connect-call-editor-toolbar button.danger{color:#ff93a0;border-color:rgba(240,100,120,.27);}
+          .connect-app .connect-call-editor-toolbar button:disabled{opacity:.38;}
+          .connect-app .connect-call-editor-check{width:21px;height:21px;flex:0 0 21px;accent-color:var(--accent);}
+          .connect-app .connect-call-history-screen.is-selecting .connect-call-redial{display:none;}
+          .connect-app .connect-call-editor-error{font-size:12px;color:#ffa6b0;padding:0 9px 9px;}
+          @media(max-width:375px){.connect-app .connect-call-history-head-actions{gap:6px;}.connect-app .connect-call-editor-more{width:36px;height:38px;}.connect-app .connect-call-editor-toolbar button{font-size:11px;padding:7px 8px;}}
+          '''
+          if call_css_file.exists() and call_css_file.read_text(encoding='utf-8') != call_css:
+              raise RuntimeError('Existing editor stylesheet unexpected: refusing to overwrite')
+          call_css_file.write_text(call_css,encoding='utf-8')
+          print('Completed call editor / mini player modifications.')
+          PY
+          git diff --check
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Check TypeScript
+        run: npx tsc --noEmit
+      - name: Commit tested changes
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add components/ConnectCallsHub.tsx components/ConnectMusicSystem.tsx app/music-system.css app/call-journal-editor.css app/layout.tsx
+          if git diff --cached --quiet; then
+            echo 'Call editor and audio player enhancements already installed.'
+            exit 0
+          fi
+          git commit -m 'feat: edit personal call journal and move mini music player'
+          git push origin HEAD:main
