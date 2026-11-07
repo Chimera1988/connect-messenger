@@ -1,0 +1,189 @@
+name: Connect - adaptive single photos like album cards
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-single-photo-album-frame.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Connect Messenger
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Remove 4-by-3 override and frame photos like albums
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          css_file = Path('app/liquid-glass.css')
+          page_file = Path('app/page.tsx')
+          css = css_file.read_text(encoding='utf-8')
+          page = page_file.read_text(encoding='utf-8')
+
+          # Stop if the previous adaptive-photo implementation is not installed.
+          # Do not alter videos, albums, stickers, or chat-scroll handlers.
+          for required in (
+              'className="connect-media-thumb connect-adaptive-image"',
+              'connect-adaptive-photo',
+              'function connectPhotoFrameStyle(path: string)',
+          ):
+              if required not in page:
+                  raise SystemExit('Adaptive photo component missing: ' + required)
+
+          begin_tag = '/* Reserve the FULL media footprint before a signed URL/image/video is ready.'
+          end_tag = '/* Video notes already have a round 1:1 player.'
+          if css.count(begin_tag) != 1 or css.count(end_tag) != 1:
+              raise SystemExit('Could not safely locate old fixed 4:3 media styles')
+
+          start = css.index(begin_tag)
+          end = css.index(end_tag, start)
+          old_section = css[start:end]
+          old_rule = ':not(:has(.connect-album-grid))'
+          exclusion = ':not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo))'
+          if exclusion not in old_section:
+              if old_section.count(old_rule) < 3:
+                  raise SystemExit('Unexpected 4:3 selector layout; no files changed')
+              updated = old_section.replace(old_rule, exclusion)
+              css = css[:start] + updated + css[end:]
+              print('Excluded adaptive photographs from legacy 4:3 media rules')
+          else:
+              print('Legacy 4:3 rules were already scoped; skipping')
+
+          marker = '/* Connect: single photo framed like an album v2 */'
+          if marker not in css:
+              css += r'''
+
+          /* Connect: single photo framed like an album v2 */
+          /* Preserve native photo aspect ratio from --connect-photo-ratio.
+             Reserve photo area during loading; only legacy photos may reflow
+             once after their real dimensions are decoded. */
+          .connect-app .bubble.sent.media-only:not(.sticker-bubble):has(.connect-adaptive-photo),
+          .connect-app .bubble.received.media-only:not(.sticker-bubble):has(.connect-adaptive-photo) {
+            box-sizing: border-box !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            width: fit-content !important;
+            min-width: 0 !important;
+            max-width: min(290px, calc(100vw - 80px)) !important;
+            margin: 0 !important;
+            padding: 3px !important;
+            gap: 0 !important;
+            border: 1px solid var(--glass-stroke-hi, rgba(220,238,255,.24)) !important;
+            border-radius: 16px !important;
+            overflow: hidden !important;
+            color: var(--text) !important;
+            background: color-mix(in srgb, var(--panel) 22%, transparent) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.07) !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) > .bubble-body {
+            box-sizing: border-box !important;
+            display: block !important;
+            flex: 0 0 auto !important;
+            width: fit-content !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo {
+            box-sizing: border-box !important;
+            display: block !important;
+            position: relative !important;
+            flex: 0 0 auto !important;
+            width: min(var(--connect-photo-width, 280px), calc(100vw - 90px)) !important;
+            max-width: 100% !important;
+            height: auto !important;
+            min-height: 0 !important;
+            aspect-ratio: var(--connect-photo-ratio, 4 / 3) !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: 0 !important;
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            background: color-mix(in srgb, var(--panel) 62%, #111926) !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            max-width: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: transparent !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image > img {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            object-fit: contain !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border-radius: 12px !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-photo) .bubble-meta {
+            box-sizing: border-box !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            align-self: stretch !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-height: 20px !important;
+            padding: 3px 7px 1px !important;
+            margin: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            color: var(--muted) !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            opacity: .92 !important;
+          }
+          '''
+              print('Added album-like frame and inline timestamp for single photos')
+          else:
+              print('Album-like photo frame already exists; skipping')
+
+          # Minimal structural assertions against conflicting layout selectors.
+          assert exclusion in css[start:css.index(end_tag, start)]
+          assert marker in css
+          assert 'aspect-ratio: var(--connect-photo-ratio, 4 / 3) !important;' in css
+          css_file.write_text(css, encoding='utf-8')
+          PY
+      - name: Check whitespace
+        run: git diff --check
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Check TypeScript
+        run: npx tsc --noEmit
+      - name: Commit and deploy through Vercel
+        shell: bash
+        run: |
+          git add app/liquid-glass.css
+          if git diff --cached --quiet; then
+            echo "Already applied"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "fix: photo cards match native aspect ratio and album framing"
+          git push origin HEAD:main
