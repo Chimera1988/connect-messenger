@@ -1,0 +1,121 @@
+name: Connect PWA - compact audio attachments
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/compact-audio-bubbles.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  compact-audio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Update only audio attachment UI
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          page_path = Path('app/page.tsx')
+          css_path = Path('app/globals.css')
+          page = page_path.read_text(encoding='utf-8')
+          css = css_path.read_text(encoding='utf-8')
+
+          old_button = """                                <button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудиофайл')}}>Сохранить</button>
+          """
+          old_meta = """                      <div className="bubble-meta">{m.edited_at && !m.deleted_at"""
+          new_meta = """                      <div className="bubble-meta">{!m.deleted_at && isPlayableAudioFile(m) && <button type="button" className="connect-inline-audio-save" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудиофайл')}}>Сохранить</button>}{m.edited_at && !m.deleted_at"""
+
+          if page.count(old_button) == 1 and page.count(old_meta) == 1:
+              page = page.replace(old_button, '', 1).replace(old_meta, new_meta, 1)
+              page_path.write_text(page, encoding='utf-8')
+              print('PWA: compact audio footer inserted')
+          elif page.count(old_button) == 0 and page.count(new_meta) == 1:
+              print('PWA: compact audio footer already present')
+          else:
+              raise SystemExit('Page structure changed; no unsafe edits applied')
+
+          marker = '/* Connect UI: compact uploaded audio attachments */'
+          styles = r'''
+          /* Connect UI: compact uploaded audio attachments */
+          .connect-app .bubble:has(.connect-inline-audio-file) {
+            width: min(288px, 78vw) !important;
+            max-width: min(288px, 78vw) !important;
+            min-width: 0 !important;
+            padding: 8px 10px 6px !important;
+            gap: 3px !important;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .bubble-body,
+          .connect-app .bubble:has(.connect-inline-audio-file) .attachment-preview {
+            width: 100%; max-width: 100%; min-width: 0;
+            padding: 0 !important; margin: 0 !important;
+          }
+          .connect-app .connect-inline-audio-file {
+            width: 100%; min-width: 0 !important; max-width: 100%;
+            padding: 0; gap: 6px;
+          }
+          .connect-app .connect-inline-audio-file .connect-inline-audio-name {
+            gap: 6px; font-size: 12px; line-height: 1.28;
+          }
+          .connect-app .connect-inline-audio-file .connect-inline-audio-name svg {
+            flex: 0 0 15px; width: 15px; height: 15px;
+          }
+          .connect-app .connect-inline-audio-file .connect-inline-audio-name span {
+            display: -webkit-box; -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2; overflow: hidden;
+          }
+          .connect-app .connect-inline-audio-file audio {
+            width: 100% !important; max-width: 100% !important;
+            height: 38px !important; border-radius: 18px;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .bubble-meta {
+            display: flex; align-items: center; justify-content: flex-end;
+            gap: 4px; min-height: 19px;
+            margin: 0 !important; padding: 0 !important;
+            white-space: nowrap; font-size: 10px;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .connect-inline-audio-save {
+            margin-right: auto; padding: 2px 0; border: 0;
+            background: transparent; box-shadow: none; color: inherit;
+            font: 600 11px/1.15 system-ui, -apple-system, sans-serif;
+            white-space: nowrap; opacity: .93;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .connect-inline-audio-save:active {
+            opacity: .62;
+          }
+          '''
+          if marker not in css:
+              css_path.write_text(css.rstrip() + '\n' + styles, encoding='utf-8')
+              print('PWA: compact audio styling appended')
+          else:
+              print('PWA: compact audio styling already present')
+          PY
+      - name: Check changes
+        run: git diff --check
+      - name: Validate TypeScript
+        run: |
+          npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+          npx tsc --noEmit
+      - name: Commit only PWA files
+        run: |
+          git config user.name 'Connect UI updater'
+          git config user.email 'actions@users.noreply.github.com'
+          git add app/page.tsx app/globals.css
+          if ! git diff --cached --quiet; then
+            git commit -m 'style: compact audio attachments with inline save action'
+            git push origin HEAD:main
+          else
+            echo 'No changes needed'
+          fi
