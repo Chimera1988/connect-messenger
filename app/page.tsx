@@ -60,6 +60,16 @@ function parseAlbum(body:string):AlbumItem[] {
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
 type Tab = 'chats' | 'contacts' | 'settings';
 type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'data' | 'privacy' | 'about';
+type VisualScene = 'waves' | 'aurora' | 'moon' | 'sunset' | 'lagoon' | 'nebula' | 'minimal';
+const VISUAL_SCENES: ReadonlyArray<{ id: VisualScene; title: string; description: string }> = [
+  { id: 'waves', title: 'Волны', description: 'Текущая тема' },
+  { id: 'aurora', title: 'Сияние', description: 'Мягкие переливы' },
+  { id: 'moon', title: 'Лунный свет', description: 'Холодные линии' },
+  { id: 'sunset', title: 'Закат', description: 'Тёплые волны' },
+  { id: 'lagoon', title: 'Лагуна', description: 'Бирюзовые потоки' },
+  { id: 'nebula', title: 'Туманность', description: 'Фиолетовый свет' },
+  { id: 'minimal', title: 'Минимализм', description: 'Без волн и свечения' },
+];
 type CustomPack = {id:string;name:string;emoji:string;owner_id:string;is_public:boolean;created_at:string};
 type CustomSticker = {id:string;pack_id:string;name:string;storage_path:string;position:number};
 type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null; last_seen_at: string | null; online_until: string | null };
@@ -542,6 +552,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
 
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [visualScene, setVisualScene] = useState<VisualScene>('waves');
   const [tab, setTab] = useState<Tab>('chats');
   const [settingsPage, setSettingsPage] = useState<SettingsPage>('home');
   const [accent, setAccent] = useState('#087dff');
@@ -640,7 +651,13 @@ export default function Home() {
   const previousLast = useRef(''); const stickToBottom = useRef(true);
   const invited = typeof window !== 'undefined' && /type=(invite|recovery)/.test(window.location.hash + window.location.search);
 
-  useEffect(() => { try { if (localStorage.getItem('connect-theme') === 'light') setTheme('light'); } catch { /* Private browsing */ } }, []);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem('connect-theme') === 'light') setTheme('light');
+      const storedScene = localStorage.getItem('connect-visual-scene');
+      if (VISUAL_SCENES.some(item => item.id === storedScene)) setVisualScene(storedScene as VisualScene);
+    } catch { /* Private browsing */ }
+  }, []);
   useEffect(() => {
     try {
       const color = localStorage.getItem('connect-accent');
@@ -672,8 +689,8 @@ export default function Home() {
   async function removeWallpaper() {await clearWallpaper();setWallpaper(null);}
   function clearLocalPreferences() {
     if (!window.confirm('Сбросить оформление, избранные стикеры и фон на этом устройстве? Переписки на сервере останутся.')) return;
-    for (const key of ['connect-theme','connect-accent','connect-sticker-packs','connect-sticker-favorites','connect-sticker-recent']) try{localStorage.removeItem(key);}catch{}
-    setTheme('dark');setAccent('#087dff');setEnabledPacks(STICKER_PACKS.map(p=>p.id));setStickerFavorites([]);setStickerRecent([]);
+    for (const key of ['connect-theme','connect-visual-scene','connect-accent','connect-sticker-packs','connect-sticker-favorites','connect-sticker-recent']) try{localStorage.removeItem(key);}catch{}
+    setTheme('dark');setVisualScene('waves');setAccent('#087dff');setEnabledPacks(STICKER_PACKS.map(p=>p.id));setStickerFavorites([]);setStickerRecent([]);
     void removeWallpaper();setNotice('Локальные настройки сброшены');
   }
   async function exportChats() {
@@ -710,6 +727,10 @@ export default function Home() {
     requestAnimationFrame(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;});
   }
   function changeTheme(next: 'dark' | 'light') { setTheme(next); try { localStorage.setItem('connect-theme', next); } catch { /* no storage */ } }
+  function changeVisualScene(next: VisualScene) {
+    setVisualScene(next);
+    try { localStorage.setItem('connect-visual-scene', next); } catch { /* Private browsing */ }
+  }
 
   // The visual viewport shrinks when the iPhone keyboard appears. Keep the composer
   // inside it instead of moving the entire page (which caused the previous iOS bug).
@@ -1697,7 +1718,7 @@ export default function Home() {
 
   const keyboardOpen = frame ? window.innerHeight - frame.height - frame.top > 130 : false;
   const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
-  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
+  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
     {!supabase ? <div className="connection-error"><Icon name="info" size={32}/><h2>Подключение не настроено</h2><p>Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY в Vercel.</p></div>
       : loading ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
         : !user || setup ? <div className="login-screen">
@@ -1851,6 +1872,24 @@ export default function Home() {
                   </>}
                   {settingsPage==='appearance' && <>
                     <h3>Тема приложения</h3><div className="settings-group"><div className="settings-theme"><span className="setting-icon"><Icon name={theme==='dark'?'moon':'sun'} size={19}/></span><div><strong>Режим отображения</strong><small>На этом устройстве</small></div></div><div className="theme-buttons"><button type="button" className={theme==='dark'?'current':''} onClick={()=>changeTheme('dark')}>Тёмная</button><button type="button" className={theme==='light'?'current':''} onClick={()=>changeTheme('light')}>Светлая</button></div></div>
+                    <h3>Темы оформления</h3>
+                    <div className="settings-group connect-theme-gallery">
+                      <p className="settings-hint">Выберите фон и настроение Connect. Светлая и тёмная тема, а также цвет кнопок настраиваются отдельно.</p>
+                      <div className="connect-theme-grid" role="group" aria-label="Темы оформления">
+                        {VISUAL_SCENES.map(scene => <button key={scene.id} type="button"
+                          className={'connect-theme-choice' + (visualScene === scene.id ? ' is-selected' : '')}
+                          aria-pressed={visualScene === scene.id}
+                          onClick={() => changeVisualScene(scene.id)}>
+                          <span className="connect-theme-thumbnail" data-preview-scene={scene.id} aria-hidden="true">
+                            <span className="connect-theme-thumbnail-wave"/>
+                            <span className="connect-theme-thumbnail-bubble"/>
+                            <span className="connect-theme-thumbnail-bubble two"/>
+                          </span>
+                          <span className="connect-theme-choice-label"><strong>{scene.title}</strong><small>{scene.description}</small></span>
+                          {visualScene === scene.id && <span className="connect-theme-selected-mark" aria-hidden="true">✓</span>}
+                        </button>)}
+                      </div>
+                    </div>
                     <h3>Цветовая схема</h3><div className="settings-group"><div className="accent-options">{['#087dff','#8055dc','#dc477e','#198f78','#b46b26','#cc4545','#60748b'].map(c=><button type="button" key={c} className={accent===c?'selected':''} style={{background:c}} aria-label={'Цвет '+c} onClick={()=>changeAccent(c)}>{accent===c?'✓':''}</button>)}<label className="accent-custom" title="Свой цвет">＋<input type="color" aria-label="Свой цвет" value={accent} onChange={e=>changeAccent(e.target.value)}/></label></div><p className="settings-hint">Цвет кнопок, ссылок и исходящих сообщений</p></div>
                     <h3>Фон переписок</h3><div className="settings-group wallpaper-settings"><input type="file" ref={wallpaperInput} hidden accept="image/*" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void changeWallpaper(file);}}/>{wallpaper&&<img className="wallpaper-preview" src={wallpaper} alt="Выбранный фон"/>}<button type="button" className="settings-action" onClick={()=>wallpaperInput.current?.click()}>Выбрать изображение</button>{wallpaper&&<button type="button" className="settings-action secondary" onClick={()=>void removeWallpaper()}>Удалить фон</button>}<p className="settings-hint">Фон хранится только на этом устройстве. До 12 МБ.</p></div>
                   </>}
