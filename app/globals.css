@@ -609,3 +609,35 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* Connect iOS sticker favorites v1: inert sticker media, not an image viewer */
+.connect-app .bubble.sticker-bubble .keyboard-sticker-preview {
+  width: min(170px, 44vw) !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+  overflow: visible !important;
+}
+.connect-app .bubble.sticker-bubble .keyboard-sticker-preview .connect-keyboard-sticker,
+.connect-app .bubble.sticker-bubble .keyboard-sticker-preview .connect-keyboard-sticker-loading {
+  display: block !important;
+  width: min(170px, 44vw) !important;
+  height: min(170px, 44vw) !important;
+  max-width: 100% !important;
+  max-height: none !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  object-fit: contain !important;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  pointer-events: none;
+}
+.connect-app .bubble.sticker-bubble:has(.connect-keyboard-sticker) {
+  width: fit-content !important;
+  max-width: min(180px, 48vw) !important;
+}

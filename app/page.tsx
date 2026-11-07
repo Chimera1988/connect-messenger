@@ -72,6 +72,7 @@ const VISUAL_SCENES: ReadonlyArray<{ id: VisualScene; title: string; description
 ];
 type CustomPack = {id:string;name:string;emoji:string;owner_id:string;is_public:boolean;created_at:string};
 type CustomSticker = {id:string;pack_id:string;name:string;storage_path:string;position:number};
+const IOS_FAVORITE_PACK = 'Избранное из чатов · Connect';
 type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null; last_seen_at: string | null; online_until: string | null };
 type Conversation = { id: string; user_a: string; user_b: string; created_at: string };
 type Message = {
@@ -177,7 +178,7 @@ function forwardBody(from: string, body: string): string {
 
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (isVideoNote(m) ? '🎥 Видеокружок' : parseAlbum(m.body).length ? `🖼 Альбом (${parseAlbum(m.body).length})` : stickerFromBody(forwardedMessage(m.body).text) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (isVideoNote(m) ? '🎥 Видеокружок' : parseAlbum(m.body).length ? `🖼 Альбом (${parseAlbum(m.body).length})` : (stickerFromBody(forwardedMessage(m.body).text) || (m.attachment_kind==='image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || ''))) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
@@ -846,6 +847,20 @@ export default function Home() {
   function customStickerUrl(st:CustomSticker){return customStickerUrls[st.id]||''}
   async function sendCustomSticker(st:CustomSticker){
     if(!supabase||!user||!activeChat||busy)return;
+    const savedPack = customPacks.find(pack => pack.id === st.pack_id);
+    if(savedPack?.owner_id === user.id && savedPack.name === IOS_FAVORITE_PACK) {
+      try {
+        const result = await supabase.storage.from('connect-stickers').download(st.storage_path);
+        if (result.error || !result.data) throw result.error || new Error('Не удалось загрузить стикер');
+        const ext = /\.(png|webp|gif)$/i.exec(st.storage_path)?.[1]?.toLowerCase() || 'png';
+        const mime = ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : 'image/png';
+        await sendAttachment(new File([result.data], `sticker-${Date.now()}.${ext}`, {type:mime}));
+        setStickerPicker(false);
+      } catch (error) {
+        setNotice('Не удалось отправить стикер: '+(error instanceof Error?error.message:String(error)));
+      }
+      return;
+    }
     setBusy(true);
     const {error}=await supabase.from('messages').insert({conversation_id:activeChat,sender_id:user.id,body:`[[connect-custom-sticker:${st.id}]]`,reply_to:replyTo?.id||null});
     setBusy(false);if(error)setNotice(error.message);else{setStickerPicker(false);setReplyTo(null);}
@@ -1418,6 +1433,82 @@ export default function Home() {
     return m.attachment_kind === 'image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || '');
   }
 
+  // Connect iOS sticker favorites v1: save a private durable copy, not a temporary photo link.
+  async function saveKeyboardStickerFavorite(m: Message) {
+    if (!supabase || !user || !m.attachment_path || !isKeyboardSticker(m) || busy) return;
+    setMenuMessage(null);
+    setBusy(true);
+    let storedPath: string | null = null;
+    try {
+      const source = await supabase.storage.from('connect-attachments').download(m.attachment_path);
+      if (source.error || !source.data) throw new Error(source.error?.message || 'Файл недоступен');
+      let imageBlob: Blob = source.data;
+      let mime = (m.attachment_type || imageBlob.type || 'image/png').toLowerCase();
+      if (mime === 'image/jpeg' || mime === 'image/jpg') {
+        const url = URL.createObjectURL(imageBlob);
+        try {
+          const image = new Image();
+          await new Promise<void>((resolve, reject) => {
+            image.onload = () => resolve();
+            image.onerror = () => reject(new Error('Невозможно прочитать изображение'));
+            image.src = url;
+          });
+          const canvas = document.createElement('canvas');
+          canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('Невозможно обработать изображение');
+          context.drawImage(image, 0, 0);
+          imageBlob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+            value => value ? resolve(value) : reject(new Error('Не удалось создать PNG')), 'image/png'
+          ));
+          mime = 'image/png';
+        } finally { URL.revokeObjectURL(url); }
+      }
+      if (!['image/png','image/webp','image/gif'].includes(mime)) throw new Error('Поддерживаются PNG, WebP и GIF');
+      if (imageBlob.size < 1 || imageBlob.size > 2 * 1024 * 1024) throw new Error('Размер стикера должен быть до 2 МБ');
+      const hash = await crypto.subtle.digest('SHA-256', await imageBlob.arrayBuffer());
+      const fingerprint = Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, '0')).join('').slice(0, 48);
+      const name = 'iOS-' + fingerprint;
+      let pack = customPacks.find(item => item.owner_id === user.id && item.name === IOS_FAVORITE_PACK);
+      if (!pack) {
+        const existing = await supabase.from('connect_sticker_packs')
+          .select('id,name,emoji,owner_id,is_public,created_at')
+          .eq('owner_id', user.id).eq('name', IOS_FAVORITE_PACK).maybeSingle();
+        if (existing.error) throw existing.error;
+        if (existing.data) pack = existing.data as CustomPack;
+        else {
+          const created = await supabase.from('connect_sticker_packs')
+            .insert({name:IOS_FAVORITE_PACK,emoji:'⭐',owner_id:user.id,is_public:false})
+            .select('id,name,emoji,owner_id,is_public,created_at').single();
+          if (created.error || !created.data) throw created.error || new Error('Не удалось создать избранное');
+          pack = created.data as CustomPack;
+        }
+      }
+      const duplicate = await supabase.from('connect_stickers').select('id')
+        .eq('pack_id', pack.id).eq('name', name).limit(1);
+      if (duplicate.error) throw duplicate.error;
+      if (duplicate.data?.length) {
+        setNotice('Этот стикер уже в избранном');
+        await loadCustomStickers();
+        return;
+      }
+      const ext = mime === 'image/gif' ? 'gif' : mime === 'image/webp' ? 'webp' : 'png';
+      storedPath = `${user.id}/${pack.id}/${crypto.randomUUID()}.${ext}`;
+      const uploaded = await supabase.storage.from('connect-stickers')
+        .upload(storedPath, imageBlob, {contentType:mime,upsert:false});
+      if (uploaded.error) throw uploaded.error;
+      const inserted = await supabase.from('connect_stickers')
+        .insert({pack_id:pack.id,name,storage_path:storedPath});
+      if (inserted.error) throw inserted.error;
+      storedPath = null;
+      await loadCustomStickers();
+      setNotice('Стикер добавлен в избранное');
+    } catch (error) {
+      if (storedPath) await supabase.storage.from('connect-stickers').remove([storedPath]);
+      setNotice('Не удалось сохранить стикер: ' + (error instanceof Error ? error.message : String(error)));
+    } finally { setBusy(false); }
+  }
+
   function handleComposerPaste(event: React.ClipboardEvent<HTMLInputElement>) {
     // iOS custom keyboard stickers may be delivered as image clipboard items.
     const clipboard = event.clipboardData;
@@ -1598,7 +1689,7 @@ export default function Home() {
       setNotice('Не удалось завершить запись: '+(e instanceof Error?e.message:String(e)));
     }
   }
-  const gallery = visibleMessages.flatMap(m=>[...(m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video')&&!isVideoNote(m)?[{path:m.attachment_path,name:m.attachment_name || 'Медиа',kind:m.attachment_kind as 'image'|'video'}]:[]),...parseAlbum(m.body)]).filter(x=>Boolean(attachmentUrls[x.path])).map(x=>({...x,url:attachmentUrls[x.path]}));
+  const gallery = visibleMessages.flatMap(m=>[...(m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video')&&!isVideoNote(m)&&!isKeyboardSticker(m)?[{path:m.attachment_path,name:m.attachment_name || 'Медиа',kind:m.attachment_kind as 'image'|'video'}]:[]),...parseAlbum(m.body)]).filter(x=>Boolean(attachmentUrls[x.path])).map(x=>({...x,url:attachmentUrls[x.path]}));
   const galleryIndex = mediaViewer ? gallery.findIndex(item => item.path === mediaViewer.path) : -1;
   function stepGallery(delta:number) {
     if (!mediaViewer || galleryIndex < 0 || !gallery.length) return;
@@ -1786,8 +1877,10 @@ export default function Home() {
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
                         {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?<img src={attachmentUrls[item.path]} alt={item.name} loading="lazy"/>:<><VideoThumbnail src={attachmentUrls[item.path]}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
-                          {!attachmentUrls[m.attachment_path] ? <span>Загрузка вложения…</span>
-                            : m.attachment_kind==='image' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>
+                          {!attachmentUrls[m.attachment_path] ? (isKeyboardSticker(m) ? <span className="connect-keyboard-sticker-loading" aria-label="Загрузка стикера"/> : <span>Загрузка вложения…</span>)
+                            : m.attachment_kind==='image' ? (isKeyboardSticker(m)
+                              ? <img className="connect-keyboard-sticker" src={attachmentUrls[m.attachment_path]} alt="Стикер" draggable={false} loading="lazy"/>
+                              : <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>)
                             : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'}/>
                             : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
@@ -1828,11 +1921,16 @@ export default function Home() {
               {stickerPicker && <div className="sticker-picker">
                 <div className="sticker-picker-tabs">
                   {STICKER_PACKS.filter(p=>enabledPacks.includes(p.id)).map(p=><button key={p.id} type="button" className={stickerPack===p.id?'active':''} onClick={()=>{setStickerPack(p.id);setCustomPack('')}}>{p.emoji} {p.name}</button>)}
-                  {customPacks.map(p=><button key={p.id} type="button" className={customPack===p.id?'active':''} onClick={()=>{setCustomPack(p.id);setStickerPack('speed')}}>{p.emoji} {p.name}</button>)}
+                  {customPacks.filter(p=>p.name!==IOS_FAVORITE_PACK).map(p=><button key={p.id} type="button" className={customPack===p.id?'active':''} onClick={()=>{setCustomPack(p.id);setStickerPack('speed')}}>{p.emoji} {p.name}</button>)}
                   <button type="button" className={stickerPack==='favorites'?'active':''} onClick={()=>{setStickerPack('favorites');setCustomPack('')}}>⭐</button>
                   <button type="button" className={stickerPack==='recent'?'active':''} onClick={()=>{setStickerPack('recent');setCustomPack('')}}>🕒</button>
                 </div>
-                <div className="sticker-grid">{customPack?customStickers.filter(st=>st.pack_id===customPack).map(st=><button key={st.id} type="button" className="sticker-choice" onClick={()=>void sendCustomSticker(st)} disabled={busy}><img src={customStickerUrl(st)} alt={st.name}/></button>):(stickerPack==='favorites'?stickerFavorites:stickerPack==='recent'?stickerRecent:STICKER_PACKS.find(p=>p.id===stickerPack)?.stickers.map(st=>stickerPack+':'+st.id)||[]).map(key=>{const [pack,id]=key.split(':');const found=STICKER_PACKS.find(p=>p.id===pack)?.stickers.find(st=>st.id===id);if(!found)return null;return <div key={key} className="sticker-choice"><button type="button" onClick={()=>void sendSticker(pack as StickerPackId,id)} disabled={busy} aria-label={'Отправить '+found.name}><img src={stickerUrl({pack,id})} alt={found.name}/></button><button type="button" className="sticker-fav" onClick={()=>toggleFavorite(key)} aria-label="В избранное">{stickerFavorites.includes(key)?'★':'☆'}</button></div>;})}</div>
+                <div className="sticker-grid">{!customPack && stickerPack==='favorites' && customStickers
+                  .filter(st => customPacks.some(pack => pack.id===st.pack_id && pack.owner_id===user.id && pack.name===IOS_FAVORITE_PACK))
+                  .map(st => <div key={'ios-saved-'+st.id} className="sticker-choice">
+                    <button type="button" onClick={()=>void sendCustomSticker(st)} disabled={busy} aria-label="Отправить сохранённый стикер"><img src={customStickerUrl(st)} alt="Сохранённый стикер"/></button>
+                    <button type="button" className="sticker-fav" onClick={()=>void deleteCustomSticker(st)} aria-label="Удалить из избранного">★</button>
+                  </div>)}{customPack?customStickers.filter(st=>st.pack_id===customPack).map(st=><button key={st.id} type="button" className="sticker-choice" onClick={()=>void sendCustomSticker(st)} disabled={busy}><img src={customStickerUrl(st)} alt={st.name}/></button>):(stickerPack==='favorites'?stickerFavorites:stickerPack==='recent'?stickerRecent:STICKER_PACKS.find(p=>p.id===stickerPack)?.stickers.map(st=>stickerPack+':'+st.id)||[]).map(key=>{const [pack,id]=key.split(':');const found=STICKER_PACKS.find(p=>p.id===pack)?.stickers.find(st=>st.id===id);if(!found)return null;return <div key={key} className="sticker-choice"><button type="button" onClick={()=>void sendSticker(pack as StickerPackId,id)} disabled={busy} aria-label={'Отправить '+found.name}><img src={stickerUrl({pack,id})} alt={found.name}/></button><button type="button" className="sticker-fav" onClick={()=>toggleFavorite(key)} aria-label="В избранное">{stickerFavorites.includes(key)?'★':'☆'}</button></div>;})}</div>
               </div>}
               <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры">☺</button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && !recording && <button className="composer-extra" type="button" disabled={busy} onClick={()=>setVideoNoteOpen(true)} aria-label="Записать видеокружок"><Icon name="camera" size={22}/></button>}{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
@@ -1925,6 +2023,7 @@ export default function Home() {
       </div>
     </div>}
     {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
+      {isKeyboardSticker(menuMessage) && <button type="button" onClick={() => void saveKeyboardStickerFavorite(menuMessage)} disabled={busy}><Icon name="plus" size={22}/>Добавить в избранное</button>}
       <button type="button" onClick={() => beginForward([menuMessage.id])}><Icon name="forward" size={22}/>Переслать</button>
       <button type="button" onClick={() => startSelection([menuMessage.id])}><Icon name="check" size={22}/>Выбрать</button>
       <button type="button" onClick={() => {hideMessages([menuMessage.id])}}><Icon name="trash" size={22}/>Удалить у себя</button>
