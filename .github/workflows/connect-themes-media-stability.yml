@@ -1,0 +1,226 @@
+name: Connect - adaptive theme masks and stable chat media
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-themes-media-stability.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out messenger
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply dynamic mask palette and fixed media geometry
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          Path('/tmp/connect-themes-media-stability.css').write_text(r'''/* Connect palette-responsive scene masks + stable media geometry (2026-11-07). */
+          /* The five existing scene SVGs are ALPHA masks; colors come from ConnectDynamicTheme. */
+          .connect-app[data-visual-scene="aurora"],
+          .connect-app[data-visual-scene="moon"],
+          .connect-app[data-visual-scene="sunset"],
+          .connect-app[data-visual-scene="lagoon"],
+          .connect-app[data-visual-scene="nebula"] {
+            --scene-primary: var(--wave-primary);
+            --scene-secondary: var(--wave-secondary);
+            --scene-tertiary: var(--wave-tertiary);
+            --glass-background: color-mix(in srgb, var(--wave-primary) 4%, #08111c);
+          }
+          .connect-app.light[data-visual-scene="aurora"],
+          .connect-app.light[data-visual-scene="moon"],
+          .connect-app.light[data-visual-scene="sunset"],
+          .connect-app.light[data-visual-scene="lagoon"],
+          .connect-app.light[data-visual-scene="nebula"] {
+            --glass-background: color-mix(in srgb, var(--wave-primary) 6%, #f3f7fc);
+          }
+          /* Keep geometry/opacity unique per scene; update the colors as the accent changes. */
+          .connect-app .connect-theme-thumbnail[data-preview-scene="waves"],
+          .connect-app .connect-theme-thumbnail[data-preview-scene="aurora"],
+          .connect-app .connect-theme-thumbnail[data-preview-scene="moon"],
+          .connect-app .connect-theme-thumbnail[data-preview-scene="sunset"],
+          .connect-app .connect-theme-thumbnail[data-preview-scene="lagoon"],
+          .connect-app .connect-theme-thumbnail[data-preview-scene="nebula"] {
+            --preview-first: var(--wave-primary);
+            --preview-second: var(--wave-secondary);
+            background-color: color-mix(in srgb, var(--wave-primary) 5%, #091422);
+          }
+          .connect-app.light .connect-theme-thumbnail[data-preview-scene]:not([data-preview-scene="minimal"]) {
+            background-color: color-mix(in srgb, var(--wave-primary) 7%, #eff5fc);
+          }
+          .connect-app[data-visual-scene="minimal"] {
+            --glass-background: color-mix(in srgb, var(--wave-primary) 2%, #0e141e);
+          }
+          .connect-app.light[data-visual-scene="minimal"] {
+            --glass-background: color-mix(in srgb, var(--wave-primary) 3%, #f3f6fa);
+          }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="minimal"] {
+            background: color-mix(in srgb, var(--wave-primary) 3%, #0c1320);
+          }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="minimal"] .connect-theme-thumbnail-bubble {
+            background: color-mix(in srgb, var(--wave-secondary) 30%, #1b2d42);
+          }
+          /* Reserve the FULL media footprint before a signed URL/image/video is ready.
+             Uniform 4:3 stage avoids relayout from image decoding and video metadata.
+             object-fit: contain preserves the whole picture inside the chat; tap for original. */
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):has(.attachment-preview) {
+            box-sizing: border-box !important;
+            width: min(280px, calc(100vw - 84px)) !important;
+            max-width: min(280px, calc(100vw - 84px)) !important;
+            min-width: 0 !important;
+            flex: 0 0 auto !important;
+          }
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .bubble-body,
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview {
+            box-sizing: border-box !important;
+            display: block !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-width: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview {
+            position: relative !important;
+            aspect-ratio: 4 / 3 !important;
+            height: auto !important;
+            min-height: 0 !important;
+            overflow: hidden !important;
+            border-radius: 12px !important;
+            background: color-mix(in srgb, var(--panel) 62%, #111926) !important;
+          }
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > .connect-media-thumb {
+            position: absolute !important;
+            inset: 0 !important;
+            box-sizing: border-box !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            aspect-ratio: auto !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: 0 !important;
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            background: transparent !important;
+          }
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > .connect-media-thumb > img,
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > .connect-media-thumb > video,
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview .connect-video-preview,
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview .connect-video-preview > video,
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview .connect-video-preview > img {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            box-sizing: border-box !important;
+            width: 100% !important;
+            height: 100% !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            min-width: 0 !important;
+            min-height: 0 !important;
+            aspect-ratio: auto !important;
+            object-fit: contain !important;
+          }
+          /* An unresolved media URL is displayed in the same 4:3 stage, not in a 1-line span. */
+          .connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > span {
+            position: absolute !important;
+            inset: 0 !important;
+            display: grid !important;
+            place-items: center !important;
+            padding: 12px !important;
+            text-align: center !important;
+            font-size: 11px !important;
+            color: var(--muted) !important;
+          }
+          /* Video notes already have a round 1:1 player. Use that same footprint while loading. */
+          .connect-app .bubble.video-note-bubble .attachment-preview {
+            box-sizing: border-box !important;
+            width: 100% !important;
+            aspect-ratio: 1 / 1 !important;
+            min-height: 0 !important;
+          }
+          .connect-app .bubble.video-note-bubble .attachment-preview > span {
+            box-sizing: border-box !important;
+            display: grid !important;
+            place-items: center !important;
+            width: 100% !important;
+            height: 100% !important;
+            aspect-ratio: 1 / 1 !important;
+            border-radius: 50% !important;
+            background: color-mix(in srgb, var(--panel) 68%, #141923);
+            font-size: 11px !important;
+            color: var(--muted) !important;
+          }
+          /* Album tiles already have reserved fixed-height cells; keep those unmodified. */
+          ''', encoding='utf-8')
+
+          #!/usr/bin/env python3
+          """Guarded, idempotent CSS-only patch for Connect Messenger.
+          Works in the repository root. No messages/database/auth/notifications logic touched.
+          """
+          from pathlib import Path
+
+          css_path = Path('app/liquid-glass.css')
+          page_path = Path('app/page.tsx')
+          css = css_path.read_text(encoding='utf-8')
+          page = page_path.read_text(encoding='utf-8')
+          section = Path('/tmp/connect-themes-media-stability.css').read_text(encoding='utf-8')
+          marker = '/* Connect palette-responsive scene masks + stable media geometry (2026-11-07). */'
+          checks = {
+              'theme selector': 'data-visual-scene={visualScene}' in page,
+              'theme CSS and masks': '/* Connect visual themes v1: waves + five ambient scenes + minimal */' in css,
+              'photo/video view': 'className="connect-media-thumb"' in page,
+              'loading placeholder': '<span>Загрузка вложения…</span>' in page,
+              'video notes': 'video-note-bubble' in page,
+              'media-only bubble': 'media-only' in page,
+          }
+          for scene in ('aurora','moon','sunset','lagoon','nebula'):
+              mask = Path('public/connect-scenes') / f'{scene}.svg'
+              checks[f'{scene} alpha mask'] = mask.is_file() and '<svg' in mask.read_text(encoding='utf-8')
+          for label, ok in checks.items():
+              if not ok:
+                  raise SystemExit(f'Compatibility check failed: {label}; not changing existing files')
+          if css.count(marker) > 1:
+              raise SystemExit('Duplicate patch marker detected; stopping')
+          if marker in css:
+              if section.strip() not in css:
+                  raise SystemExit('Patch marker exists with different content; inspect manually')
+              print('Scene palette and media geometry already installed')
+          else:
+              css_path.write_text(css.rstrip() + '\n\n' + section.rstrip() + '\n', encoding='utf-8')
+              print('Applied scene palette linkage and stable media geometry')
+
+          PY
+      - name: Check CSS changes
+        run: git diff --check
+      - name: TypeScript check
+        run: |
+          npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+          npx tsc --noEmit
+      - name: Commit only the CSS file
+        shell: bash
+        run: |
+          git config user.name 'Connect UI patch'
+          git config user.email 'actions@users.noreply.github.com'
+          git add app/liquid-glass.css
+          if ! git diff --cached --quiet; then
+            git commit -m 'fix: adaptive scene masks and stable media space in chats'
+            git push origin HEAD:main
+          else
+            echo 'Already updated'
+          fi
