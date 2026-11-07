@@ -1,0 +1,330 @@
+name: Connect - seven visual themes
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-visual-themes.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  install-themes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Connect Messenger
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Add seven visual themes without touching messenger logic
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          #!/usr/bin/env python3
+          """Add seven opt-in visual themes to the existing Connect PWA without touching messaging logic.
+          Run from the root of the connect-messenger repository.
+          """
+          from pathlib import Path
+          
+          APP = Path('app/page.tsx')
+          CSS = Path('app/liquid-glass.css')
+          KEY = 'connect-visual-scene'
+          page = APP.read_text(encoding='utf-8')
+          styles = CSS.read_text(encoding='utf-8')
+          
+          SCENES = [
+              ('aurora', 'M -130 930 C 35 815, 76 890, 190 747 S 390 600, 650 465', 'M -90 1220 C 110 1040, 270 1130, 385 965 S 535 810, 745 700'),
+              ('moon',   'M -140 710 C 40 610, 115 770, 255 670 S 435 490, 680 500', 'M -130 1130 C 140 1040, 160 1160, 340 950 S 555 790, 750 850'),
+              ('sunset', 'M -110 805 C 60 920, 150 960, 282 820 S 510 630, 665 760', 'M -120 1130 C 120 960, 210 1010, 356 940 S 560 835, 730 920'),
+              ('lagoon', 'M -160 1000 C 35 850, 195 990, 305 790 S 450 590, 680 600', 'M -140 1200 C 100 1160, 170 990, 370 970 S 510 830, 740 750'),
+              ('nebula', 'M -180 740 C 35 550, 155 680, 250 840 S 435 1000, 690 775', 'M -155 1220 C 25 1090, 215 1150, 345 1020 S 530 845, 740 900'),
+          ]
+          
+          svg_template = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 1100" preserveAspectRatio="xMidYMid slice">
+            <defs>
+              <filter id="soft" x="-70%" y="-170%" width="240%" height="440%"><feGaussianBlur stdDeviation="33"/></filter>
+              <filter id="mid" x="-70%" y="-170%" width="240%" height="440%"><feGaussianBlur stdDeviation="12"/></filter>
+              <filter id="thin" x="-70%" y="-170%" width="240%" height="440%"><feGaussianBlur stdDeviation="3"/></filter>
+              <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="white" stop-opacity=".06"/>
+                <stop offset=".32" stop-color="white" stop-opacity=".86"/>
+                <stop offset=".74" stop-color="white" stop-opacity=".94"/>
+                <stop offset="1" stop-color="white" stop-opacity=".04"/>
+              </linearGradient>
+            </defs>
+            <path d="{first}" fill="none" stroke="url(#fade)" stroke-width="88" stroke-linecap="round" filter="url(#soft)" opacity=".68"/>
+            <path d="{first}" fill="none" stroke="url(#fade)" stroke-width="25" stroke-linecap="round" filter="url(#mid)" opacity=".67"/>
+            <path d="{first}" fill="none" stroke="url(#fade)" stroke-width="3" stroke-linecap="round" filter="url(#thin)" opacity=".38"/>
+            <path d="{second}" fill="none" stroke="url(#fade)" stroke-width="126" stroke-linecap="round" filter="url(#soft)" opacity=".43"/>
+            <path d="{second}" fill="none" stroke="url(#fade)" stroke-width="38" stroke-linecap="round" filter="url(#mid)" opacity=".40"/>
+          </svg>
+          '''
+          
+          # Read current DOM anchors and alter only the appearance settings feature.
+          # This patch is deliberately strict and idempotent.
+          def replace_once(before: str, after: str, description: str) -> None:
+              global page
+              if after in page:
+                  print(f'{description}: already applied')
+                  return
+              count = page.count(before)
+              if count != 1:
+                  raise SystemExit(f'{description}: expected one anchor, got {count}. No changes written.')
+              page = page.replace(before, after, 1)
+          
+          replace_once(
+              "type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'data' | 'privacy' | 'about';",
+              """type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'data' | 'privacy' | 'about';
+          type VisualScene = 'waves' | 'aurora' | 'moon' | 'sunset' | 'lagoon' | 'nebula' | 'minimal';
+          const VISUAL_SCENES: ReadonlyArray<{ id: VisualScene; title: string; description: string }> = [
+            { id: 'waves', title: 'Волны', description: 'Текущая тема' },
+            { id: 'aurora', title: 'Сияние', description: 'Мягкие переливы' },
+            { id: 'moon', title: 'Лунный свет', description: 'Холодные линии' },
+            { id: 'sunset', title: 'Закат', description: 'Тёплые волны' },
+            { id: 'lagoon', title: 'Лагуна', description: 'Бирюзовые потоки' },
+            { id: 'nebula', title: 'Туманность', description: 'Фиолетовый свет' },
+            { id: 'minimal', title: 'Минимализм', description: 'Без волн и свечения' },
+          ];""",
+              'Scene type and presets',
+          )
+          replace_once(
+              "  const [theme, setTheme] = useState<'dark' | 'light'>('dark');",
+              "  const [theme, setTheme] = useState<'dark' | 'light'>('dark');\n  const [visualScene, setVisualScene] = useState<VisualScene>('waves');",
+              'Scene state',
+          )
+          replace_once(
+              "  useEffect(() => { try { if (localStorage.getItem('connect-theme') === 'light') setTheme('light'); } catch { /* Private browsing */ } }, []);",
+              """  useEffect(() => {
+              try {
+                if (localStorage.getItem('connect-theme') === 'light') setTheme('light');
+                const storedScene = localStorage.getItem('connect-visual-scene');
+                if (VISUAL_SCENES.some(item => item.id === storedScene)) setVisualScene(storedScene as VisualScene);
+              } catch { /* Private browsing */ }
+            }, []);""",
+              'Restore chosen scene',
+          )
+          replace_once(
+              "['connect-theme','connect-accent','connect-sticker-packs','connect-sticker-favorites','connect-sticker-recent']",
+              "['connect-theme','connect-visual-scene','connect-accent','connect-sticker-packs','connect-sticker-favorites','connect-sticker-recent']",
+              'Include scene in local settings reset',
+          )
+          replace_once(
+              "    setTheme('dark');setAccent('#087dff');",
+              "    setTheme('dark');setVisualScene('waves');setAccent('#087dff');",
+              'Restore default on reset',
+          )
+          replace_once(
+              "  function changeTheme(next: 'dark' | 'light') { setTheme(next); try { localStorage.setItem('connect-theme', next); } catch { /* no storage */ } }",
+              """  function changeTheme(next: 'dark' | 'light') { setTheme(next); try { localStorage.setItem('connect-theme', next); } catch { /* no storage */ } }
+            function changeVisualScene(next: VisualScene) {
+              setVisualScene(next);
+              try { localStorage.setItem('connect-visual-scene', next); } catch { /* Private browsing */ }
+            }""",
+              'Save theme selection',
+          )
+          replace_once(
+              "  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>",
+              "  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>",
+              'Apply scene to app root',
+          )
+          replace_once(
+              "                    <h3>Цветовая схема</h3>",
+              """                    <h3>Темы оформления</h3>
+                              <div className="settings-group connect-theme-gallery">
+                                <p className="settings-hint">Выберите фон и настроение Connect. Светлая и тёмная тема, а также цвет кнопок настраиваются отдельно.</p>
+                                <div className="connect-theme-grid" role="group" aria-label="Темы оформления">
+                                  {VISUAL_SCENES.map(scene => <button key={scene.id} type="button"
+                                    className={'connect-theme-choice' + (visualScene === scene.id ? ' is-selected' : '')}
+                                    aria-pressed={visualScene === scene.id}
+                                    onClick={() => changeVisualScene(scene.id)}>
+                                    <span className="connect-theme-thumbnail" data-preview-scene={scene.id} aria-hidden="true">
+                                      <span className="connect-theme-thumbnail-wave"/>
+                                      <span className="connect-theme-thumbnail-bubble"/>
+                                      <span className="connect-theme-thumbnail-bubble two"/>
+                                    </span>
+                                    <span className="connect-theme-choice-label"><strong>{scene.title}</strong><small>{scene.description}</small></span>
+                                    {visualScene === scene.id && <span className="connect-theme-selected-mark" aria-hidden="true">✓</span>}
+                                  </button>)}
+                                </div>
+                              </div>
+                              <h3>Цветовая схема</h3>""",
+              'Add seven selectable theme previews',
+          )
+          
+          MARKER = '/* Connect visual themes v1: waves + five ambient scenes + minimal */'
+          scene_css = r'''
+          /* Connect visual themes v1: waves + five ambient scenes + minimal */
+          .connect-app[data-visual-scene="aurora"] {
+            --scene-primary: #52e9d2; --scene-secondary: #a882ee; --scene-tertiary: #65b1ff;
+            --scene-mask: url('/connect-scenes/aurora.svg'); --glass-background: #08101d;
+          }
+          .connect-app[data-visual-scene="moon"] {
+            --scene-primary: #b5dafa; --scene-secondary: #799edb; --scene-tertiary: #d6c4f6;
+            --scene-mask: url('/connect-scenes/moon.svg'); --glass-background: #0a1021;
+          }
+          .connect-app[data-visual-scene="sunset"] {
+            --scene-primary: #ffb47a; --scene-secondary: #f4879b; --scene-tertiary: #d8a1f5;
+            --scene-mask: url('/connect-scenes/sunset.svg'); --glass-background: #1b1019;
+          }
+          .connect-app[data-visual-scene="lagoon"] {
+            --scene-primary: #31e3bc; --scene-secondary: #3ac4d9; --scene-tertiary: #8ee5c3;
+            --scene-mask: url('/connect-scenes/lagoon.svg'); --glass-background: #06161b;
+          }
+          .connect-app[data-visual-scene="nebula"] {
+            --scene-primary: #c38df4; --scene-secondary: #737eeb; --scene-tertiary: #eea1cc;
+            --scene-mask: url('/connect-scenes/nebula.svg'); --glass-background: #111020;
+          }
+          .connect-app.light[data-visual-scene="aurora"] { --glass-background: #edf8f9; }
+          .connect-app.light[data-visual-scene="moon"] { --glass-background: #eef3fc; }
+          .connect-app.light[data-visual-scene="sunset"] { --glass-background: #fff4ed; }
+          .connect-app.light[data-visual-scene="lagoon"] { --glass-background: #eafaf5; }
+          .connect-app.light[data-visual-scene="nebula"] { --glass-background: #f5f0fa; }
+          .connect-app[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"])::before {
+            background:
+              radial-gradient(ellipse 70% 37% at 10% 81%, color-mix(in srgb,var(--scene-primary) 23%,transparent), transparent 86%),
+              radial-gradient(ellipse 68% 34% at 92% 87%, color-mix(in srgb,var(--scene-secondary) 22%,transparent), transparent 89%),
+              radial-gradient(ellipse 55% 46% at 75% 13%, color-mix(in srgb,var(--scene-tertiary) 11%,transparent), transparent 90%);
+          }
+          .connect-app[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"])::after {
+            background: linear-gradient(118deg, var(--scene-primary), color-mix(in srgb,var(--scene-primary) 53%,var(--scene-tertiary)) 38%, var(--scene-secondary) 77%, var(--scene-tertiary));
+            -webkit-mask-image: var(--scene-mask); mask-image: var(--scene-mask);
+            -webkit-mask-size: 100% 100%; mask-size: 100% 100%;
+            -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+            -webkit-mask-position: center bottom; mask-position: center bottom;
+            opacity: .80;
+          }
+          .connect-app.light[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"])::before { opacity: .42; }
+          .connect-app.light[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"])::after { opacity: .24; }
+          .connect-app[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"]) .bottom-nav,
+          .connect-app[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"]) .chat-header,
+          .connect-app[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"]) .chat-composer {
+            background: linear-gradient(136deg, color-mix(in srgb,var(--scene-secondary) 9%,rgba(24,37,57,.75)), color-mix(in srgb,var(--scene-primary) 5%,rgba(11,22,38,.73)));
+          }
+          .connect-app.light[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"]) .bottom-nav,
+          .connect-app.light[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"]) .chat-header,
+          .connect-app.light[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"]) .chat-composer {
+            background: color-mix(in srgb,var(--scene-secondary) 7%,rgba(250,252,255,.88));
+          }
+          /* The minimal scene removes ambient decorations, not functionality. */
+          .connect-app[data-visual-scene="minimal"] { --glass-background: #0e141e; }
+          .connect-app.light[data-visual-scene="minimal"] { --glass-background: #f3f6fa; }
+          .connect-app[data-visual-scene="minimal"]::before,
+          .connect-app[data-visual-scene="minimal"]::after { content: none !important; animation: none !important; }
+          .connect-app[data-visual-scene="minimal"] .bottom-nav,
+          .connect-app[data-visual-scene="minimal"] .chat-header,
+          .connect-app[data-visual-scene="minimal"] .chat-composer,
+          .connect-app[data-visual-scene="minimal"] .settings-group:not(.settings-menu),
+          .connect-app[data-visual-scene="minimal"] .settings-profile {
+            background: var(--panel) !important; box-shadow: none !important;
+            -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+            border-color: var(--border) !important;
+          }
+          .connect-app.light[data-visual-scene="minimal"] .bottom-nav,
+          .connect-app.light[data-visual-scene="minimal"] .chat-header,
+          .connect-app.light[data-visual-scene="minimal"] .chat-composer { background: #ffffff !important; }
+          
+          /* Selectable previews use the same SVG masks as the actual scenes. */
+          .connect-app .connect-theme-gallery { padding: 12px 10px 14px; }
+          .connect-app .connect-theme-gallery > .settings-hint { margin: 0 3px 12px; }
+          .connect-app .connect-theme-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; }
+          .connect-app .connect-theme-choice {
+            min-width: 0; padding: 5px 5px 8px; display: flex; flex-direction: column; position: relative;
+            border: 1px solid var(--glass-stroke, var(--border)); border-radius: 15px;
+            color: var(--text); background: color-mix(in srgb, var(--panel) 72%, transparent);
+            text-align: left; overflow: hidden; box-shadow: none;
+          }
+          .connect-app .connect-theme-choice.is-selected {
+            border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent);
+          }
+          .connect-app .connect-theme-choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+          .connect-app .connect-theme-thumbnail {
+            --preview-first: #15bce9; --preview-second: #7e9bfd;
+            --preview-mask: url('/connect-wave-mask.svg');
+            position: relative; display: block; width: 100%; height: 88px; overflow: hidden;
+            border-radius: 11px; background: #091525;
+            background-image: radial-gradient(ellipse 100% 80% at 80% 100%, color-mix(in srgb,var(--preview-second) 26%,transparent), transparent 85%);
+          }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="aurora"] { --preview-first:#51e8d2; --preview-second:#a882ee; --preview-mask:url('/connect-scenes/aurora.svg'); background-color:#07111b; }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="moon"] { --preview-first:#b5dafa; --preview-second:#799edb; --preview-mask:url('/connect-scenes/moon.svg'); background-color:#091121; }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="sunset"] { --preview-first:#ffb47a; --preview-second:#f4879b; --preview-mask:url('/connect-scenes/sunset.svg'); background-color:#191019; }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="lagoon"] { --preview-first:#31e3bc; --preview-second:#3ac4d9; --preview-mask:url('/connect-scenes/lagoon.svg'); background-color:#07171c; }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="nebula"] { --preview-first:#c38df4; --preview-second:#737eeb; --preview-mask:url('/connect-scenes/nebula.svg'); background-color:#121122; }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="minimal"] { background: #0c1320; }
+          .connect-app .connect-theme-thumbnail-wave {
+            position: absolute; inset: 0; display: block; pointer-events: none;
+            background: linear-gradient(112deg,var(--preview-first),var(--preview-second));
+            -webkit-mask: var(--preview-mask) center / 100% 100% no-repeat;
+            mask: var(--preview-mask) center / 100% 100% no-repeat;
+          }
+          .connect-app .connect-theme-thumbnail[data-preview-scene="minimal"] .connect-theme-thumbnail-wave { display: none; }
+          .connect-app .connect-theme-thumbnail-bubble,
+          .connect-app .connect-theme-thumbnail-bubble.two {
+            position: absolute; display: block; width: 34%; height: 13px;
+            border-radius: 7px; top: 27%; right: 11%;
+            background: color-mix(in srgb,var(--preview-second) 50%,#183049);
+            box-shadow: 0 1px 3px rgba(0,0,0,.13);
+          }
+          .connect-app .connect-theme-thumbnail-bubble.two { top: 50%; right: auto; left: 11%; width: 42%; background: rgba(190,205,226,.25); }
+          .connect-app .connect-theme-choice-label { display: flex; flex-direction: column; gap: 3px; min-width: 0; padding: 8px 5px 0; }
+          .connect-app .connect-theme-choice-label strong { font-size: 13px; line-height: 1.2; font-weight: 660; }
+          .connect-app .connect-theme-choice-label small { font-size: 10.5px; line-height: 1.3; color: var(--muted); }
+          .connect-app .connect-theme-selected-mark {
+            position: absolute; top: 11px; right: 11px; width: 22px; height: 22px;
+            display: flex; align-items: center; justify-content: center;
+            background: var(--accent); color: white; border-radius: 50%; font-size: 13px; font-weight: 750;
+            box-shadow: 0 1px 4px rgba(0,0,0,.18);
+          }
+          @media (min-width: 470px) { .connect-app .connect-theme-grid { grid-template-columns: repeat(3, minmax(0,1fr)); } }
+          @media (prefers-reduced-motion: reduce) {
+            .connect-app[data-visual-scene]:not([data-visual-scene="waves"])::after { animation: none !important; }
+          }
+          '''
+          if MARKER not in styles:
+              styles = styles.rstrip() + '\n\n' + scene_css.strip() + '\n'
+              print('Scene CSS: added')
+          else:
+              print('Scene CSS: already applied')
+          
+          # Write after all anchors pass. Keep theme assets immutable and SVG alpha-only.
+          for name, first, second in SCENES:
+              target = Path('public/connect-scenes') / f'{name}.svg'
+              content = svg_template.format(first=first, second=second)
+              if target.exists() and target.read_text(encoding='utf-8') != content:
+                  raise SystemExit(f'Existing theme asset differs: {target}')
+          APP.write_text(page, encoding='utf-8')
+          CSS.write_text(styles, encoding='utf-8')
+          for name, first, second in SCENES:
+              target = Path('public/connect-scenes') / f'{name}.svg'
+              target.parent.mkdir(parents=True, exist_ok=True)
+              target.write_text(svg_template.format(first=first, second=second), encoding='utf-8')
+          print('Connect: all seven visual themes are available (original + five ambient + minimal).')
+          PY
+
+      - name: Check source modifications
+        run: git diff --check
+
+      - name: Check TypeScript
+        run: |
+          npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+          npx tsc --noEmit
+
+      - name: Commit only appearance changes
+        shell: bash
+        run: |
+          git config user.name 'Connect theme installer'
+          git config user.email 'actions@users.noreply.github.com'
+          git add app/page.tsx app/liquid-glass.css public/connect-scenes/
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat: seven selectable Connect visual themes'
+            git push origin HEAD:main
+          else
+            echo 'Themes already installed; no changes required.'
+          fi
