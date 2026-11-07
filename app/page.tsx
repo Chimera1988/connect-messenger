@@ -383,6 +383,75 @@ function syncVideoThumbnailSize(video: HTMLVideoElement) {
   button.style.setProperty('--connect-video-width', `${Math.round(Math.min(300,340*ratio))}px`);
 }
 
+type ConnectPhotoSize = { width: number; height: number };
+const connectPhotoSizeCache = new Map<string, ConnectPhotoSize>();
+
+function connectPhotoDimensions(path: string): ConnectPhotoSize | null {
+  const match = /__img_(\d{1,5})x(\d{1,5})$/.exec(path);
+  if (match) {
+    const width = Number(match[1]), height = Number(match[2]);
+    if (width > 0 && height > 0) return { width, height };
+  }
+  return connectPhotoSizeCache.get(path) ?? null;
+}
+
+function connectPhotoFrameValues(size: ConnectPhotoSize): { width: string; ratio: string } {
+  // The image stays proportionate and fits within 280 x 340 CSS pixels.
+  const ratio = Math.max(0.35, Math.min(4, size.width / size.height));
+  return { width: `${Math.round(Math.min(280, 340 * ratio))}px`, ratio: String(ratio) };
+}
+
+function connectPhotoFrameStyle(path: string): CSSProperties | undefined {
+  const dimensions = connectPhotoDimensions(path);
+  if (!dimensions) return undefined;
+  const values = connectPhotoFrameValues(dimensions);
+  return { '--connect-photo-width': values.width, '--connect-photo-ratio': values.ratio } as CSSProperties;
+}
+
+async function connectImageFileSize(file: File): Promise<ConnectPhotoSize | null> {
+  if (!file.type.startsWith('image/')) return null;
+  const url = URL.createObjectURL(file);
+  try {
+    return await new Promise(resolve => {
+      const img = new Image();
+      img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0
+        ? { width: img.naturalWidth, height: img.naturalHeight } : null);
+      img.onerror = () => resolve(null);
+      img.src = url;
+    });
+  } finally { URL.revokeObjectURL(url); }
+}
+
+function connectUpdatePhotoSize(image: HTMLImageElement, path: string) {
+  if (!image.naturalWidth || !image.naturalHeight) return;
+  const frame = image.closest<HTMLElement>('.attachment-preview.connect-adaptive-photo');
+  if (!frame) return;
+  const dimensions = { width: image.naturalWidth, height: image.naturalHeight };
+  connectPhotoSizeCache.set(path, dimensions);
+  const values = connectPhotoFrameValues(dimensions);
+  if (frame.style.getPropertyValue('--connect-photo-width') === values.width &&
+      frame.style.getPropertyValue('--connect-photo-ratio') === values.ratio) return;
+
+  const scroll = frame.closest<HTMLElement>('.message-scroll');
+  const viewport = scroll?.getBoundingClientRect();
+  const anchor = scroll && viewport
+    ? Array.from(scroll.querySelectorAll<HTMLElement>('.message-day-group'))
+        .find(el => el.getBoundingClientRect().bottom > viewport.top + 8)
+    : undefined;
+  const originalTop = anchor?.getBoundingClientRect().top;
+  const nearBottom = scroll ? scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 100 : false;
+
+  frame.style.setProperty('--connect-photo-width', values.width);
+  frame.style.setProperty('--connect-photo-ratio', values.ratio);
+  // The first view of older files lacks dimensions. Keep the reading position
+  // steady while correcting their footprint on image decode.
+  if (scroll) {
+    if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+    else if (anchor && originalTop !== undefined)
+      scroll.scrollTop += anchor.getBoundingClientRect().top - originalTop;
+  }
+}
+
 function VideoThumbnail({src}:{src:string}) {
   const [poster,setPoster]=useState<string|null>(null);
   const [failed,setFailed]=useState(false);
@@ -1282,7 +1351,10 @@ export default function Home() {
         if (m.attachment_path) {
           // The DB constraint requires every attachment path to start with
           // the destination conversation ID and the forwarding user's ID.
-          path = `${chat.id}/${user.id}/${crypto.randomUUID()}`;
+          // Keep image dimensions when forwarding, without changing the DB schema.
+const imageSuffix = m.attachment_kind === 'image'
+  ? (m.attachment_path.match(/__img_\d{1,5}x\d{1,5}$/)?.[0] || '') : '';
+path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;
           const bucket = supabase.storage.from('connect-attachments');
           const copied = await bucket.copy(m.attachment_path, path);
           if (copied.error) {
@@ -1587,9 +1659,16 @@ export default function Home() {
     if (file.size < 1 || file.size > 100*1024*1024) {setNotice('Максимальный размер файла — 100 МБ');return;}
     const chatId=activeChat;
     const kind = kindOverride || (file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':'file');
-    const path=`${chatId}/${user.id}/${crypto.randomUUID()}`;
+    let path=`${chatId}/${user.id}/${crypto.randomUUID()}`;
     setBusy(true);setUploadProgress(0);setNotice('');
     try {
+      // The dimensions travel with the storage path, so the recipient can reserve
+      // an accurate layout before downloading a newly sent photo.
+      if (kind === 'image' && !/^sticker-\d+\.(?:png|webp|gif|jpe?g)$/i.test(file.name)) {
+        const size = await connectImageFileSize(file);
+        if (size && size.width < 100000 && size.height < 100000)
+          path += `__img_${size.width}x${size.height}`;
+      }
       const {data:{session}}=await supabase.auth.getSession();
       if(!session) throw new Error('Сессия завершена. Войдите снова.');
       if (file.size <= 6*1024*1024) {
@@ -1876,11 +1955,11 @@ export default function Home() {
                       <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : <>
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
                         {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?<img src={attachmentUrls[item.path]} alt={item.name} loading="lazy"/>:<><VideoThumbnail src={attachmentUrls[item.path]}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
-                        {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : "attachment-preview"}>
+                        {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : undefined}>
                           {!attachmentUrls[m.attachment_path] ? (isKeyboardSticker(m) ? <span className="connect-keyboard-sticker-loading" aria-label="Загрузка стикера"/> : <span>Загрузка вложения…</span>)
                             : m.attachment_kind==='image' ? (isKeyboardSticker(m)
                               ? <img className="connect-keyboard-sticker" src={attachmentUrls[m.attachment_path]} alt="Стикер" draggable={false} loading="lazy"/>
-                              : <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy"/></button>)
+                              : <button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy" onLoad={e=>connectUpdatePhotoSize(e.currentTarget,m.attachment_path!)}/></button>)
                             : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'}/>
                             : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>

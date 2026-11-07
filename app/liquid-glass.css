@@ -1414,3 +1414,71 @@
   color: var(--muted) !important;
 }
 /* Album tiles already have reserved fixed-height cells; keep those unmodified. */
+
+/* Connect: adaptive single-image footprint v1 */
+/* No fixed 4:3 letterbox for a single photo. Video, albums and
+   keyboard stickers retain their existing geometry and handlers. */
+.connect-app .bubble.sent.media-only:not(.sticker-bubble):has(.connect-adaptive-photo),
+.connect-app .bubble.received.media-only:not(.sticker-bubble):has(.connect-adaptive-photo) {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  width: fit-content !important;
+  max-width: min(280px, calc(100vw - 84px)) !important;
+  min-width: 0 !important;
+  flex: 0 0 auto !important;
+  overflow: visible !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) > .bubble-body {
+  display: block !important;
+  flex: 0 0 auto !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo {
+  position: relative !important;
+  display: block !important;
+  flex: 0 0 auto !important;
+  width: min(var(--connect-photo-width, 280px), calc(100vw - 84px)) !important;
+  max-width: 100% !important;
+  height: auto !important;
+  aspect-ratio: var(--connect-photo-ratio, 4 / 3) !important;
+  min-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border-radius: 12px !important;
+  background: transparent !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image {
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  max-width: none !important;
+  min-height: 0 !important;
+  aspect-ratio: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  background: transparent !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image > img {
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  background: transparent !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .bubble-meta {
+  align-self: flex-end !important;
+}
