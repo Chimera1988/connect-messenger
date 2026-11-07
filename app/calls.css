@@ -46,3 +46,33 @@
   box-shadow: none !important;
   border-radius: 0;
 }
+
+/* Connect avatar rings: match selected accent without changing avatar geometry. */
+.connect-app .person-avatar {
+  outline: 2px solid color-mix(in srgb, var(--accent) 77%, transparent) !important;
+  outline-offset: 1px !important;
+}
+.connect-app .connect-call-history-avatar {
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  border: 2px solid color-mix(in srgb, var(--accent) 74%, transparent) !important;
+}
+.connect-app .connect-call-history-avatar img {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 50% !important;
+}
+.connect-app .connect-call-avatar {
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  border: 3px solid color-mix(in srgb, var(--accent) 84%, transparent) !important;
+}
+.connect-app .connect-call-avatar img {
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 50% !important;
+}

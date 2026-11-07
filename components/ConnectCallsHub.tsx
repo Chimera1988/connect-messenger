@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import ConnectCallAvatar, { loadCallAvatarUrls } from './ConnectCallAvatar';
 
 type CallStatus = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
 type Call = {
@@ -15,7 +16,7 @@ type Call = {
   answered_at: string | null;
   ended_at: string | null;
 };
-type Profile = { id: string; display_name: string; is_blocked: boolean };
+type Profile = { id: string; display_name: string; is_blocked: boolean; avatar_path: string | null };
 type Conversation = { id: string; user_a: string; user_b: string };
 type DialContact = { conversationId: string | null; peerId: string; peerName: string };
 type Filter = 'all' | 'missed';
@@ -91,6 +92,7 @@ export default function ConnectCallsHub() {
   const [calls, setCalls] = useState<Call[]>([]);
   const [lastViewed, setLastViewed] = useState(0);
   const [names, setNames] = useState<Record<string, string>>({});
+  const [avatarUrls, setAvatarUrls] = useState<Record<string,string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -163,10 +165,16 @@ export default function ConnectCallsHub() {
     setCalls(rows);
     const ids = Array.from(new Set(rows.map(c => c.caller_id === userId ? c.callee_id : c.caller_id)));
     if (ids.length) {
-      const people = await client.from('profiles').select('id,display_name').in('id', ids);
+      const people = await client.from('profiles').select('id,display_name,avatar_path').in('id', ids);
       if (generation !== refreshGeneration.current) return;
-      if (people.data) setNames(Object.fromEntries((people.data as Profile[]).map(p => [p.id, p.display_name])));
-    } else setNames({});
+      if (people.data) {
+        const profiles = people.data as Profile[];
+        setNames(Object.fromEntries(profiles.map(p => [p.id, p.display_name])));
+        const photos = await loadCallAvatarUrls(client, profiles);
+        if (generation !== refreshGeneration.current) return;
+        setAvatarUrls(previous => ({...previous, ...photos}));
+      }
+    } else { setNames({}); setAvatarUrls({}); }
     setLoading(false);
   }, [client, userId]);
 
@@ -178,7 +186,7 @@ export default function ConnectCallsHub() {
     setContactsLoading(true); setContactsError('');
     try {
       const [peopleResult, conversationResult] = await Promise.all([
-        client.from('profiles').select('id,display_name,is_blocked').eq('is_blocked', false).neq('id', userId).limit(250),
+        client.from('profiles').select('id,display_name,is_blocked,avatar_path').eq('is_blocked', false).neq('id', userId).limit(250),
         client.from('conversations').select('id,user_a,user_b')
           .or(`user_a.eq.${userId},user_b.eq.${userId}`).limit(250),
       ]);
@@ -194,6 +202,8 @@ export default function ConnectCallsHub() {
           peerName: profile.display_name,
         }))
         .sort((a, b) => a.peerName.localeCompare(b.peerName, 'ru')));
+      const photos = await loadCallAvatarUrls(client, (peopleResult.data || []) as Profile[]);
+      setAvatarUrls(previous => ({...previous, ...photos}));
     } catch {
       setContactsError('Не удалось загрузить контакты. Проверьте подключение.');
     } finally { setContactsLoading(false); }
@@ -419,7 +429,7 @@ export default function ConnectCallsHub() {
             const displayName = names[peerId] || 'Собеседник';
             const missedCall = missed(call, userId);
             return <div className="connect-call-history-item" key={call.id}>
-              <div className="connect-call-history-avatar" aria-hidden="true">{displayName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</div>
+              <ConnectCallAvatar className="connect-call-history-avatar" name={displayName} url={avatarUrls[peerId]}/>
               <div className="connect-call-history-details"><strong>{displayName}</strong><small className={missedCall ? 'missed' : ''}><Arrow outgoing={outgoing}/>{statusText(call,userId)}</small></div>
               <div className="connect-call-history-actions"><div className="connect-call-history-date"><time dateTime={call.created_at}>{formatDate(call.created_at)}</time><span>{formatTime(call.created_at)}</span></div><button type="button" className="connect-call-redial" title={`Позвонить: ${displayName}`} aria-label={`Позвонить: ${displayName}`} disabled={call.status === 'ringing' || call.status === 'active'} onClick={() => void dial({ conversationId:call.conversation_id, peerId, peerName:displayName })}><CallIcon size={19}/></button></div>
             </div>;
@@ -429,7 +439,7 @@ export default function ConnectCallsHub() {
         <div className="connect-call-picker">
           <div className="connect-call-picker-head"><strong>Кому позвонить?</strong><button type="button" onClick={() => setPickerOpen(false)}>Закрыть</button></div>
           <input aria-label="Найти контакт" placeholder="Поиск контакта" value={contactSearch} onChange={event => setContactSearch(event.target.value)}/>
-          <div className="connect-call-picker-list">{contactsError ? <div className="connect-call-picker-empty" role="alert">{contactsError}<div><button type="button" onClick={() => void loadContacts()}>Повторить</button></div></div> : contactsLoading ? <div className="connect-call-picker-empty">Загружаем контакты…</div> : visibleContacts.length ? visibleContacts.map(contact => <button type="button" className="connect-call-picker-person" key={contact.conversationId} onClick={() => void dial(contact)}><span className="connect-call-history-avatar" aria-hidden="true">{contact.peerName.trim()[0]?.toLocaleUpperCase('ru-RU') || '?'}</span><span>{contact.peerName}</span><CallIcon size={20}/></button>) : <div className="connect-call-picker-empty">{contactSearch ? 'Ничего не найдено' : 'Контактов пока нет'}</div>}</div>
+          <div className="connect-call-picker-list">{contactsError ? <div className="connect-call-picker-empty" role="alert">{contactsError}<div><button type="button" onClick={() => void loadContacts()}>Повторить</button></div></div> : contactsLoading ? <div className="connect-call-picker-empty">Загружаем контакты…</div> : visibleContacts.length ? visibleContacts.map(contact => <button type="button" className="connect-call-picker-person" key={contact.conversationId} onClick={() => void dial(contact)}><ConnectCallAvatar className="connect-call-history-avatar" name={contact.peerName} url={avatarUrls[contact.peerId]}/><span>{contact.peerName}</span><CallIcon size={20}/></button>) : <div className="connect-call-picker-empty">{contactSearch ? 'Ничего не найдено' : 'Контактов пока нет'}</div>}</div>
         </div>
       </div>}
     </section>, main)}

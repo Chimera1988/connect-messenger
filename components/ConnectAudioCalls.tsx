@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
+import ConnectCallAvatar, { loadCallAvatarUrls } from './ConnectCallAvatar';
 
 type Status = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
 type CallRow = {
@@ -177,6 +178,8 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const [phase, setPhase] = useState<Phase>('idle');
   const [shown, setShown] = useState<CallRow | null>(null);
   const [shownName, setShownName] = useState('');
+  const [shownPeerId, setShownPeerId] = useState<string | null>(null);
+  const [shownAvatarUrl, setShownAvatarUrl] = useState('');
   const [muted, setMuted] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -200,6 +203,22 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   // A single sound engine is kept for this component's lifetime.
   const soundRef = useRef<ConnectCallSound | null>(null);
   if (!soundRef.current) soundRef.current = new ConnectCallSound();
+
+  // The call modal may open from the chat, the Calls tab, or an incoming call.
+  // Resolve its image from the actual peer ID rather than guessing by display name.
+  useEffect(() => {
+    let active = true;
+    setShownAvatarUrl('');
+    if (client && shownPeerId) {
+      void Promise.resolve(client.from('profiles').select('avatar_path').eq('id', shownPeerId).maybeSingle())
+        .then(async ({data}) => {
+          if (!active || !data?.avatar_path) return;
+          const photos = await loadCallAvatarUrls(client, [{id:shownPeerId, avatar_path:data.avatar_path}]);
+          if (active) setShownAvatarUrl(photos[shownPeerId] || '');
+        }).catch(() => {});
+    }
+    return () => { active = false; };
+  }, [client, shownPeerId]);
 
   useEffect(() => {
     // iPhone Safari/PWA generally needs an explicit gesture to unlock audio.
@@ -323,7 +342,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     knownIceRef.current = new Set();
     answerPendingRef.current = false;
     enteredRef.current = false;
-    setShown(null); setPhase('idle'); setElapsed(0); setMuted(false);
+    setShown(null); setShownPeerId(null); setShownAvatarUrl(''); setPhase('idle'); setElapsed(0); setMuted(false);
   }
 
   async function notifyCallEnded(callId: string) {
@@ -409,7 +428,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   function presentIncoming(row: CallRow) {
     if (!userId || row.callee_id !== userId || callRef.current) return;
     if (row.status !== 'ringing' || Date.now() - Date.parse(row.created_at) > 59000) return;
-    callRef.current = row; setShown(row); setShownName('Собеседник'); setPhase('incoming'); setError('');
+    callRef.current = row; setShown(row); setShownName('Собеседник'); setShownPeerId(row.caller_id); setPhase('incoming'); setError('');
     if (client) {
       void client.from('profiles').select('display_name').eq('id', row.caller_id).maybeSingle()
         .then(({ data }) => { if (callRef.current?.id === row.id && data?.display_name) setShownName(data.display_name); });
@@ -510,7 +529,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
         selectedPeer === userId || callRef.current || phase !== 'idle') return;
     soundRef.current?.unlock();
     const generation = ++generationRef.current;
-    setShownName(selectedName); setError(''); setToast(''); setPhase('preparing');
+    setShownName(selectedName); setShownPeerId(selectedPeer); setError(''); setToast(''); setPhase('preparing');
     try {
       const pc = await createPeer();
       if (generation !== generationRef.current) { pc.close(); streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null; return; }
@@ -640,7 +659,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     {calling && <div className="connect-call-backdrop" role="dialog" aria-modal="true" aria-label="Аудиозвонок Connect">
       <div className="connect-call-modal">
         <p className="connect-call-eyebrow">CONNECT · АУДИО</p>
-        <div className="connect-call-avatar">{initials(shownName)}</div>
+        <ConnectCallAvatar className="connect-call-avatar" name={shownName || 'Собеседник'} url={shownAvatarUrl}/>
         <h2>{shownName || 'Собеседник'}</h2>
         <p className="connect-call-info" role="status">{phaseTitle[phase]}</p>
         <div className="connect-call-actions">
