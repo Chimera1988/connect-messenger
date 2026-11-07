@@ -15,6 +15,7 @@ const btn:React.CSSProperties={padding:'11px 15px',borderRadius:10,background:'#
 export default function InvitationCodes(){
  const [signed,setSigned]=useState(false),[admin,setAdmin]=useState(false),[open,setOpen]=useState(false),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[confirm,setConfirm]=useState(''),[code,setCode]=useState(''),[issued,setIssued]=useState(''),[invites,setInvites]=useState<Invite[]>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false);
  useEffect(()=>{const openInvites=()=>{if(!admin)return;setOpen(true);setError('');void load()};window.addEventListener('connect:open-invitations',openInvites);return()=>window.removeEventListener('connect:open-invitations',openInvites)},[admin]);
+ useEffect(()=>{const openRegistration=()=>{if(signed)return;setOpen(true);setError('')};window.addEventListener('connect:open-registration-invite',openRegistration);return()=>window.removeEventListener('connect:open-registration-invite',openRegistration)},[signed]);
  useEffect(()=>{let live=true;const c=client();if(!c)return;async function sync(){const {data:{session}}=await c!.auth.getSession();if(!live)return;setSigned(!!session);if(!session){setAdmin(false);return;}try{const r=await fetch('/api/admin/invite',{headers:{authorization:`Bearer ${session.access_token}`}});if(live)setAdmin(r.ok&&(await r.json()).admin===true);}catch{if(live)setAdmin(false)}}void sync();const {data:{subscription}}=c.auth.onAuthStateChange(()=>{void sync()});return()=>{live=false;subscription.unsubscribe()}},[]);
  async function request(path:string,method:string,body?:object){const c=client();const {data:{session}}=await c!.auth.getSession();const r=await fetch(path,{method,headers:{'Content-Type':'application/json',...(session?{authorization:`Bearer ${session.access_token}`}:{})},body:body?JSON.stringify(body):undefined});const data=await r.json();if(!r.ok)throw Error(data.error||'Ошибка запроса');return data;}
  async function load(){const d=await request('/api/admin/invite','GET');setInvites(d.invitations||[])}
@@ -22,7 +23,7 @@ export default function InvitationCodes(){
  async function revoke(id:string){setBusy(true);setError('');try{await request('/api/admin/invite','DELETE',{id});await load()}catch(e){setError(String(e instanceof Error?e.message:e))}finally{setBusy(false)}}
  async function register(){if(password!==confirm){setError('Пароли не совпадают');return}setBusy(true);setError('');try{const d=await request('/api/invite/redeem','POST',{code,password});setIssued('');setOpen(false);setCode('');setPassword('');setConfirm('');alert(`Аккаунт ${d.email} создан. Теперь войдите в Connect со своим паролем.`)}catch(e){setError(String(e instanceof Error?e.message:e))}finally{setBusy(false)}}
  return <>
- {!signed&&<button type="button" onClick={()=>{setOpen(true);setError('')}} style={{...btn,position:'fixed',zIndex:9000,bottom:'max(20px, env(safe-area-inset-bottom))',left:'50%',transform:'translateX(-50%)',whiteSpace:'nowrap'}}>У меня есть код приглашения</button>}
+
 
  {open&&<div style={panel}><div style={card} role="dialog" aria-modal="true" aria-label="Приглашения Connect"><button onClick={()=>setOpen(false)} style={{float:'right',...btn,background:'#343b4b'}}>Закрыть ×</button>
  <h2 style={{margin:'5px 0 20px'}}>{signed?'Приглашения':'Регистрация по коду'}</h2>
