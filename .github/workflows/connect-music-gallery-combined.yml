@@ -1,0 +1,165 @@
+name: Connect - combined music player and profile media galleries
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-music-gallery-combined.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Connect
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install music player and profile galleries
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,zlib,re
+          
+          def unpack(encoded):
+              return zlib.decompress(base64.b64decode(encoded)).decode('utf-8')
+          
+          def once(text, old, new, label):
+              if old in text:
+                  if text.count(old)!=1: raise RuntimeError(f'{label}: expected one occurrence, got {text.count(old)}')
+                  return text.replace(old,new,1)
+              if new in text:
+                  print(f'Already installed: {label}')
+                  return text
+              raise RuntimeError(f'{label}: unexpected source code, stopped before commit')
+          
+          component=unpack('eNqtPNtuG0eW7/6KEjEZdsdNipQl2SbV5M54skgGVmJEmSywhuG0yJLUcbOb092UrFANZJyHzGKCBJtdYPdhd4PdfdyXbCZGHOcGzBdQfzTnnLp0VfMi2hkMYnZXV50691uVpj7JOBtEIY/zevfatXA0TtKcTdkg5UHO7yRxzh/nHoNZd4IoOgwGj8SL8eG1oyM+EI/7fJTQw9v8iH4PcoDisfx8zNmdg4N7aTLmaR7yTI69zYNB/mYy5KxgR2kyYvUURwCVCib34CWI7FmNYTIqZxK8KTuYjIPDADAkmvSCv8vk+KZ6aLyfIcX8cbkaqIqBlP1JFg7eSYFW5gPEcZCfdFiWp2F83GVxMOLl2ySN1AsrutcIyj2eZmGW8yGtTs5inr4xLJfY4MZJFuZhEndYPBkd8rTLspPJ0VEEexwmScSDuMtSPgYWGAOnSTRBLNSS0QR20981IkTHr8Yh4nGNVTFhF7A+irosR0qzzjz19x902WCSpsDHBV/VeoA8joJzgGhgOE/WcJIGL0oogF5NKgIJUv5mcnZvDgX6cjcJhvPzX0vTJNUygF1SfowSSxFKBE8d5lS45a1ik8v8HmAaDk1YQgEB0kA+2Jpprcl4BCBhLm2yYI9yNsuT42PkmmNBCIbvBwOx3zBMYS2xug1CarQ9FkzyZATsH/Q1KwyIGeewp5PxQRIPM8XrCoL5gRKXcxpEE74YUP62FOHSSQLYu1Ksalp1S5yzL0R9BSTi0b3gmL815jHKjX4W4nZQ1ZXloMGEgBlZLmxIejuwI8st7mkDE6bQc/Bft3vtaBKTAMgl4hyQFVqgABmQRZZO1DH3cJGs8Ig5GzDNZflJmpyxmJ8x0lmnLjUD7ADWkOHxlI3T5DQcwkOYsTiBj8kEgA3rrtDHfJLGuCuQVaIGhAzvBlnuuB3DYwlCCNk8PadfhXYanAHaUTIIooM8SYHjzWOev5HzkVMfCKwagMhRGPEGYddA7DBiNE7bAhVJGUByFVrKhahdksP3YZffHrz1ZnMcpBl3aHKQsXsBxI0g2tO49kqI6O2SI1zblGbLNnyf1YXp1tnFBTOmoAO2vi9ARg4I+kvXaezgCUeuAHqly3uTdNmhL3LMvbhoeRKWdns4Qb4wH9DJ0wmESukD8aN4LL9JANIlGhSJEZpYF5ZUZ322D2g1R8Fjp+WJxzB22l4533VZhzVv7Si40rXiBHqsbFwgZwo2CPLBCcQ1k2WsMDUrBEk6IkzWJX31i/o45adhMsnwEfQCfwKwAfiNQe3hR1ALDwI7eEAs4GcQJTRvlKRiFHSr7rEs/ABIZltt07ZQFODB3gZXlg73JIsQF69MNXoyHpai2OvtkVIM/dqovctusB3WOt3Z32Zbrehm4+Z+e5u1xdM224522e4IftlNdnPUgJknO6eNndpmb2+zJzilSDXh7u+wndP2Nk4rt7rNdhrtGwAI//mgxsB2Ir8mQ+6dJErSGoaf5BH3a3ESc2sTYGKnhHULcG5vsZsN/Gc9UBIOSgExxaDBHvu13Ro792s7NXYWDvMTv7ZdYyc8PD7J/Rrgz1KY0l4PVQURl/2NQCqsUWcs9iIvK/xFlrP2LWQL/N5+Qf5KO7RU4ybbArlvN+C//Rus3X73dnADtKUF/2uzG40bJ+2dfZizFTVoTmN7f6sNsj3dKqc14On1G+ZG0pxNYrbZ7ZPtaKexDRRFDfh9ffuDfdj9doAkie1abBeJ3g1us9t6qL1lQkb7WQ9utAM63WrsgjrvmhDI9DoWRyM0hm3iN7FVKxKaJ+42CNMBeLTBY5L4AAQPWLEUfprb64nAgIBLfy6I2y8HouQi+BuLjaBSt94FRrQbW6ftG/Q6aIH8d0Hku6yd7YLwdxvtf0QmtXcXfio3KIwYvZedHksbmaJ7K5SZyLfTkJ/9OgGaUN5b4J40KYS0JmERYf8gTK/dvKVG7oYQs4OxX0shXRiao+8nYayHgzQMGifhcMhhDMNBrTclN3sf/eqDYm8TsO5ZuQWozeBRNbUrnXTsG6FJRMtmmP19GIc5F6vcPs04ihLIecRIp2VmM+/9YmrMiDd3W24zTw4onjsuROQhVJ5p7mx59VbdLTq/mDrxK1dMeg9pUPWgpsVMxe/JPMuZDk7CaAg8Ljr6saMDTGFle5NhmEA57IuqeO/1d/bv/grHXov4CISkk0a1QJQLxgq7briwMk21KIJMzliik6TFs1OeQQbHjQUk0Y4siHQmI0RXLAZCeZABQixePFfUN3y45vTfT/jExG5BydVzoOwqV4wFweUap2V8va9yNigC3hKPD3zVnViJyX1R9eFC2jgz1l2N1X1FN64/kM/r7iyLalwqC5ZypXMURBm3ZkuZ0XT5bMy3uKFKcZz7G/m8bK5MkbyyAFyFhQianq4DV80Vcc/TxaAxF5JScyZlo56qCFfBHJnFoFetDletzE54FAkq4cGQkTTTJULCZgHXunVXv60r5Er7wpuvUlcjrVsceqV4vXIVlZN6Eb0Za+p10yGJaOLL/p7juH5PmEXzKIyHTg6vVANBvaAUHgoeJNUr7UcqP8AFwLprSMDMKjMLTvnQL4vTrnJtTYUGzVC1n0Nv7rRUTzGiCiu3q3VRfhAqSuNC7+S4rIm6Ss3kMOme2y0wUnvSuFdgPwhiHweVIjkK695Uxj5IXP1hMpigUjXB0aXnwjFgcd9UdXQwHoMEZKxTIHwfF/dVRw5fuoWsq3Fjx7UL6Yynpzz1sXkAFJGVvyUHHZwvp6uJTfngaOwOk+G5J+IbanaHasFscpinnNOL2l0ginRrYMMwk8QItJYxzwiSvgqVStRdkC+NuVP6kTLyxU9XjJGAfPq3W8Au0q3QgNQ2FfTsHp9v9LQdJxzK6OdR/29Rk6+qqCNOscRXgbBZCiqUCjr3CTtRKrrpQdxRilHHJ0CIdFFEHQen2OKNhr4RVTXLlF1saPyw+7EB0+kX4TSzBLUelFRZLXx1XdXrMO2wYntda8rgBIoDUHea2ld9EaKe/fKXbPFWwqrwxXVZn5WvrMOIyvutB30aEB7EVXsuINYXGHSN4OqIIWOVCp7KDxoxT0a6kqKzANtm/hKCJL0mDSUFMuQCFS1zbznsCMh6uzIBq9DSF4mYePF0IiaWF52yQWWll/OWI+eUBiQmNqnaB4sUb1k6IOUTftwUk2RjvzlJo4uLel0uiCC4oE8uREfItGvbyESuapuY7INX2uDKqgBVnfkaliTGlD6J4OoKfyPNYW6RGOnK4hpkJwaawQQKhmOe/w5cFKT/+QmPnSA7jwfMmQ6DPCg0LoqacOjjhyaQkfabIZmQKQK0s9BGhwbD4YbvG/hOrdxAmbYRrg3lLOOxisImRqA4kyj3g7MgVJVCEw+4dAv2IaVAD8cwkccDXnebwnCcepg9HE8Oo3AAY/z3Tp3U+2E4rHuADxRj54f8AOwk4o6xKxAjtmxyREkG2hLD2X/OnrLLj2Zfz76cfTf78fIPl5+w2Tfw8ufLD2H4m9mzyyc49MPsS/j25PLD2Y+zb2fPLz9is69mz2DZs9n3tOzJ7BmbfY9LLv80ez571qwv45HkdqFxnM+ZFM4oPJCbIhzUCaPWHGAxKOFJ1Xab1OgUQWodon8i2r6aPYVfQfTlR5cfX/4zUPYDPH0q2PITfIPpSF2h4mKpKFa8yoIjjvTYRlSJQqvMH7WTvlxcbGh7t5SVrEM6BtjJMYme85x2GDfrOopRNppZEh/PB1HT2DeqYVDECiuZBCAyVFgWvw7lC8LFhglxuiKs6FlWZCnXdk3P3loWUhb4+IrvsHIb9MW0BXhc29tKjWQcpKCX9Zs8HmLmK6bKHd4JIT1qyRVKgXQCpgZMCYrTxJ+vY5aE9KiINxpLFX0sE14LTXW8aSM6DNNO+6LR9vT5pi901SaAsr2qupWYUgSMeHwMop3XM4iM/LHZsNIB8w38Yic388rkui+gtJoMjHcb8vgHH9UxETwLfER4kVg32uSXK4mOxeQqcGM1wGob+60DasOCBVIAGA0CQqTpB1MtezcW66oFO+KyQnKIzOsA+ropnleMl9LUS+YYn3vAFJ2nhgOeCY6NgrHjPPRCUJHQBTFGkKw4IbyAd6A93S4hIBfdN7qM9JgG8RDCrfuqnKAweyApkH4RDJn2u4/AHpSoKh+yRFmmVa9g88owlUJsRz7B8MK0gzIk1Y3RLRw9zVtkY3gNwLYv1QF8yaBTbe0KklT3yXbq8+QuOr6MvSoMyxfPATFj1jWztLknj6ZteoO8SjCSUy3igLJFspt3HVQadHQv1p/qY+QKRE90X+eBlhWAIUcpVrPQLcS2K1oleXo+tc7us/XP7j06jhflcXh0LnsuoIOULUw3X2USKBsEMTvkbBIHp0EYBYcRb7JXN2WdsAL/ha0B4L06zQfT1p0lU3yOPmDvwgZll1d1XZfv6Jlglrd1qJIuU0VdQ4t8jV7nChBLE9CjBYM8POWUe5rqcZaCUfhUgThG6UEWRCtA0VYDV5CmlJwXVllgZlZXVAiTMdQ3uTPVGbUqDTpGe1Nn0Z1qz7IsFmCKvFpTmYMCHJePvxb3bVRzzC1BULvwIV0eWAGiz9TSfhPnohygWILiu14vYU3GkP/z4UO0an7GfoONTTwAeuPgLXUGpCYX3jSJIV09AvryTlkaFa6ZrpFQEA9RC61TFfw4+3+ofbAukDUBVjpfwuNHl3+w6h1A/TqBbY54loEt6Z112kfbu0tKxMLI6EmxIEbIDA/8YOqfQXBLzsjqYwh5p0GkjWw5o10TXOFt77RarbmW31SqN+UKXbnPAOSb6p0IBTDRuYLHszrYFb1SByBa1HTPxhK85deDcdhRN7K0r/VkA1o7VAVcnZeUhyErnIW8LVLp1VdxFz31ap/Rs3si0jt1zGgsknCxi8p0PQzHxrFLeahSHpnoM5G5o44FBwmFEelPkrN9iMl+xRApDbTOUMjzYiPbPHzdMy+sNdWhKKNzWn8KYih6REp5SkqveyI5TPmRP1XJQ4GXZbDO8WsjngdYsNdYEguu7ssRf8qrnRmRgnAd64P0mOdWIXZF8tG33zvVVqCs3vz5Ks7wCPIjMkk+rkzuDC93Pl0v4dFglboak16UxCqs62230dxy7UAONTheBODBKGOgPnSdEDURYzk757mK52vVuLJyLUCiSOHvyCEvkGZclaTJFyvDi02HjB69GSdnjtsoz3/V0t4WeCt3Ov/BL5d1rVwi1qU2IqwU6c5JEB8LpFepV5WAUgrLvoDKKUYmMTV6ppW+C/WlEJd7WDfPfRbFGX5/DVsB4rtyH07bE8s3pS0qm6dOtnGl3tkbhqeQMwRZ9iZ4VL+m8kGRB4IShjWWgpvwa+jIkljeCIHsjkd+bfYfs2cQ4Z41Zj9B1HuK7a9aT5K1dzjJ8ySmu5d+TbzUVm/VyMM84ugCwFtCek40yZgyDLMx6ulrp0gfhvQ7E1C/kXhX6U1HAMNrwHVvOgQXEkYdFQ2KwgWG0R6A+n9BLH5++eHln0SPUkfjy480CcA4us6obh22b7rFHqAR96ZWIMJbMDi6tynIXM0Ci4FfXH4IfPsaNv4asoJ/AnZ+y6hT+nT2vMIILVyo+IuexExfrPTatwG5F0VgKiNivz77AjIT7Nl+We/UZ/+OLVxKVT6pFyUaIlSpzfVacZezI652elvtl0CkNvtv0iDkwqdr8sFgA90ifTkW1Gb/BjmbqQnzOm0jULryahXc102uubM/8oyL+o3ygz76E+deZu9Rj8jjQNmELaOJVdqlfJSc8rVvZpfePzyOMZyVHr7Q7BWXcL32TpW/e5vgP3oeJQkb5NH2NhfmB70rr1fdDQ/TID13pqKC8Zi+ag0edpTBT0Ys8tjhJDuHz/HbRGnRoetWi46XuqrkllebCNCi092uhN1RfymCW+gXtVNneWNb/t2AefWLeO2XfwNgXlQBPlPSBr9X3hWpFKYCbrOa8sljDCMzXzJPNvUwE188Y2E5LKbauaw8saPiW8ps0bQ14KlkWVX8HgnKquqFDixeZrWKRTkiJpZnuPKpL8b1JQqZrag/cQCdlCtVmO61oNxU1w2rt+lbLYmQyqk27cWvwgyIOK+816m3XqmbKbSMymVNuTQMQ1QcBVFD/KnH6lCsy0moQC8/mf0Az9+y0okpYysD9Fp7Nk54MDQiImopWMEaC2UwF/FW0irCZc96g+BJII09ViYlojYzUFonzgnJUD0Hse5z4NJ3EGc+VieU38y+AvY9x9D3OfFw4dfCjgOG/aCb3jD20JHJ2pf+pKGj/sTBa9+aD1dETRiPJ7kkJsUEtMZGeCe3Bb+BuC4P+j+GgWZrp6ZKL7GVAF7YuvEvdDz5PdBFp61WvjN7RuGtTHSnmi55RUr+SUs1lRU3c128p7NyRq/lVjglfVCh0tMyklxb9HKVnqbJMZQimaWkIkmjm8i2jboqWbt2FbunrYLYPa26hL490GkXQhzTJjxZwjDWaLdhf6l4ELfTKgxNgKQXS69hFd6e3ypsoSkO80dXiMsEb2eidHj9lE7kn6AX0fnX7EvUt3O04mm9ocxbsb3eIZwK/DMt6498LenOC0TXSBWBvJDs4R18R2TJ/oq6Y1qvAknGiEf9ukRMtoL6dRlMwGIhTZpLVvGAH1ztt6Wj/RFyyM9mX4OlPZfOB9usWSk+CXmZG1F3GDes2WWSq/6capHX+NuWGgKBKwqOre31EbkiWizy1Usqk8/Rhcn7Fs/QM4Pa0gUS0zsLCHa1UoFaqVl2X5Kpa1ctFZbO1S4vx80rlVn0M1fq8hfYoQYOgvoyZC1eUhFGv0iHBcBlKiwv226Yc0tK5R/5LSjSSpsXj7JneIX1U3e3gSmgtv8pJYrioBezdTrrJTiP+Lk/1UewxUomEmDgoWBaf+5KSoWfP0P7BQmjIIxri1lK17foXLewcgR0mVcDzs5Hh0lUkwJYRg5moBXzEB0PZR6isLbD5to4YJIHDloljjIfpM1lNlg+61xwLwMAUW/2P8KYQK7X2/iVRuci+JzdTGVBt05uLUXA40njJImgVgVcX1KMUM9V/MO/AvbfkoPCQ6DPwMDKsAoZWUXosiZ0EJClb1ipdMo7SNqi6K9iF2eR0yoQ4sXLETYENcyBtDIfwQK54gSmCntRuqqqWV5KKIre7H/l8Ril1RrnwjR55QBknmI4hrVEKvobaXgaDM7LQoeE0bPyvMEJHzw6TB4D8fhkxmj73MSgecOYIc4oliRhczcS5xrcYk93PkWSVtIjr4ylHOboX4lOHPvL/0G8QX36GC9UorPGLOSPMOvp5ZO/fDdnPAADzyQho4OJmKz8AKz/lIG3L0ucp3hC2WQQV/FCJjwziGZ4e/PPeDuTiSyHFBgWE0Yw+IQgfoI6jFc58R+RO4KG43s1QgPkp7T5Z82KDe9tCuEo922wmA7USNq0Qta+QQTZZa03N1E7h6ISRvY2r+49Yf9lkunWk2yXvTHEP/Bb2FjSM2Rryer83KfAg2qQmH/Bs15/p7w3EC26NpDyI4jHJ/MXB+Tnl7ocXJ67e+WxuVce6HvLbw9rRiy5RCzRSs78lC7kVs/Z6FoffO43y51R5sbpDj3K/zuI5MyY5+618Uy6ZZ7SR+qUHFjvbKTi4jId0eEemg450ixpFMd4A3kOit9KrvTljQF71O0Yf6JgnsBLGa13Bm+vWHrKHr3YIXtVkR+YJ7ionv1lLlS1ioH3DXFUD5TXzKhdBh95KgK5s/ReK9xTh4nF2u7RPmUHrrj2V2MWnhU=')
+          css=unpack('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')
+          page=Path('components/ConnectProfileMedia.tsx')
+          layout=Path('app/layout.tsx')
+          app=Path('app/page.tsx')
+          style=Path('app/music-system.css')
+          assert page.exists() and layout.exists() and app.exists(), 'Connect profile media must already be installed.'
+          
+          # Mount a single persistent audio element at app layout level.
+          l=layout.read_text(encoding='utf-8')
+          l=once(l,"import './profile-media.css';","import './profile-media.css';\nimport './music-system.css';",'player stylesheet import')
+          l=once(l,"import ConnectSonicRunner from '../components/ConnectSonicRunner';","import ConnectSonicRunner from '../components/ConnectSonicRunner';\nimport { ConnectMusicProvider } from '../components/ConnectMusicSystem';",'global music provider import')
+          l=once(l,'<body>{children}<InvitationCodes />','<body><ConnectMusicProvider>{children}</ConnectMusicProvider><InvitationCodes />','persistent audio provider layout')
+          
+          s=page.read_text(encoding='utf-8')
+          s=once(s,"import * as tus from 'tus-js-client';","import * as tus from 'tus-js-client';\nimport { ConnectMusicLibrary } from './ConnectMusicSystem';",'profile media player import')
+          # A previously uploaded minimal player may have been installed independently.
+          s=s.replace("import ConnectMinimalMusicPlayer from './ConnectMinimalMusicPlayer';\n",'')
+          start=s.index("        {kind === 'music' &&")
+          end=s.index("\n      </>}",start)
+          block=s[start:end]
+          replacement="        {kind === 'music' && <ConnectMusicLibrary client={client} ownerId={userId} items={items} isOwner={isOwner} busy={busy} onRemove={song => { const item=items.find(x=>x.path===song.path); if(item) void remove(item); }}/>}"
+          if 'ConnectMusicLibrary' in block:
+              print('Music library already updated')
+          elif 'ConnectMinimalMusicPlayer' in block or '<audio key={song.path}' in block:
+              s=s[:start]+replacement+s[end:]
+          else: raise RuntimeError('Unexpected music component; no changes committed')
+          s=s.replace("  const [selectedSong, setSelectedSong] = useState<string | null>(null);\n",'')
+          s=s.replace("      if (selectedSong === item.path) setSelectedSong(null);\n",'')
+          s=s.replace("  const song = items.find(item => item.path === selectedSong) || items[0];\n",'')
+          # Give galleries their own back/forward navigation without altering photo uploads.
+          ref="  const [preview, setPreview] = useState<MediaItem | null>(null);"
+          extra='''
+            const swipeStart=useRef<{x:number;y:number}|null>(null);
+            const navigatePreview=useCallback((direction:1|-1)=>{
+              setPreview(old=>{
+                if(!old || !items.length)return old;
+                const current=items.findIndex(item=>item.path===old.path);
+                return items[(Math.max(0,current)+direction+items.length)%items.length];
+              });
+            },[items]);
+            useEffect(()=>{
+              if(!preview)return;
+              const onKey=(event:KeyboardEvent)=>{
+                if(event.key==='ArrowLeft'){event.preventDefault();navigatePreview(-1);}
+                else if(event.key==='ArrowRight'){event.preventDefault();navigatePreview(1);}
+                else if(event.key==='Escape')setPreview(null);
+              };
+              window.addEventListener('keydown',onKey);
+              return()=>window.removeEventListener('keydown',onKey);
+            },[preview,navigatePreview]);'''
+          s=once(s,ref,ref+extra,'gallery swipe and key handlers')
+          old_video='<video src={item.url} playsInline controls preload="metadata" className="connect-profile-video-player" aria-label={item.name}/>'
+          new_video='<button type="button" className="connect-profile-video-thumb" onClick={()=>setPreview(item)} aria-label={`Просмотреть ${item.name}`}><video src={item.url} preload="metadata" playsInline muted tabIndex={-1}/><span aria-hidden="true">▶</span></button>'
+          s=once(s,old_video,new_video,'video gallery thumbnails')
+          if 'connect-gallery-nav' not in s:
+              start=s.index('    {preview && <div className="connect-profile-photo-overlay"')
+              end=s.index('\n  </>;',start)
+              gallery='''    {preview && <div className="connect-profile-photo-overlay" role="dialog" aria-modal="true" aria-label={kind==='photos'?'Просмотр фотографий':'Просмотр видео'}
+                onClick={()=>setPreview(null)}
+                onTouchStart={e=>{const touch=e.touches[0];if(touch)swipeStart.current={x:touch.clientX,y:touch.clientY};}}
+                onTouchEnd={e=>{const touch=e.changedTouches[0];const start=swipeStart.current;swipeStart.current=null;
+                  if(touch && start){const dx=touch.clientX-start.x;const dy=touch.clientY-start.y;
+                    if(Math.abs(dx)>55 && Math.abs(dx)>Math.abs(dy)*1.25)navigatePreview(dx>0?-1:1);
+                  }
+                }}>
+                <button type="button" className="connect-profile-photo-close" onClick={()=>setPreview(null)}>Закрыть</button>
+                <span className="connect-gallery-count">{items.findIndex(item=>item.path===preview.path)+1} / {items.length}</span>
+                {items.length>1 && <><button type="button" className="connect-gallery-nav connect-gallery-prev" onClick={e=>{e.stopPropagation();navigatePreview(-1);}} aria-label="Предыдущий файл">‹</button>
+                  <button type="button" className="connect-gallery-nav connect-gallery-next" onClick={e=>{e.stopPropagation();navigatePreview(1);}} aria-label="Следующий файл">›</button></>}
+                {kind==='videos' ? <video key={preview.path} src={preview.url} playsInline controls preload="metadata" onClick={e=>e.stopPropagation()} aria-label={preview.name}/>
+                  : <img key={preview.path} src={preview.url} alt={preview.name} onClick={e=>e.stopPropagation()}/>}
+                <span className="connect-gallery-name">{preview.name}</span>
+                {isOwner && kind==='photos' && <button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(preview.mime)} onClick={e=>{e.stopPropagation();void makeAvatar(preview);setPreview(null);}}>Сделать аватаром</button>}
+              </div>}'''
+              s=s[:start]+gallery+s[end:]
+          else:print('Gallery navigation already installed')
+          
+          # Users who opt in can share a transient text-only status; no media URL is exposed.
+          a=app.read_text(encoding='utf-8')
+          a=once(a,"import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';", "import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';\nimport { ConnectMusicStatus } from '../components/ConnectMusicSystem';",'profile music status import')
+          a=once(a,"<p>{viewedProfile.bio || 'Информация о себе не указана'}</p>","<p>{viewedProfile.bio || 'Информация о себе не указана'}</p>\n                <ConnectMusicStatus client={supabase!} profileId={viewedProfile.id}/>",'opt-in public listening label')
+          if "connect:music-open" not in a:
+              marker='  async function saveProfile(e: FormEvent) {'
+              addition='''  useEffect(()=>{
+              const open=(event:Event)=>{
+                const id=(event as CustomEvent<{ownerId:string}>).detail?.ownerId;
+                const person=profiles.find(p=>p.id===id);
+                if(!person)return;
+                showProfile(person.id);setProfileMediaOpen('music');
+              };
+              window.addEventListener('connect:music-open',open);
+              return()=>window.removeEventListener('connect:music-open',open);
+              // eslint-disable-next-line react-hooks/exhaustive-deps
+            },[profiles]);
+          '''
+              a=once(a,marker,addition+marker,'mini-player opens the music profile')
+          
+          Path('components/ConnectMusicSystem.tsx').write_text(component,encoding='utf-8')
+          style.write_text(css,encoding='utf-8')
+          page.write_text(s,encoding='utf-8')
+          layout.write_text(l,encoding='utf-8')
+          app.write_text(a,encoding='utf-8')
+          print('Music, opt-in status, mini-player, photo/video gallery navigation installed.')
+          PY
+          git diff --check
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Check TypeScript
+        run: npx tsc --noEmit
+      - name: Commit and deploy
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/page.tsx app/layout.tsx app/music-system.css components/ConnectProfileMedia.tsx components/ConnectMusicSystem.tsx
+          if git diff --cached --quiet; then
+            echo 'Update already installed.'
+            exit 0
+          fi
+          git commit -m 'feat: persistent music, privacy status, and swipeable profile galleries'
+          git push origin HEAD:main
