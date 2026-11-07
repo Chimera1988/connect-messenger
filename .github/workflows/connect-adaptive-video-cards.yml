@@ -1,0 +1,402 @@
+name: Connect - adaptive video cards and poster previews
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-adaptive-video-cards.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Connect
+        uses: actions/checkout@v4
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply adaptive video preview and layout
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          
+          page_file = Path('app/page.tsx')
+          css_file = Path('app/liquid-glass.css')
+          page = page_file.read_text(encoding='utf-8')
+          css = css_file.read_text(encoding='utf-8')
+          marker = '/* Connect: adaptive single video cards with persistent poster v1 */'
+          
+          
+          def replace_exact(haystack, old, new, label):
+              count = haystack.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one anchor, found {count}; no changes committed')
+              return haystack.replace(old, new, 1)
+          
+          if 'function connectVideoFrameStyle(path: string)' not in page:
+              helpers = r'''
+          type ConnectVideoPreview = { size: ConnectPhotoSize; poster: Blob | null };
+          const connectVideoSizeCache = new Map<string, ConnectPhotoSize>();
+          
+          function connectVideoFrameStyle(path: string): CSSProperties | undefined {
+            const found = /__vid_(\d{1,5})x(\d{1,5})$/.exec(path);
+            const dimensions = found
+              ? {width:Number(found[1]),height:Number(found[2])}
+              : connectVideoSizeCache.get(path);
+            if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) return undefined;
+            const layout = connectPhotoFrameValues(dimensions);
+            return { '--connect-video-card-width': layout.width, '--connect-video-card-ratio': layout.ratio } as CSSProperties;
+          }
+          
+          function connectUpdateVideoFrame(video: HTMLVideoElement, path: string) {
+            if (!video.videoWidth || !video.videoHeight) return;
+            const frame = video.closest<HTMLElement>('.attachment-preview.connect-adaptive-video');
+            if (!frame) return;
+            const size = {width:video.videoWidth,height:video.videoHeight};
+            connectVideoSizeCache.set(path, size);
+            const values = connectPhotoFrameValues(size);
+            if (frame.style.getPropertyValue('--connect-video-card-width') === values.width &&
+                frame.style.getPropertyValue('--connect-video-card-ratio') === values.ratio) return;
+            const scroll = frame.closest<HTMLElement>('.message-scroll');
+            const view = scroll?.getBoundingClientRect();
+            const anchor = scroll && view
+              ? Array.from(scroll.querySelectorAll<HTMLElement>('.message-day-group'))
+                  .find(node => node.getBoundingClientRect().bottom > view.top + 8)
+              : undefined;
+            const originalTop = anchor?.getBoundingClientRect().top;
+            const nearBottom = scroll ? scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 100 : false;
+            frame.style.setProperty('--connect-video-card-width', values.width);
+            frame.style.setProperty('--connect-video-card-ratio', values.ratio);
+            // Old videos did not store dimensions: preserve the reading position on first decode.
+            if (scroll) {
+              if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+              else if (anchor && originalTop !== undefined)
+                scroll.scrollTop += anchor.getBoundingClientRect().top - originalTop;
+            }
+          }
+          
+          async function connectVideoFilePreview(file: File): Promise<ConnectVideoPreview | null> {
+            if (!file.type.startsWith('video/')) return null;
+            const url = URL.createObjectURL(file);
+            return await new Promise(resolve => {
+              const video = document.createElement('video');
+              video.preload = 'auto'; video.muted = true; video.playsInline = true;
+              let settled = false, captured = false;
+              let size: ConnectPhotoSize | null = null;
+              const timer = window.setTimeout(() => finish(null), 5500);
+              function finish(poster: Blob | null) {
+                if (settled) return;
+                settled = true; window.clearTimeout(timer);
+                video.pause(); video.removeAttribute('src'); video.load();
+                URL.revokeObjectURL(url);
+                resolve(size ? {size, poster} : null);
+              }
+              function capture() {
+                if (!size || captured || video.readyState < 2) return;
+                captured = true;
+                try {
+                  const canvas = document.createElement('canvas');
+                  const scale = Math.min(1, 480 / size.width, 480 / size.height);
+                  canvas.width = Math.max(1, Math.round(size.width * scale));
+                  canvas.height = Math.max(1, Math.round(size.height * scale));
+                  const ctx = canvas.getContext('2d');
+                  if (!ctx) {finish(null);return;}
+                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                  canvas.toBlob(blob => finish(blob && blob.size > 0 ? blob : null), 'image/jpeg', .76);
+                } catch { finish(null); }
+              }
+              video.onloadedmetadata = () => {
+                if (video.videoWidth > 0 && video.videoHeight > 0) {
+                  size = {width: video.videoWidth, height: video.videoHeight};
+                }
+                try {
+                  const target = Number.isFinite(video.duration) && video.duration > .3
+                    ? Math.min(1.2, Math.max(.3, video.duration * .12), video.duration * .8) : 0;
+                  if (target > 0) video.currentTime = target;
+                  else if (video.readyState >= 2) capture();
+                } catch { if (video.readyState >= 2) capture(); }
+              };
+              video.onseeked = capture;
+              video.onloadeddata = () => {
+                if (!Number.isFinite(video.duration) || video.duration <= .3 || video.currentTime > .05)
+                  capture();
+              };
+              video.onerror = () => finish(null);
+              video.src = url;
+              video.load();
+            });
+          }
+          
+          '''
+              page = replace_exact(page, 'function VideoThumbnail({src}:{src:string}) {', helpers + 'function VideoThumbnail({src,path}:{src:string;path?:string}) {', 'VideoThumbnail helper')
+          
+          # Standalone videos use an uploaded JPEG still when available; older uploads keep
+          # the in-browser video-frame fallback without changing album behavior.
+          if 'const [uploadedPoster,setUploadedPoster]' not in page:
+              target = "  const [poster,setPoster]=useState<string|null>(null);\n  const [failed,setFailed]=useState(false);"
+              new = """  const [poster,setPoster]=useState<string|null>(null);
+            const [uploadedPoster,setUploadedPoster]=useState<string|null>(null);
+            const [failed,setFailed]=useState(false);"""
+              page = replace_exact(page, target, new, 'Video poster state')
+              target = "  useEffect(()=>{setPoster(null);setFailed(false)},[src]);"
+              new = """  useEffect(()=>{setPoster(null);setFailed(false)},[src]);
+            useEffect(() => {
+              setUploadedPoster(null);
+              if (!path || !/__vid_\\d{1,5}x\\d{1,5}$/.test(path) || !supabase) return;
+              let cancelled = false;
+              void supabase.storage.from('connect-attachments').createSignedUrl(path + '__poster.jpg', 3600)
+                .then(({data,error}) => {
+                  if (!cancelled && !error && data?.signedUrl) setUploadedPoster(mediaUrl(data.signedUrl));
+                }).catch(() => {});
+              return () => {cancelled = true;};
+            }, [path]);"""
+              page = replace_exact(page, target, new, 'Fetch uploaded video poster')
+              target = "    {poster && <img src={poster} alt=\"Предпросмотр видео\"/>}"
+              new = "    {(uploadedPoster || poster) && <img src={uploadedPoster || poster || ''} alt=\"Предпросмотр видео\" onError={()=>setUploadedPoster(null)}/>}"
+              page = replace_exact(page, target, new, 'Video preview image')
+              page = replace_exact(page, 'onLoadedMetadata={e=>{const v=e.currentTarget;syncVideoThumbnailSize(v);try{v.currentTime', 'onLoadedMetadata={e=>{const v=e.currentTarget;if(path)connectUpdateVideoFrame(v,path);else syncVideoThumbnailSize(v);try{v.currentTime', 'Video metadata size')
+              page = replace_exact(page, 'onSeeked={e=>{syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}', 'onSeeked={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}', 'Video seek frame')
+              page = replace_exact(page, 'onLoadedData={e=>{syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}', 'onLoadedData={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}', 'Video loaded frame')
+              page = replace_exact(page, 'v.currentTime=Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))', 'v.currentTime=path && Number.isFinite(v.duration) && v.duration>.3 ? Math.min(1.2,Math.max(.3,v.duration*.12),v.duration*.8) : Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))', 'Seek standalone videos to a representative frame')
+          
+          if 'path += `__vid_${preview.size.width}x${preview.size.height}`' not in page:
+              target = '''      const {data:{session}}=await supabase.auth.getSession();
+                if(!session) throw new Error('Сессия завершена. Войдите снова.');'''
+              new = '''      // Create a reliable first-frame preview once for each ordinary video.
+                // The dimensions go in its storage path so layout is stable before downloading.
+                let videoPoster: Blob | null = null;
+                if (kind === 'video' && !/^connect-video-note-\\d+\\.(?:mp4|webm)$/i.test(file.name)) {
+                  const preview = await connectVideoFilePreview(file);
+                  if (preview && preview.size.width < 100000 && preview.size.height < 100000) {
+                    path += `__vid_${preview.size.width}x${preview.size.height}`;
+                    videoPoster = preview.poster;
+                  }
+                }
+                const {data:{session}}=await supabase.auth.getSession();
+                if(!session) throw new Error('Сессия завершена. Войд снова.');'''
+              # Keep the original text exactly, avoiding changes to authentication messages.
+              new = new.replace('Войд снова.', 'Войдите снова.')
+              page = replace_exact(page, target, new, 'Prepare video poster before upload')
+              target = '''      const {data,error}=await supabase.from('messages').insert({
+                  conversation_id:chatId,sender_id:user.id,body:'',reply_to:replyTo?.id || null,'''
+              new = '''      // The still image is optional: upload failures must not block video messages.
+                if (videoPoster && kind === 'video') {
+                  await supabase.storage.from('connect-attachments').upload(path + '__poster.jpg', videoPoster,
+                    {contentType:'image/jpeg',upsert:false}).catch(() => {});
+                }
+                const {data,error}=await supabase.from('messages').insert({
+                  conversation_id:chatId,sender_id:user.id,body:'',reply_to:replyTo?.id || null,'''
+              page = replace_exact(page, target, new, 'Upload video poster')
+          
+          # Preserve video dimensions and preview when forwarding media to another chat.
+          if 'const mediaSuffix = (m.attachment_kind' not in page:
+              target = '''const imageSuffix = m.attachment_kind === 'image'
+            ? (m.attachment_path.match(/__img_\\d{1,5}x\\d{1,5}$/)?.[0] || '') : '';
+          path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;'''
+              new = '''          const mediaSuffix = (m.attachment_kind === 'image' || m.attachment_kind === 'video')
+                      ? (m.attachment_path.match(/__(?:img|vid)_\\d{1,5}x\\d{1,5}$/)?.[0] || '') : '';
+                    path = `${chat.id}/${user.id}/${crypto.randomUUID()}${mediaSuffix}`;'''
+              page = replace_exact(page, target, new, 'Forward media metadata')
+              target = '''            if (uploaded.error) throw new Error('Не удалось загрузить вложение: ' + uploaded.error.message);
+                    }
+                  }
+                  const {error} = await supabase.from('messages').insert({'''
+              new = '''            if (uploaded.error) throw new Error('Не удалось загрузить вложение: ' + uploaded.error.message);
+                    }
+                    if (m.attachment_kind === 'video' && /__vid_\\d{1,5}x\\d{1,5}$/.test(m.attachment_path)) {
+                      // Optional source poster: do not fail forwarding if unavailable.
+                      try { await bucket.copy(m.attachment_path + '__poster.jpg', path + '__poster.jpg'); } catch { /* optional */ }
+                    }
+                  }
+                  const {error} = await supabase.from('messages').insert({'''
+              page = replace_exact(page, target, new, 'Forward video poster')
+          
+          if 'attachment-preview connect-adaptive-video' not in page:
+              target = '''m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : undefined}'''
+              new = '''m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : m.attachment_kind==='video' && !isVideoNote(m) ? "attachment-preview connect-adaptive-video" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : m.attachment_kind==='video' && !isVideoNote(m) ? connectVideoFrameStyle(m.attachment_path) : undefined}'''
+              page = replace_exact(page, target, new, 'Video card JSX class')
+              target = ''': m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>'''
+              new = ''': m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb connect-adaptive-video-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Воспроизвести видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]} path={m.attachment_path!}/><span className="connect-media-play">▶</span></button>'''
+              page = replace_exact(page, target, new, 'Single video preview JSX')
+          
+          if marker not in css:
+              # The previous uniform 4:3 rules must not apply to the new video container.
+              block_start = css.index('/* Reserve the FULL media footprint before a signed URL/image/video is ready.')
+              block_end = css.index('/* Video notes already have a round 1:1 player.',block_start)
+              section = css[block_start:block_end]
+              old = ':not(:has(.connect-adaptive-photo))'
+              if section.count(old) < 7:
+                  raise SystemExit(f'Expected at least seven fixed-stage exclusions, got {section.count(old)}')
+              section = section.replace(old, ':not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video))')
+              css = css[:block_start] + section + css[block_end:]
+              video_styles = r'''
+          
+          /* Connect: adaptive single video cards with persistent poster v1 */
+          /* Same slim album framing as standalone photos, with native video proportions. */
+          .connect-app .bubble.sent.media-only:not(.video-note-bubble):has(.connect-adaptive-video),
+          .connect-app .bubble.received.media-only:not(.video-note-bubble):has(.connect-adaptive-video) {
+            box-sizing: border-box !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: stretch !important;
+            width: fit-content !important;
+            min-width: 0 !important;
+            max-width: min(290px, calc(100vw - 80px)) !important;
+            margin: 0 !important;
+            padding: 3px !important;
+            gap: 0 !important;
+            border: 1px solid var(--glass-stroke-hi, rgba(220,238,255,.24)) !important;
+            border-radius: 16px !important;
+            overflow: hidden !important;
+            color: var(--text) !important;
+            background: color-mix(in srgb, var(--panel) 22%, transparent) !important;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.07) !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) > .bubble-body {
+            box-sizing: border-box !important;
+            display: block !important;
+            flex: 0 0 auto !important;
+            width: fit-content !important;
+            min-width: 0 !important;
+            max-width: 100% !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video {
+            box-sizing: border-box !important;
+            display: block !important;
+            position: relative !important;
+            flex: 0 0 auto !important;
+            width: min(var(--connect-video-card-width, 280px), calc(100vw - 90px)) !important;
+            max-width: 100% !important;
+            height: auto !important;
+            min-height: 0 !important;
+            aspect-ratio: var(--connect-video-card-ratio, 4 / 3) !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: 0 !important;
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            background: color-mix(in srgb, var(--panel) 62%, #111926) !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video > .connect-adaptive-video-thumb {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-width: 0 !important;
+            min-height: 0 !important;
+            max-width: none !important;
+            max-height: none !important;
+            aspect-ratio: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: 0 !important;
+            border-radius: 12px !important;
+            overflow: hidden !important;
+            background: transparent !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video .connect-video-preview,
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video .connect-video-preview > img,
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video .connect-video-preview > video {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-width: 0 !important;
+            min-height: 0 !important;
+            max-width: 100% !important;
+            max-height: 100% !important;
+            aspect-ratio: auto !important;
+            object-fit: cover !important;
+            background: transparent !important;
+          }
+          /* Override the old oversized video play badge only for standalone video cards. */
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video > .connect-adaptive-video-thumb:has(.connect-video-preview)::after {
+            content: "" !important;
+            position: absolute !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-50%, -50%) !important;
+            display: block !important;
+            width: 38px !important;
+            height: 38px !important;
+            border: 1px solid rgba(255,255,255,.60) !important;
+            border-radius: 50% !important;
+            background: rgba(10,18,29,.48) !important;
+            -webkit-backdrop-filter: blur(8px);
+            backdrop-filter: blur(8px);
+            box-shadow: 0 2px 12px rgba(0,0,0,.17) !important;
+            padding: 0 !important;
+            pointer-events: none !important;
+            z-index: 20 !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video > .connect-adaptive-video-thumb:has(.connect-video-preview)::before {
+            content: "" !important;
+            position: absolute !important;
+            top: 50% !important;
+            left: 50% !important;
+            transform: translate(-38%,-50%) !important;
+            width: 0 !important;
+            height: 0 !important;
+            border-top: 6px solid transparent !important;
+            border-bottom: 6px solid transparent !important;
+            border-left: 9px solid white !important;
+            background: transparent !important;
+            z-index: 21 !important;
+            pointer-events: none !important;
+          }
+          .connect-app .bubble.media-only:has(.connect-adaptive-video) .bubble-meta {
+            box-sizing: border-box !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            align-self: stretch !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-height: 20px !important;
+            padding: 3px 7px 1px !important;
+            margin: 0 !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            color: var(--muted) !important;
+            background: transparent !important;
+            box-shadow: none !important;
+            opacity: .92 !important;
+          }
+          '''
+              css += video_styles
+          
+          assert 'connect-adaptive-video' in page
+          assert 'connect-adaptive-video' in css
+          assert 'path + \'__poster.jpg\'' in page
+          page_file.write_text(page, encoding='utf-8')
+          css_file.write_text(css, encoding='utf-8')
+          print('Adaptive single-video previews and album-like cards applied')
+          PY
+      - name: Check whitespace
+        run: git diff --check
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: TypeScript check
+        run: npx tsc --noEmit
+      - name: Commit and trigger Vercel
+        shell: bash
+        run: |
+          git add app/page.tsx app/liquid-glass.css
+          if git diff --cached --quiet; then
+            echo "Already applied; nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "feat: responsive single-video cards with poster previews"
+          git push origin HEAD:main
