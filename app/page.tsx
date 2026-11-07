@@ -1,6 +1,7 @@
 'use client';
 
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
+import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
 import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
 
@@ -844,6 +845,7 @@ export default function Home() {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [avatarUrls, setAvatarUrls] = useState<Record<string,string>>({});
   const [profileView, setProfileView] = useState<string | null>(null);
+  const [profileMediaOpen, setProfileMediaOpen] = useState<ProfileMediaKind | null>(null); /* Connect profile media visible to members v2 */
   const [editName, setEditName] = useState('');
   const [editBio, setEditBio] = useState('');
   const avatarInput = useRef<HTMLInputElement | null>(null);
@@ -1472,7 +1474,7 @@ export default function Home() {
   const viewedProfile = profiles.find(p=>p.id===profileView);
   function showProfile(id: string) {
     const p=profiles.find(x=>x.id===id); if(!p) return;
-    setProfileView(id); setEditName(p.display_name); setEditBio(p.bio || ''); setMenuMessage(null);
+    setProfileView(id); setProfileMediaOpen(null); setEditName(p.display_name); setEditBio(p.bio || ''); setMenuMessage(null);
   }
   async function saveProfile(e: FormEvent) {
     e.preventDefault(); if(!supabase || !user || !ownProfile || busy) return;
@@ -1624,7 +1626,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[conversations,user?.id]);
   function exitChat() { resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
-  function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); }
+  function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); setProfileMediaOpen(null); }
   async function openContact(p: Profile) {
     if (!supabase || !user || busy) return;
     setBusy(true); setNotice('');
@@ -2113,6 +2115,7 @@ export default function Home() {
           {!setup && <button type="button" className="connect-invite-register" onClick={() => window.dispatchEvent(new Event('connect:open-registration-invite'))}>У меня есть код приглашения</button>}
         </div>
           : profileView && viewedProfile ? <div className="profile-view">
+            {profileMediaOpen ? <ConnectProfileMedia key={`${profileView}:${profileMediaOpen}`} client={supabase!} userId={profileView} isOwner={profileView===user.id} kind={profileMediaOpen} onBack={()=>setProfileMediaOpen(null)} onAvatar={selectAvatar}/> : <>
             <header className="profile-top"><button className="icon-btn" type="button" onClick={()=>setProfileView(null)} aria-label="Назад"><Icon name="back" size={25}/></button><strong>{profileView===user.id?'Мой профиль':'Профиль'}</strong></header>
             <div className="profile-content">
               <div className="profile-hero">
@@ -2121,6 +2124,11 @@ export default function Home() {
                 <p>{viewedProfile.bio || 'Информация о себе не указана'}</p>
                 {profileView===user.id && <><button type="button" className="avatar-change" disabled={busy} onClick={()=>avatarInput.current?.click()}><Icon name="camera" size={17}/> Изменить фото</button><input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{selectAvatar(e.target.files?.[0]);e.currentTarget.value='';}}/></>}
               </div>
+              <nav className="connect-profile-library-links" aria-label="Медиатека профиля">
+                <button type="button" className="connect-profile-library-link" onClick={()=>setProfileMediaOpen('photos')}><span className="connect-profile-library-link-icon" aria-hidden="true">▧</span><span className="connect-profile-library-link-text"><strong>{profileView===user.id ? 'Мои фото' : 'Фото'}</strong><small>{profileView===user.id ? 'Коллекция фотографий и выбор аватара' : 'Фотографии пользователя'}</small></span><span className="connect-profile-library-link-arrow" aria-hidden="true">›</span></button>
+                <button type="button" className="connect-profile-library-link" onClick={()=>setProfileMediaOpen('videos')}><span className="connect-profile-library-link-icon" aria-hidden="true">▶</span><span className="connect-profile-library-link-text"><strong>{profileView===user.id ? 'Мои видео' : 'Видео'}</strong><small>{profileView===user.id ? 'Мои видеозаписи' : 'Видеозаписи пользователя'}</small></span><span className="connect-profile-library-link-arrow" aria-hidden="true">›</span></button>
+                <button type="button" className="connect-profile-library-link" onClick={()=>setProfileMediaOpen('music')}><span className="connect-profile-library-link-icon" aria-hidden="true">♫</span><span className="connect-profile-library-link-text"><strong>{profileView===user.id ? 'Моя музыка' : 'Музыка'}</strong><small>{profileView===user.id ? 'Треки и встроенный аудиоплеер' : 'Музыка и встроенный плеер'}</small></span><span className="connect-profile-library-link-arrow" aria-hidden="true">›</span></button>
+              </nav>
               {profileView===user.id ? <form className="profile-edit" onSubmit={saveProfile}>
                 <label>Имя<input maxLength={60} required value={editName} onChange={e=>setEditName(e.target.value)}/></label>
                 <label>О себе<textarea maxLength={160} rows={3} value={editBio} onChange={e=>setEditBio(e.target.value)} placeholder="Расскажите немного о себе"/></label>
@@ -2128,6 +2136,7 @@ export default function Home() {
                 <button type="submit" className="primary-action" disabled={busy}>Сохранить изменения</button>
               </form> : <div className="profile-about"><span>О себе</span><p>{viewedProfile.bio || 'Пока ничего не рассказал(а)'}</p></div>}
             </div>
+            </>}
           </div>
           : activeChat && selected ? <div className="chat-view">
             <header className="chat-header">

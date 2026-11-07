@@ -8,6 +8,7 @@ import ConnectSonicRunner from '../components/ConnectSonicRunner';
 import './globals.css';
 import './liquid-glass.css';
 import './calls.css';
+import './profile-media.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
