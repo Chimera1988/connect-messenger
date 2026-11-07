@@ -1320,15 +1320,15 @@
 /* Reserve the FULL media footprint before a signed URL/image/video is ready.
    Uniform 4:3 stage avoids relayout from image decoding and video metadata.
    object-fit: contain preserves the whole picture inside the chat; tap for original. */
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):has(.attachment-preview) {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):has(.attachment-preview) {
   box-sizing: border-box !important;
   width: min(280px, calc(100vw - 84px)) !important;
   max-width: min(280px, calc(100vw - 84px)) !important;
   min-width: 0 !important;
   flex: 0 0 auto !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .bubble-body,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .bubble-body,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview {
   box-sizing: border-box !important;
   display: block !important;
   width: 100% !important;
@@ -1337,7 +1337,7 @@
   margin: 0 !important;
   padding: 0 !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview {
   position: relative !important;
   aspect-ratio: 4 / 3 !important;
   height: auto !important;
@@ -1346,7 +1346,7 @@
   border-radius: 12px !important;
   background: color-mix(in srgb, var(--panel) 62%, #111926) !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > .connect-media-thumb {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > .connect-media-thumb {
   position: absolute !important;
   inset: 0 !important;
   box-sizing: border-box !important;
@@ -1365,11 +1365,11 @@
   overflow: hidden !important;
   background: transparent !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > .connect-media-thumb > img,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > .connect-media-thumb > video,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview .connect-video-preview,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview .connect-video-preview > video,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview .connect-video-preview > img {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > .connect-media-thumb > img,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > .connect-media-thumb > video,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview .connect-video-preview,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview .connect-video-preview > video,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview .connect-video-preview > img {
   position: absolute !important;
   inset: 0 !important;
   display: block !important;
@@ -1384,7 +1384,7 @@
   object-fit: contain !important;
 }
 /* An unresolved media URL is displayed in the same 4:3 stage, not in a 1-line span. */
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)) .attachment-preview > span {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > span {
   position: absolute !important;
   inset: 0 !important;
   display: grid !important;
@@ -1481,4 +1481,100 @@
 }
 .connect-app .bubble.media-only:has(.connect-adaptive-photo) .bubble-meta {
   align-self: flex-end !important;
+}
+
+
+/* Connect: single photo framed like an album v2 */
+/* Preserve native photo aspect ratio from --connect-photo-ratio.
+   Reserve photo area during loading; only legacy photos may reflow
+   once after their real dimensions are decoded. */
+.connect-app .bubble.sent.media-only:not(.sticker-bubble):has(.connect-adaptive-photo),
+.connect-app .bubble.received.media-only:not(.sticker-bubble):has(.connect-adaptive-photo) {
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: min(290px, calc(100vw - 80px)) !important;
+  margin: 0 !important;
+  padding: 3px !important;
+  gap: 0 !important;
+  border: 1px solid var(--glass-stroke-hi, rgba(220,238,255,.24)) !important;
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  color: var(--text) !important;
+  background: color-mix(in srgb, var(--panel) 22%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07) !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) > .bubble-body {
+  box-sizing: border-box !important;
+  display: block !important;
+  flex: 0 0 auto !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo {
+  box-sizing: border-box !important;
+  display: block !important;
+  position: relative !important;
+  flex: 0 0 auto !important;
+  width: min(var(--connect-photo-width, 280px), calc(100vw - 90px)) !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  aspect-ratio: var(--connect-photo-ratio, 4 / 3) !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  background: color-mix(in srgb, var(--panel) 62%, #111926) !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image {
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .attachment-preview.connect-adaptive-photo > .connect-adaptive-image > img {
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 12px !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-photo) .bubble-meta {
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  align-self: stretch !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: 20px !important;
+  padding: 3px 7px 1px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: .92 !important;
 }
