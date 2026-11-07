@@ -1320,15 +1320,15 @@
 /* Reserve the FULL media footprint before a signed URL/image/video is ready.
    Uniform 4:3 stage avoids relayout from image decoding and video metadata.
    object-fit: contain preserves the whole picture inside the chat; tap for original. */
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):has(.attachment-preview) {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)):has(.attachment-preview) {
   box-sizing: border-box !important;
   width: min(280px, calc(100vw - 84px)) !important;
   max-width: min(280px, calc(100vw - 84px)) !important;
   min-width: 0 !important;
   flex: 0 0 auto !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .bubble-body,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .bubble-body,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview {
   box-sizing: border-box !important;
   display: block !important;
   width: 100% !important;
@@ -1337,7 +1337,7 @@
   margin: 0 !important;
   padding: 0 !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview {
   position: relative !important;
   aspect-ratio: 4 / 3 !important;
   height: auto !important;
@@ -1346,7 +1346,7 @@
   border-radius: 12px !important;
   background: color-mix(in srgb, var(--panel) 62%, #111926) !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > .connect-media-thumb {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview > .connect-media-thumb {
   position: absolute !important;
   inset: 0 !important;
   box-sizing: border-box !important;
@@ -1365,11 +1365,11 @@
   overflow: hidden !important;
   background: transparent !important;
 }
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > .connect-media-thumb > img,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > .connect-media-thumb > video,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview .connect-video-preview,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview .connect-video-preview > video,
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview .connect-video-preview > img {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview > .connect-media-thumb > img,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview > .connect-media-thumb > video,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview .connect-video-preview,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview .connect-video-preview > video,
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview .connect-video-preview > img {
   position: absolute !important;
   inset: 0 !important;
   display: block !important;
@@ -1384,7 +1384,7 @@
   object-fit: contain !important;
 }
 /* An unresolved media URL is displayed in the same 4:3 stage, not in a 1-line span. */
-.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)) .attachment-preview > span {
+.connect-app .bubble.media-only:not(.sticker-bubble):not(.video-note-bubble):not(:has(.connect-album-grid)):not(:has(.connect-adaptive-photo)):not(:has(.connect-adaptive-video)) .attachment-preview > span {
   position: absolute !important;
   inset: 0 !important;
   display: grid !important;
@@ -1561,6 +1561,143 @@
   border-radius: 12px !important;
 }
 .connect-app .bubble.media-only:has(.connect-adaptive-photo) .bubble-meta {
+  box-sizing: border-box !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  align-self: stretch !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: 20px !important;
+  padding: 3px 7px 1px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  color: var(--muted) !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  opacity: .92 !important;
+}
+
+
+/* Connect: adaptive single video cards with persistent poster v1 */
+/* Same slim album framing as standalone photos, with native video proportions. */
+.connect-app .bubble.sent.media-only:not(.video-note-bubble):has(.connect-adaptive-video),
+.connect-app .bubble.received.media-only:not(.video-note-bubble):has(.connect-adaptive-video) {
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: min(290px, calc(100vw - 80px)) !important;
+  margin: 0 !important;
+  padding: 3px !important;
+  gap: 0 !important;
+  border: 1px solid var(--glass-stroke-hi, rgba(220,238,255,.24)) !important;
+  border-radius: 16px !important;
+  overflow: hidden !important;
+  color: var(--text) !important;
+  background: color-mix(in srgb, var(--panel) 22%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.07) !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-video) > .bubble-body {
+  box-sizing: border-box !important;
+  display: block !important;
+  flex: 0 0 auto !important;
+  width: fit-content !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video {
+  box-sizing: border-box !important;
+  display: block !important;
+  position: relative !important;
+  flex: 0 0 auto !important;
+  width: min(var(--connect-video-card-width, 280px), calc(100vw - 90px)) !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  aspect-ratio: var(--connect-video-card-ratio, 4 / 3) !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  background: color-mix(in srgb, var(--panel) 62%, #111926) !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video > .connect-adaptive-video-thumb {
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  background: transparent !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video .connect-video-preview,
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video .connect-video-preview > img,
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video .connect-video-preview > video {
+  position: absolute !important;
+  inset: 0 !important;
+  display: block !important;
+  width: 100% !important;
+  height: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  aspect-ratio: auto !important;
+  object-fit: cover !important;
+  background: transparent !important;
+}
+/* Override the old oversized video play badge only for standalone video cards. */
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video > .connect-adaptive-video-thumb:has(.connect-video-preview)::after {
+  content: "" !important;
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-50%, -50%) !important;
+  display: block !important;
+  width: 38px !important;
+  height: 38px !important;
+  border: 1px solid rgba(255,255,255,.60) !important;
+  border-radius: 50% !important;
+  background: rgba(10,18,29,.48) !important;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 12px rgba(0,0,0,.17) !important;
+  padding: 0 !important;
+  pointer-events: none !important;
+  z-index: 20 !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .attachment-preview.connect-adaptive-video > .connect-adaptive-video-thumb:has(.connect-video-preview)::before {
+  content: "" !important;
+  position: absolute !important;
+  top: 50% !important;
+  left: 50% !important;
+  transform: translate(-38%,-50%) !important;
+  width: 0 !important;
+  height: 0 !important;
+  border-top: 6px solid transparent !important;
+  border-bottom: 6px solid transparent !important;
+  border-left: 9px solid white !important;
+  background: transparent !important;
+  z-index: 21 !important;
+  pointer-events: none !important;
+}
+.connect-app .bubble.media-only:has(.connect-adaptive-video) .bubble-meta {
   box-sizing: border-box !important;
   display: flex !important;
   align-items: center !important;

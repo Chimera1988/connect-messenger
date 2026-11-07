@@ -452,11 +452,115 @@ function connectUpdatePhotoSize(image: HTMLImageElement, path: string) {
   }
 }
 
-function VideoThumbnail({src}:{src:string}) {
+
+type ConnectVideoPreview = { size: ConnectPhotoSize; poster: Blob | null };
+const connectVideoSizeCache = new Map<string, ConnectPhotoSize>();
+
+function connectVideoFrameStyle(path: string): CSSProperties | undefined {
+  const found = /__vid_(\d{1,5})x(\d{1,5})$/.exec(path);
+  const dimensions = found
+    ? {width:Number(found[1]),height:Number(found[2])}
+    : connectVideoSizeCache.get(path);
+  if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) return undefined;
+  const layout = connectPhotoFrameValues(dimensions);
+  return { '--connect-video-card-width': layout.width, '--connect-video-card-ratio': layout.ratio } as CSSProperties;
+}
+
+function connectUpdateVideoFrame(video: HTMLVideoElement, path: string) {
+  if (!video.videoWidth || !video.videoHeight) return;
+  const frame = video.closest<HTMLElement>('.attachment-preview.connect-adaptive-video');
+  if (!frame) return;
+  const size = {width:video.videoWidth,height:video.videoHeight};
+  connectVideoSizeCache.set(path, size);
+  const values = connectPhotoFrameValues(size);
+  if (frame.style.getPropertyValue('--connect-video-card-width') === values.width &&
+      frame.style.getPropertyValue('--connect-video-card-ratio') === values.ratio) return;
+  const scroll = frame.closest<HTMLElement>('.message-scroll');
+  const view = scroll?.getBoundingClientRect();
+  const anchor = scroll && view
+    ? Array.from(scroll.querySelectorAll<HTMLElement>('.message-day-group'))
+        .find(node => node.getBoundingClientRect().bottom > view.top + 8)
+    : undefined;
+  const originalTop = anchor?.getBoundingClientRect().top;
+  const nearBottom = scroll ? scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 100 : false;
+  frame.style.setProperty('--connect-video-card-width', values.width);
+  frame.style.setProperty('--connect-video-card-ratio', values.ratio);
+  // Old videos did not store dimensions: preserve the reading position on first decode.
+  if (scroll) {
+    if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
+    else if (anchor && originalTop !== undefined)
+      scroll.scrollTop += anchor.getBoundingClientRect().top - originalTop;
+  }
+}
+
+async function connectVideoFilePreview(file: File): Promise<ConnectVideoPreview | null> {
+  if (!file.type.startsWith('video/')) return null;
+  const url = URL.createObjectURL(file);
+  return await new Promise(resolve => {
+    const video = document.createElement('video');
+    video.preload = 'auto'; video.muted = true; video.playsInline = true;
+    let settled = false, captured = false;
+    let size: ConnectPhotoSize | null = null;
+    const timer = window.setTimeout(() => finish(null), 5500);
+    function finish(poster: Blob | null) {
+      if (settled) return;
+      settled = true; window.clearTimeout(timer);
+      video.pause(); video.removeAttribute('src'); video.load();
+      URL.revokeObjectURL(url);
+      resolve(size ? {size, poster} : null);
+    }
+    function capture() {
+      if (!size || captured || video.readyState < 2) return;
+      captured = true;
+      try {
+        const canvas = document.createElement('canvas');
+        const scale = Math.min(1, 480 / size.width, 480 / size.height);
+        canvas.width = Math.max(1, Math.round(size.width * scale));
+        canvas.height = Math.max(1, Math.round(size.height * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {finish(null);return;}
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(blob => finish(blob && blob.size > 0 ? blob : null), 'image/jpeg', .76);
+      } catch { finish(null); }
+    }
+    video.onloadedmetadata = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        size = {width: video.videoWidth, height: video.videoHeight};
+      }
+      try {
+        const target = Number.isFinite(video.duration) && video.duration > .3
+          ? Math.min(1.2, Math.max(.3, video.duration * .12), video.duration * .8) : 0;
+        if (target > 0) video.currentTime = target;
+        else if (video.readyState >= 2) capture();
+      } catch { if (video.readyState >= 2) capture(); }
+    };
+    video.onseeked = capture;
+    video.onloadeddata = () => {
+      if (!Number.isFinite(video.duration) || video.duration <= .3 || video.currentTime > .05)
+        capture();
+    };
+    video.onerror = () => finish(null);
+    video.src = url;
+    video.load();
+  });
+}
+
+function VideoThumbnail({src,path}:{src:string;path?:string}) {
   const [poster,setPoster]=useState<string|null>(null);
+  const [uploadedPoster,setUploadedPoster]=useState<string|null>(null);
   const [failed,setFailed]=useState(false);
   const videoRef=useRef<HTMLVideoElement|null>(null);
   useEffect(()=>{setPoster(null);setFailed(false)},[src]);
+  useEffect(() => {
+    setUploadedPoster(null);
+    if (!path || !/__vid_\d{1,5}x\d{1,5}$/.test(path) || !supabase) return;
+    let cancelled = false;
+    void supabase.storage.from('connect-attachments').createSignedUrl(path + '__poster.jpg', 3600)
+      .then(({data,error}) => {
+        if (!cancelled && !error && data?.signedUrl) setUploadedPoster(mediaUrl(data.signedUrl));
+      }).catch(() => {});
+    return () => {cancelled = true;};
+  }, [path]);
   function capture(video:HTMLVideoElement){
     if(!video.videoWidth||!video.videoHeight)return;
     try{
@@ -470,11 +574,11 @@ function VideoThumbnail({src}:{src:string}) {
     }catch{setFailed(true)}
   }
   return <span className="connect-video-preview">
-    {poster && <img src={poster} alt="Предпросмотр видео"/>}
+    {(uploadedPoster || poster) && <img src={uploadedPoster || poster || ''} alt="Предпросмотр видео" onError={()=>setUploadedPoster(null)}/>}
     <video ref={videoRef} src={src} playsInline muted preload="auto"
-      onLoadedMetadata={e=>{const v=e.currentTarget;syncVideoThumbnailSize(v);try{v.currentTime=Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
-      onSeeked={e=>{syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}
-      onLoadedData={e=>{syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}
+      onLoadedMetadata={e=>{const v=e.currentTarget;if(path)connectUpdateVideoFrame(v,path);else syncVideoThumbnailSize(v);try{v.currentTime=path && Number.isFinite(v.duration) && v.duration>.3 ? Math.min(1.2,Math.max(.3,v.duration*.12),v.duration*.8) : Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
+      onSeeked={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}
+      onLoadedData={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}
       onError={()=>setFailed(true)}
       style={poster?{visibility:'hidden'}:undefined}/>
     {failed&&!poster&&<span className="connect-video-fallback">Видео</span>}
@@ -1352,9 +1456,9 @@ export default function Home() {
           // The DB constraint requires every attachment path to start with
           // the destination conversation ID and the forwarding user's ID.
           // Keep image dimensions when forwarding, without changing the DB schema.
-const imageSuffix = m.attachment_kind === 'image'
-  ? (m.attachment_path.match(/__img_\d{1,5}x\d{1,5}$/)?.[0] || '') : '';
-path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;
+          const mediaSuffix = (m.attachment_kind === 'image' || m.attachment_kind === 'video')
+            ? (m.attachment_path.match(/__(?:img|vid)_\d{1,5}x\d{1,5}$/)?.[0] || '') : '';
+          path = `${chat.id}/${user.id}/${crypto.randomUUID()}${mediaSuffix}`;
           const bucket = supabase.storage.from('connect-attachments');
           const copied = await bucket.copy(m.attachment_path, path);
           if (copied.error) {
@@ -1365,6 +1469,10 @@ path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;
             if (downloaded.error || !downloaded.data) throw new Error('Не удалось прочитать вложение: ' + (downloaded.error?.message || 'Ошибка'));
             const uploaded = await bucket.upload(path, downloaded.data, {contentType:m.attachment_type || 'application/octet-stream', upsert:false});
             if (uploaded.error) throw new Error('Не удалось загрузить вложение: ' + uploaded.error.message);
+          }
+          if (m.attachment_kind === 'video' && /__vid_\d{1,5}x\d{1,5}$/.test(m.attachment_path)) {
+            // Optional source poster: do not fail forwarding if unavailable.
+            try { await bucket.copy(m.attachment_path + '__poster.jpg', path + '__poster.jpg'); } catch { /* optional */ }
           }
         }
         const {error} = await supabase.from('messages').insert({
@@ -1669,6 +1777,16 @@ path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;
         if (size && size.width < 100000 && size.height < 100000)
           path += `__img_${size.width}x${size.height}`;
       }
+      // Create a reliable first-frame preview once for each ordinary video.
+      // The dimensions go in its storage path so layout is stable before downloading.
+      let videoPoster: Blob | null = null;
+      if (kind === 'video' && !/^connect-video-note-\d+\.(?:mp4|webm)$/i.test(file.name)) {
+        const preview = await connectVideoFilePreview(file);
+        if (preview && preview.size.width < 100000 && preview.size.height < 100000) {
+          path += `__vid_${preview.size.width}x${preview.size.height}`;
+          videoPoster = preview.poster;
+        }
+      }
       const {data:{session}}=await supabase.auth.getSession();
       if(!session) throw new Error('Сессия завершена. Войдите снова.');
       if (file.size <= 6*1024*1024) {
@@ -1690,6 +1808,11 @@ path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;
           });
           upload.start();
         });
+      }
+      // The still image is optional: upload failures must not block video messages.
+      if (videoPoster && kind === 'video') {
+        await supabase.storage.from('connect-attachments').upload(path + '__poster.jpg', videoPoster,
+          {contentType:'image/jpeg',upsert:false}).catch(() => {});
       }
       const {data,error}=await supabase.from('messages').insert({
         conversation_id:chatId,sender_id:user.id,body:'',reply_to:replyTo?.id || null,
@@ -1955,13 +2078,13 @@ path = `${chat.id}/${user.id}/${crypto.randomUUID()}${imageSuffix}`;
                       <div className="bubble-body">{m.deleted_at ? 'Сообщение удалено' : <>
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
                         {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?<img src={attachmentUrls[item.path]} alt={item.name} loading="lazy"/>:<><VideoThumbnail src={attachmentUrls[item.path]}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
-                        {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : undefined}>
+                        {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : m.attachment_kind==='video' && !isVideoNote(m) ? "attachment-preview connect-adaptive-video" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : m.attachment_kind==='video' && !isVideoNote(m) ? connectVideoFrameStyle(m.attachment_path) : undefined}>
                           {!attachmentUrls[m.attachment_path] ? (isKeyboardSticker(m) ? <span className="connect-keyboard-sticker-loading" aria-label="Загрузка стикера"/> : <span>Загрузка вложения…</span>)
                             : m.attachment_kind==='image' ? (isKeyboardSticker(m)
                               ? <img className="connect-keyboard-sticker" src={attachmentUrls[m.attachment_path]} alt="Стикер" draggable={false} loading="lazy"/>
                               : <button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy" onLoad={e=>connectUpdatePhotoSize(e.currentTarget,m.attachment_path!)}/></button>)
                             : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'}/>
-                            : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Открыть видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]}/><span className="connect-media-play">▶</span></button>
+                            : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb connect-adaptive-video-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Воспроизвести видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]} path={m.attachment_path!}/><span className="connect-media-play">▶</span></button>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
                             : isPlayableAudioFile(m) ? <div className="connect-inline-audio-file"
                                 onTouchStart={e=>e.stopPropagation()} onTouchMove={e=>e.stopPropagation()} onTouchEnd={e=>e.stopPropagation()}>
