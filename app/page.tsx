@@ -2,6 +2,7 @@
 
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
+import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
 import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
 
@@ -1476,6 +1477,17 @@ export default function Home() {
     const p=profiles.find(x=>x.id===id); if(!p) return;
     setProfileView(id); setProfileMediaOpen(null); setEditName(p.display_name); setEditBio(p.bio || ''); setMenuMessage(null);
   }
+  useEffect(()=>{
+    const open=(event:Event)=>{
+      const id=(event as CustomEvent<{ownerId:string}>).detail?.ownerId;
+      const person=profiles.find(p=>p.id===id);
+      if(!person)return;
+      showProfile(person.id);setProfileMediaOpen('music');
+    };
+    window.addEventListener('connect:music-open',open);
+    return()=>window.removeEventListener('connect:music-open',open);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[profiles]);
   async function saveProfile(e: FormEvent) {
     e.preventDefault(); if(!supabase || !user || !ownProfile || busy) return;
     const name=editName.trim();
@@ -2122,6 +2134,7 @@ export default function Home() {
                 <Avatar size="lg" name={viewedProfile.display_name} id={viewedProfile.id} url={avatarUrls[viewedProfile.id]}/>
                 <h2>{viewedProfile.display_name}</h2>
                 <p>{viewedProfile.bio || 'Информация о себе не указана'}</p>
+                <ConnectMusicStatus client={supabase!} profileId={viewedProfile.id}/>
                 {profileView===user.id && <><button type="button" className="avatar-change" disabled={busy} onClick={()=>avatarInput.current?.click()}><Icon name="camera" size={17}/> Изменить фото</button><input ref={avatarInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{selectAvatar(e.target.files?.[0]);e.currentTarget.value='';}}/></>}
               </div>
               <nav className="connect-profile-library-links" aria-label="Медиатека профиля">

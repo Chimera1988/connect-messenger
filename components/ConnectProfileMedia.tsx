@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
+import { ConnectMusicLibrary } from './ConnectMusicSystem';
 
 export type ProfileMediaKind = 'photos' | 'videos' | 'music';
 
@@ -85,8 +86,25 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [selectedSong, setSelectedSong] = useState<string | null>(null);
   const [preview, setPreview] = useState<MediaItem | null>(null);
+  const swipeStart=useRef<{x:number;y:number}|null>(null);
+  const navigatePreview=useCallback((direction:1|-1)=>{
+    setPreview(old=>{
+      if(!old || !items.length)return old;
+      const current=items.findIndex(item=>item.path===old.path);
+      return items[(Math.max(0,current)+direction+items.length)%items.length];
+    });
+  },[items]);
+  useEffect(()=>{
+    if(!preview)return;
+    const onKey=(event:KeyboardEvent)=>{
+      if(event.key==='ArrowLeft'){event.preventDefault();navigatePreview(-1);}
+      else if(event.key==='ArrowRight'){event.preventDefault();navigatePreview(1);}
+      else if(event.key==='Escape')setPreview(null);
+    };
+    window.addEventListener('keydown',onKey);
+    return()=>window.removeEventListener('keydown',onKey);
+  },[preview,navigatePreview]);
   const directory = `${userId}/${kind}`;
   const heading = isOwner ? TITLES[kind] : ({ photos: 'Фото', videos: 'Видео', music: 'Музыка' } as const)[kind];
 
@@ -172,7 +190,6 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
     try {
       const { error: removeError } = await client.storage.from(BUCKET).remove([item.path]);
       if (removeError) throw removeError;
-      if (selectedSong === item.path) setSelectedSong(null);
       if (preview?.path === item.path) setPreview(null);
       setNotice('Файл удалён.');
     } catch (e) { setError('Не удалось удалить: ' + (e instanceof Error ? e.message : String(e))); }
@@ -190,7 +207,6 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
     finally { setBusy(false); }
   }
 
-  const song = items.find(item => item.path === selectedSong) || items[0];
   return <>
     <header className="profile-top"><button type="button" className="icon-btn" onClick={onBack} aria-label="Вернуться в мой профиль"><span aria-hidden="true" style={{ fontSize: 30, lineHeight: 1 }}>‹</span></button><strong>{heading}</strong></header>
     <div className="connect-profile-media-page">
@@ -213,23 +229,29 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
           {isOwner && <div className="connect-profile-media-item-actions"><button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(item.mime)} onClick={() => void makeAvatar(item)}>На аватар</button><button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button></div>}
         </article>)}</div>}
         {kind === 'videos' && <div className="connect-profile-video-list">{items.map(item => <article key={item.path} className="connect-profile-media-item">
-          <video src={item.url} playsInline controls preload="metadata" className="connect-profile-video-player" aria-label={item.name}/>
+          <button type="button" className="connect-profile-video-thumb" onClick={()=>setPreview(item)} aria-label={`Просмотреть ${item.name}`}><video src={item.url} preload="metadata" playsInline muted tabIndex={-1}/><span aria-hidden="true">▶</span></button>
           <div className="connect-profile-media-item-info"><strong title={item.name}>{item.name}</strong>{isOwner && <button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button>}</div>
         </article>)}</div>}
-        {kind === 'music' && <>
-          {song && <div className="connect-profile-music-player"><small>Сейчас выбрано</small><strong>{song.name}</strong><audio key={song.path} src={song.url} controls preload="metadata" aria-label={`Прослушать ${song.name}`}/></div>}
-          <div className="connect-profile-track-list">{items.map((item, index) => <div key={item.path} className={'connect-profile-track' + (song?.path === item.path ? ' selected' : '')}>
-            <button type="button" className="connect-profile-track-select" onClick={() => setSelectedSong(item.path)} aria-label={`Выбрать трек ${item.name}`}><span aria-hidden="true">♪</span><span><strong>{item.name}</strong><small>Трек {index + 1}</small></span></button>
-            {isOwner && <button type="button" disabled={busy} className="connect-profile-track-delete" onClick={() => void remove(item)} aria-label={`Удалить ${item.name}`}>Удалить</button>}
-          </div>)}</div>
-        </>}
+        {kind === 'music' && <ConnectMusicLibrary client={client} ownerId={userId} items={items} isOwner={isOwner} busy={busy} onRemove={song => { const item=items.find(x=>x.path===song.path); if(item) void remove(item); }}/>}
       </>}
       <p className="connect-profile-media-hint">{isOwner ? 'Медиа доступны другим участникам Connect при просмотре твоего профиля. Максимум 100 МБ на файл.' : 'Медиа этого пользователя доступны для просмотра и прослушивания только участникам Connect.'}</p>
     </div>
-    {preview && <div className="connect-profile-photo-overlay" role="dialog" aria-modal="true" aria-label="Просмотр фотографии" onClick={() => setPreview(null)}>
-      <button type="button" className="connect-profile-photo-close" onClick={() => setPreview(null)}>Закрыть</button>
-      <img src={preview.url} alt={preview.name} onClick={e => e.stopPropagation()}/>
-      {isOwner && <button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(preview.mime)} onClick={e => { e.stopPropagation(); void makeAvatar(preview); setPreview(null); }}>Сделать аватаром</button>}
+    {preview && <div className="connect-profile-photo-overlay" role="dialog" aria-modal="true" aria-label={kind==='photos'?'Просмотр фотографий':'Просмотр видео'}
+      onClick={()=>setPreview(null)}
+      onTouchStart={e=>{const touch=e.touches[0];if(touch)swipeStart.current={x:touch.clientX,y:touch.clientY};}}
+      onTouchEnd={e=>{const touch=e.changedTouches[0];const start=swipeStart.current;swipeStart.current=null;
+        if(touch && start){const dx=touch.clientX-start.x;const dy=touch.clientY-start.y;
+          if(Math.abs(dx)>55 && Math.abs(dx)>Math.abs(dy)*1.25)navigatePreview(dx>0?-1:1);
+        }
+      }}>
+      <button type="button" className="connect-profile-photo-close" onClick={()=>setPreview(null)}>Закрыть</button>
+      <span className="connect-gallery-count">{items.findIndex(item=>item.path===preview.path)+1} / {items.length}</span>
+      {items.length>1 && <><button type="button" className="connect-gallery-nav connect-gallery-prev" onClick={e=>{e.stopPropagation();navigatePreview(-1);}} aria-label="Предыдущий файл">‹</button>
+        <button type="button" className="connect-gallery-nav connect-gallery-next" onClick={e=>{e.stopPropagation();navigatePreview(1);}} aria-label="Следующий файл">›</button></>}
+      {kind==='videos' ? <video key={preview.path} src={preview.url} playsInline controls preload="metadata" onClick={e=>e.stopPropagation()} aria-label={preview.name}/>
+        : <img key={preview.path} src={preview.url} alt={preview.name} onClick={e=>e.stopPropagation()}/>}
+      <span className="connect-gallery-name">{preview.name}</span>
+      {isOwner && kind==='photos' && <button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(preview.mime)} onClick={e=>{e.stopPropagation();void makeAvatar(preview);setPreview(null);}}>Сделать аватаром</button>}
     </div>}
   </>;
 }

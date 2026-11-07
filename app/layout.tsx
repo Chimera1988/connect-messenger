@@ -5,10 +5,12 @@ import ConnectUiCoordinator from '../components/ConnectUiCoordinator';
 import ConnectCallBridge from '../components/ConnectCallBridge';
 import ConnectCallsHub from '../components/ConnectCallsHub';
 import ConnectSonicRunner from '../components/ConnectSonicRunner';
+import { ConnectMusicProvider } from '../components/ConnectMusicSystem';
 import './globals.css';
 import './liquid-glass.css';
 import './calls.css';
 import './profile-media.css';
+import './music-system.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
@@ -24,5 +26,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ru"><body>{children}<InvitationCodes /><ConnectDynamicTheme /><ConnectUiCoordinator /><ConnectCallBridge /><ConnectCallsHub /><ConnectSonicRunner /></body></html>;
+  return <html lang="ru"><body><ConnectMusicProvider>{children}</ConnectMusicProvider><InvitationCodes /><ConnectDynamicTheme /><ConnectUiCoordinator /><ConnectCallBridge /><ConnectCallsHub /><ConnectSonicRunner /></body></html>;
 }
