@@ -57,14 +57,17 @@ function validFile(file: File, kind: ProfileMediaKind) {
 }
 function encodeName(name: string) {
   const ext = extension(name);
-  const clipped = name.length <= 70 ? name : name.slice(0, 68 - ext.length) + '.' + ext;
-  const bytes = new TextEncoder().encode(clipped);
+  const suffix = '.' + ext;
+  const chars = Array.from(name.slice(0, -suffix.length));
+  const encoder = new TextEncoder();
+  while (chars.length && encoder.encode(chars.join('') + suffix).length > 88) chars.pop();
+  const bytes = encoder.encode(chars.join('') + suffix);
   let raw = '';
   for (const byte of bytes) raw += String.fromCharCode(byte);
   return btoa(raw).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 function decodeName(name: string) {
-  const suffix = name.split('~').slice(1).join('~');
+  const suffix = name.split('__').slice(1).join('__');
   const encoded = suffix.replace(/\.[^.]*$/, '');
   if (!encoded) return name;
   try {
@@ -89,7 +92,6 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
 
   const load = useCallback(async () => {
     setLoading(true);
-    setError('');
     const { data, error: listError } = await client.storage.from(BUCKET).list(`${userId}/${kind}`, {
       limit: 100, sortBy: { column: 'created_at', order: 'desc' },
     });
@@ -123,7 +125,7 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
       for (const file of files) {
         if (!validFile(file, kind)) throw new Error(`Неподдерживаемый формат или размер: ${file.name}. Максимум ${bytesLabel(MAX_SIZE)}.`);
         const ext = extension(file.name);
-        const path = `${directory}/${Date.now()}-${crypto.randomUUID()}~${encodeName(file.name)}.${ext}`;
+        const path = `${directory}/${Date.now()}-${crypto.randomUUID()}__${encodeName(file.name)}.${ext}`;
         const contentType = kind === 'music' && ext === 'webm' ? 'audio/webm' : MIME[ext] || file.type || 'application/octet-stream';
         setUploadProgress(0);
         if (file.size <= 6 * 1024 * 1024) {
