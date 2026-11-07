@@ -178,7 +178,7 @@ function forwardBody(from: string, body: string): string {
 
 function messagePreview(m?: Message, selfId?: string) {
   if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (isVideoNote(m) ? '🎥 Видеокружок' : parseAlbum(m.body).length ? `🖼 Альбом (${parseAlbum(m.body).length})` : (stickerFromBody(forwardedMessage(m.body).text) || (m.attachment_kind==='image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || ''))) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'📷 Фото',video:'🎬 Видео',audio:'🎤 Голосовое сообщение',file:'📎 Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
+  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (isVideoNote(m) ? 'Видеокружок' : parseAlbum(m.body).length ? `Альбом (${parseAlbum(m.body).length})` : (stickerFromBody(forwardedMessage(m.body).text) || (m.attachment_kind==='image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || ''))) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'Фото',video:'Видео',audio:'Голосовое сообщение',file:'Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
 }
 
 
