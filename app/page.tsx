@@ -585,43 +585,130 @@ function VideoThumbnail({src,path}:{src:string;path?:string}) {
   </span>;
 }
 
+// Connect inline autoplay video and separate audio controls v1
+function ConnectSoundGlyph({muted}:{muted:boolean}) {
+  return <svg aria-hidden="true" viewBox="0 0 24 24" width="19" height="19" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M4 9h4l4-3v12l-4-3H4z"/>
+    {muted ? <path d="m16 9 5 6m0-6-5 6"/> : <><path d="M16 9c1.5 1.1 1.5 4.9 0 6"/><path d="M19 6c3.5 3 3.5 9 0 12"/></>}
+  </svg>;
+}
+
+function ConnectInlineAutoplayVideo({src,path,onOpen}:{src:string;path:string;onOpen:()=>void}) {
+  const ref=useRef<HTMLVideoElement|null>(null);
+  const soundRef=useRef(true);
+  const [muted,setMuted]=useState(true);
+  const [poster,setPoster]=useState<string|null>(null);
+  const [error,setError]=useState(false);
+
+  useEffect(()=>{
+    setPoster(null);setError(false);
+    if(!supabase || !/__vid_\d{1,5}x\d{1,5}$/.test(path))return;
+    let cancelled=false;
+    void supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600)
+      .then(({data,error:requestError})=>{
+        if(!cancelled&&!requestError&&data?.signedUrl)setPoster(mediaUrl(data.signedUrl));
+      }).catch(()=>{});
+    return()=>{cancelled=true;};
+  },[path]);
+
+  useEffect(()=>{
+    const video=ref.current;
+    if(!video)return;
+    soundRef.current=true;video.muted=true;setMuted(true);
+    let inView=false;
+    function update(){
+      if(!video)return;
+      if(inView&&document.visibilityState==='visible'){
+        video.muted=soundRef.current;
+        void video.play().catch(()=>{}); // iOS low-power mode may block autoplay
+      }else{
+        video.pause();video.muted=true;soundRef.current=true;setMuted(true);
+      }
+    }
+    const observer=new IntersectionObserver(entries=>{
+      inView=Boolean(entries[0]?.isIntersecting);
+      update();
+    },{root:video.closest<HTMLElement>('.message-scroll'),threshold:.35});
+    observer.observe(video);
+    document.addEventListener('visibilitychange',update);
+    return()=>{
+      observer.disconnect();document.removeEventListener('visibilitychange',update);
+      video.pause();video.muted=true;
+    };
+  },[src]);
+
+  return <div className="connect-inline-autoplay-video">
+    <button type="button" className="connect-inline-autoplay-video-open" aria-label="Открыть видео на весь экран"
+      onClick={event=>{event.stopPropagation();onOpen();}}>
+      <video ref={ref} src={src} poster={poster||undefined} autoPlay muted={muted} loop playsInline preload="metadata"
+        onLoadedMetadata={event=>connectUpdateVideoFrame(event.currentTarget,path)}
+        onError={()=>setError(true)}/>
+      {error&&<span className="connect-inline-video-error">Видео недоступно</span>}
+    </button>
+    <button type="button" className="connect-inline-video-sound" aria-label={muted?'Включить звук':'Выключить звук'}
+      title={muted?'Включить звук':'Выключить звук'}
+      onClick={event=>{
+        event.stopPropagation();const video=ref.current;if(!video)return;
+        const next=!video.muted;
+        soundRef.current=next;video.muted=next;setMuted(next);
+        if(!next)void video.play().catch(()=>{});
+      }}><ConnectSoundGlyph muted={muted}/></button>
+  </div>;
+}
+
 // Video notes use the existing video attachments schema, but have a distinct presentation.
 function isVideoNote(m: Message): boolean {
   return m.attachment_kind === 'video' && /^connect-video-note-\d+\.(?:mp4|webm)$/i.test(m.attachment_name || '');
 }
 
+// Connect video-note sound control v2
 function VideoNoteBubble({src,name}:{src:string;name:string}) {
   const ref=useRef<HTMLVideoElement|null>(null);
-  const [sound,setSound]=useState(false);
-  const [visible,setVisible]=useState(false);
+  const [muted,setMuted]=useState(true);
   const [duration,setDuration]=useState(0);
   useEffect(()=>{
     const video=ref.current;
     if(!video)return;
-    video.muted=true;
-    setSound(false);
+    video.muted=true;setMuted(true);
+    let inView=false;
+    function update(){
+      if(!video)return;
+      if(inView&&document.visibilityState==='visible'){
+        video.muted=true;setMuted(true);
+        void video.play().catch(()=>{});
+      }else{
+        video.pause();video.muted=true;setMuted(true);
+      }
+    }
     const observer=new IntersectionObserver(entries=>{
-      const seen=Boolean(entries[0]?.isIntersecting);
-      setVisible(seen);
-      if(seen){video.muted=true;setSound(false);void video.play().catch(()=>{});}
-      else{video.pause();video.muted=true;setSound(false);}
-    },{threshold:.35});
+      inView=Boolean(entries[0]?.isIntersecting);update();
+    },{root:video.closest<HTMLElement>('.message-scroll'),threshold:.35});
     observer.observe(video);
-    return()=>{observer.disconnect();video.pause();};
+    document.addEventListener('visibilitychange',update);
+    return()=>{
+      observer.disconnect();document.removeEventListener('visibilitychange',update);
+      video.pause();video.muted=true;
+    };
   },[src]);
-  return <button type="button" className="connect-video-note" aria-label={sound?'Выключить звук видеокружка':'Включить звук видеокружка'}
-    onClick={event=>{
-      event.stopPropagation();const video=ref.current;if(!video)return;
-      if(!visible){void video.play().catch(()=>{});return;}
-      const next=video.muted;
-      video.muted=!next;
-      setSound(next);
-      if(next)void video.play().catch(()=>{});
-    }}>
-    <video ref={ref} src={src} muted playsInline loop preload="metadata" aria-label={name} onLoadedMetadata={e=>{const d=e.currentTarget.duration;if(Number.isFinite(d))setDuration(d)}}/>
-    {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,"0")}</span>}
-    <span className="connect-video-note-sound" aria-hidden="true">{sound?'🔊':'🔇'}</span>
-  </button>;
+  return <div className="connect-video-note">
+    <button type="button" className="connect-video-note-screen" aria-label="Приостановить или продолжить видеокружок"
+      onClick={event=>{
+        event.stopPropagation();const video=ref.current;if(!video)return;
+        if(video.paused)void video.play().catch(()=>{});else video.pause();
+      }}>
+      <video ref={ref} src={src} muted={muted} autoPlay playsInline loop preload="metadata" aria-label={name}
+        onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d))setDuration(d)}}/>
+    </button>
+    {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
+    <button type="button" className="connect-video-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
+      title={muted?'Включить звук':'Выключить звук'}
+      onClick={event=>{
+        event.stopPropagation();const video=ref.current;if(!video)return;
+        const next=!video.muted;video.muted=next;setMuted(next);
+        if(!next)void video.play().catch(()=>{});
+      }}><ConnectSoundGlyph muted={muted}/></button>
+  </div>;
 }
 
 type VideoNotePhase = 'loading'|'ready'|'recording'|'review'|'error';
@@ -2084,7 +2171,7 @@ export default function Home() {
                               ? <img className="connect-keyboard-sticker" src={attachmentUrls[m.attachment_path]} alt="Стикер" draggable={false} loading="lazy"/>
                               : <button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy" onLoad={e=>connectUpdatePhotoSize(e.currentTarget,m.attachment_path!)}/></button>)
                             : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'}/>
-                            : m.attachment_kind==='video' ? <button type="button" className="connect-media-thumb connect-adaptive-video-thumb" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}} aria-label="Воспроизвести видео"><VideoThumbnail src={attachmentUrls[m.attachment_path]} path={m.attachment_path!}/><span className="connect-media-play">▶</span></button>
+                            : m.attachment_kind==='video' ? <ConnectInlineAutoplayVideo src={attachmentUrls[m.attachment_path]} path={m.attachment_path} onOpen={()=>setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}/>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]}/><button type="button" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудио')}}>Сохранить</button></div>
                             : isPlayableAudioFile(m) ? <div className="connect-inline-audio-file"
                                 onTouchStart={e=>e.stopPropagation()} onTouchMove={e=>e.stopPropagation()} onTouchEnd={e=>e.stopPropagation()}>
