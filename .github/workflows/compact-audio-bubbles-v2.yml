@@ -1,0 +1,127 @@
+name: Connect PWA - tighter audio attachments
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/compact-audio-bubbles-v2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  style:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Make audio attachments smaller and align footer edges
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          css_path = Path('app/globals.css')
+          page_path = Path('app/page.tsx')
+          original = css_path.read_text(encoding='utf-8')
+          page = page_path.read_text(encoding='utf-8')
+          old_marker = '/* Connect UI: compact uploaded audio attachments */'
+          new_marker = '/* Connect UI: compact uploaded audio attachments v2 */'
+
+          # The saving action and timestamp are already siblings in the markup.
+          # Only change styling; don't touch messages, receipts, or player code.
+          if 'className="connect-inline-audio-save"' not in page or 'className="bubble-meta"' not in page:
+              raise SystemExit('Expected audio file markup not found; refusing to change unrelated code')
+
+          updated_styles = r'''
+          /* Connect UI: compact uploaded audio attachments v2 */
+          .connect-app .bubble:has(.connect-inline-audio-file) {
+            width: min(264px, 78vw) !important;
+            max-width: min(264px, 78vw) !important;
+            min-width: 0 !important;
+            padding: 7px 9px 4px !important;
+            gap: 0 !important;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .bubble-body,
+          .connect-app .bubble:has(.connect-inline-audio-file) .attachment-preview {
+            width: 100%; max-width: 100%; min-width: 0;
+            margin: 0 !important; padding: 0 !important; gap: 0 !important;
+          }
+          .connect-app .connect-inline-audio-file {
+            display: flex; flex-direction: column;
+            width: 100%; max-width: 100%; min-width: 0 !important;
+            margin: 0 !important; padding: 0 !important; gap: 3px !important;
+          }
+          .connect-app .connect-inline-audio-file .connect-inline-audio-name {
+            gap: 5px; font-size: 11.5px; line-height: 1.22;
+          }
+          .connect-app .connect-inline-audio-file .connect-inline-audio-name svg {
+            flex: 0 0 14px; width: 14px; height: 14px;
+          }
+          .connect-app .connect-inline-audio-file .connect-inline-audio-name span {
+            display: -webkit-box; -webkit-box-orient: vertical;
+            -webkit-line-clamp: 2; overflow: hidden;
+          }
+          .connect-app .connect-inline-audio-file audio {
+            display: block !important;
+            width: 100% !important; max-width: 100% !important;
+            height: 38px !important; border-radius: 18px;
+            margin: 0 !important; padding: 0 !important;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .bubble-meta {
+            display: flex !important; align-items: center !important;
+            justify-content: flex-end !important;
+            align-self: stretch !important;
+            box-sizing: border-box !important;
+            width: 100% !important; max-width: 100% !important;
+            gap: 3px !important; min-height: 16px !important;
+            margin: -2px 0 0 !important; padding: 0 !important;
+            white-space: nowrap; font-size: 10px !important;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .connect-inline-audio-save {
+            order: -1; margin: 0 auto 0 0 !important;
+            padding: 0 !important; border: 0 !important;
+            background: transparent !important; box-shadow: none !important;
+            color: inherit !important;
+            font: 600 10.5px/1.15 system-ui, -apple-system, sans-serif;
+            text-align: left; white-space: nowrap; opacity: .93;
+          }
+          .connect-app .bubble:has(.connect-inline-audio-file) .connect-inline-audio-save:active {
+            opacity: .62;
+          }
+          '''.strip() + '\n'
+
+          if new_marker in original:
+              print('Compact audio v2 already applied; no changes needed')
+          else:
+              if original.count(old_marker) != 1:
+                  raise SystemExit('Previous compact-audio CSS block was not found exactly once')
+              prefix, suffix = original.split(old_marker, 1)
+              if ('width: min(288px, 78vw)' not in suffix
+                  or '.connect-inline-audio-save:active' not in suffix
+                  or not suffix.rstrip().endswith('opacity: .62;\n}')):
+                  raise SystemExit('Styles have changed since this fix was prepared; stopping safely')
+              css_path.write_text(prefix.rstrip() + '\n\n' + updated_styles, encoding='utf-8')
+              print('Compact audio styles updated to v2')
+          PY
+      - name: Validate diff
+        run: git diff --check
+      - name: Check TypeScript
+        run: |
+          npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+          npx tsc --noEmit
+      - name: Commit updated CSS only
+        run: |
+          git config user.name 'Connect UI updater'
+          git config user.email 'actions@users.noreply.github.com'
+          git add app/globals.css
+          if ! git diff --cached --quiet; then
+            git commit -m 'style: smaller audio bubbles and left-aligned save action'
+            git push origin HEAD:main
+          else
+            echo 'No CSS changes to commit'
+          fi
