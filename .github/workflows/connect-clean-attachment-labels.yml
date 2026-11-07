@@ -1,0 +1,74 @@
+name: Connect - clean attachment labels in chat list
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-clean-attachment-labels.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Connect
+        uses: actions/checkout@v4
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Remove emoji from attachment labels in chat previews
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/page.tsx')
+          source = path.read_text(encoding='utf-8')
+          start = source.find('function messagePreview(')
+          end = source.find('\nfunction voiceTime(', start)
+          if start < 0 or end < 0:
+              raise SystemExit('Cannot find messagePreview; app/page.tsx was not changed.')
+
+          preview = source[start:end]
+          substitutions = [
+              ('🎥 Видеокружок', 'Видеокружок'),
+              ('🖼 Альбом', 'Альбом'),
+              ('📷 Фото', 'Фото'),
+              ('🎬 Видео', 'Видео'),
+              ('🎤 Голосовое сообщение', 'Голосовое сообщение'),
+              ('📎 Файл', 'Файл'),
+          ]
+          for old, new in substitutions:
+              if old in preview:
+                  preview = preview.replace(old, new)
+              elif new not in preview:
+                  raise SystemExit(f'Unexpected messagePreview structure near {new}; no changes written.')
+
+          if preview != source[start:end]:
+              path.write_text(source[:start] + preview + source[end:], encoding='utf-8')
+              print('Removed emoji from chat-list attachment labels.')
+          else:
+              print('Attachment labels already use text only.')
+          PY
+      - name: Check patch formatting
+        run: git diff --check
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Check TypeScript
+        run: npx tsc --noEmit
+      - name: Commit only the preview-label change
+        shell: bash
+        run: |
+          git add app/page.tsx
+          if git diff --cached --quiet; then
+            echo 'Already applied, nothing to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'style: text-only labels for attachments in chat list'
+          git push origin HEAD:main
