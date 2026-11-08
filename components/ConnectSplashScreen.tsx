@@ -52,19 +52,19 @@ export default function ConnectSplashScreen({ ready, onComplete }: Props) {
         preserveAspectRatio="xMidYMid slice" aria-hidden="true">
         <defs>
           <linearGradient id="splashUpper" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#15b5ff" stopOpacity=".85"/>
-            <stop offset=".5" stopColor="#0067e8" stopOpacity=".63"/>
-            <stop offset="1" stopColor="#053ebd" stopOpacity=".08"/>
+            <stop offset="0" stopColor="#a7bdcc" stopOpacity=".12"/>
+            <stop offset=".5" stopColor="#465c70" stopOpacity=".18"/>
+            <stop offset="1" stopColor="#09131e" stopOpacity=".02"/>
           </linearGradient>
           <linearGradient id="splashLower" x1="0" y1="0" x2=".7" y2="1">
-            <stop offset="0" stopColor="#009aff" stopOpacity=".15"/>
-            <stop offset=".43" stopColor="#078bfa" stopOpacity=".78"/>
-            <stop offset="1" stopColor="#063bc4" stopOpacity=".7"/>
+            <stop offset="0" stopColor="#bbcbd8" stopOpacity=".02"/>
+            <stop offset=".43" stopColor="#526c82" stopOpacity=".25"/>
+            <stop offset="1" stopColor="#1b3145" stopOpacity=".22"/>
           </linearGradient>
           <linearGradient id="splashEdge" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="#3caefb" stopOpacity=".04"/>
-            <stop offset=".42" stopColor="#69ecff" stopOpacity=".9"/>
-            <stop offset="1" stopColor="#27a9ff" stopOpacity=".12"/>
+            <stop offset="0" stopColor="#859aa9" stopOpacity=".04"/>
+            <stop offset=".42" stopColor="#dceaf4" stopOpacity=".55"/>
+            <stop offset="1" stopColor="#b0cadb" stopOpacity=".12"/>
           </linearGradient>
         </defs>
         <g className="connect-splash__upper-wave">
@@ -73,7 +73,7 @@ export default function ConnectSplashScreen({ ready, onComplete }: Props) {
           <path d="M-80 250 C80 265 181 199 285 116 S438 43 520 -18"
             fill="none" stroke="url(#splashEdge)" strokeWidth="2"/>
           <path d="M-90 305 C100 245 191 213 317 163 S450 110 520 97"
-            fill="none" stroke="#48a6fe" strokeWidth="1" strokeOpacity=".27"/>
+            fill="none" stroke="#687f93" strokeWidth="1" strokeOpacity=".27"/>
         </g>
         <g className="connect-splash__lower-wave">
           <path d="M-80 676 C79 787 153 751 260 677 S418 587 530 601 L530 990 L-80 990Z"
@@ -81,13 +81,13 @@ export default function ConnectSplashScreen({ ready, onComplete }: Props) {
           <path d="M-80 676 C79 787 153 751 260 677 S418 587 530 601"
             fill="none" stroke="url(#splashEdge)" strokeWidth="2.4"/>
           <path d="M-100 754 C87 823 169 767 264 717 S436 687 540 651"
-            fill="none" stroke="#41aaff" strokeOpacity=".6" strokeWidth="2"/>
+            fill="none" stroke="#92a9b9" strokeOpacity=".6" strokeWidth="2"/>
           <path d="M-100 809 C75 883 193 794 300 763 S424 738 536 722"
-            fill="none" stroke="#288afe" strokeOpacity=".25" strokeWidth="1"/>
+            fill="none" stroke="#536f84" strokeOpacity=".25" strokeWidth="1"/>
         </g>
       </svg>
       <div className="connect-splash__center">
-        <img className="connect-splash__icon" src="/connect-splash-bubbles-transparent.png" alt="" aria-hidden="true" draggable={false} />
+        <img className="connect-splash__icon" src="/connect-splash-bubbles-silver-v1.png" alt="" aria-hidden="true" draggable={false} />
         <div className="connect-splash__word" aria-hidden="true">
           {BRAND.map((character, index) => (
             <span key={index}
