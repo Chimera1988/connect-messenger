@@ -1,0 +1,326 @@
+name: Connect - match reference splash lettering exactly
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-exact-lettering.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-exact-lettering-main
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout current Connect
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Add exact typography from approved screenshot
+        shell: bash
+        run: |
+          mkdir -p public
+          base64 -d > public/connect-splash-wordmark-reference.png <<'WORDMARK_PNG'
+          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
+          WORDMARK_PNG
+      - name: Match wordmark and letter progression
+        shell: bash
+        run: |
+          python3 - <<'PATCH_SCRIPT'
+          from pathlib import Path
+          
+          component = Path('components/ConnectSplashScreen.tsx')
+          css = Path('app/connect-splash.css')
+          source = component.read_text(encoding='utf-8')
+          
+          if 'connect-splash__word-slice' not in source:
+              anchor = "const BRAND = 'Connect'.split('');"
+              if source.count(anchor) != 1:
+                  raise SystemExit('Unexpected ConnectSplashScreen.tsx: BRAND declaration changed.')
+              source = source.replace(anchor, anchor + "\n// Exact character boundaries measured from the approved Connect screenshot.\nconst WORD_CUTS = [0, 17.6, 32.6, 46.7, 61.1, 75.8, 89.6, 100] as const;", 1)
+          
+              start = source.find('        <div className="connect-splash__word"')
+              if start == -1:
+                  raise SystemExit('Unexpected component markup: loading word not found.')
+              end = source.find('\n        </div>', start)
+              if end == -1 or 'BRAND.map' not in source[start:end]:
+                  raise SystemExit('Unexpected component markup: original letter animation not found.')
+              end += len('\n        </div>')
+              replacement = '''        <div className="connect-splash__word" role="img" aria-label="Connect">
+                    {BRAND.map((character, index) => (
+                      <span key={character + index} aria-hidden="true"
+                        className={'connect-splash__word-slice' + (index < letters ? ' is-visible' : '')}
+                        style={{clipPath: `inset(0 ${100 - WORD_CUTS[index + 1]}% 0 ${WORD_CUTS[index]}%)`}}>
+                        <img src="/connect-splash-wordmark-reference.png" alt="" draggable={false}/>
+                      </span>
+                    ))}
+                  </div>'''
+              source = source[:start] + replacement + source[end:]
+              component.write_text(source, encoding='utf-8')
+              print('Replaced font-rendered letters with the exact approved wordmark, revealing them individually.')
+          else:
+              print('The approved wordmark is already integrated.')
+          
+          style = css.read_text(encoding='utf-8')
+          style_start = style.find('.connect-splash__word {')
+          style_end = style.find('@keyframes connect-splash-wave-drift {',style_start)
+          if style_start<0 or style_end<0:
+              raise SystemExit('Unexpected connect-splash.css: style section not found.')
+          newstyle = '''/* Exact approved lettering. The image remains in place as letters fade in, so
+             the word never shifts horizontally on partial progress (C, Co, Con...). */
+          .connect-splash__word {
+            position: relative;
+            flex: 0 0 auto;
+            display: block;
+            width: min(48vw, 347px);
+            max-width: 100%;
+            aspect-ratio: 347 / 66;
+            margin-top: -2px;
+            user-select: none;
+            filter: drop-shadow(0 1px 3px rgba(0,0,0,.12));
+          }
+          .connect-splash__word-slice {
+            position: absolute;
+            inset: 0;
+            opacity: 0;
+            transition: opacity 260ms ease;
+          }
+          .connect-splash__word-slice.is-visible { opacity: 1; }
+          .connect-splash__word-slice img {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: fill;
+          }
+          '''
+          style = style[:style_start] + newstyle + style[style_end:]
+          # Restore the vertical grouping of the approved reference, no wave/logo changes.
+          style = style.replace('transform: translateY(-2.8%);','transform: translateY(-5.6%);',1)
+          style = style.replace('  .connect-splash__word { font-size: clamp(27px, 7vw, 46px); margin-top: 9px; }',
+                                '  .connect-splash__word { width: min(46vw, 290px); margin-top: 0; }')
+          style = style.replace('  .connect-splash__letter { transition: none; transform: none; }',
+                                '  .connect-splash__word-slice { transition: none; }')
+          css.write_text(style,encoding='utf-8')
+          print('Updated spacing and responsive styles; kept current waves, icon and loading logic unchanged.')
+          PATCH_SCRIPT
+      - name: Validate diff
+        run: git diff --check
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Check TypeScript
+        run: npx tsc --noEmit
+      - name: Commit only splash typography
+        shell: bash
+        run: |
+          git add components/ConnectSplashScreen.tsx app/connect-splash.css public/connect-splash-wordmark-reference.png
+          if git diff --cached --quiet; then
+            echo 'Already installed; nothing to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: match Connect splash lettering to approved reference'
+          git push origin HEAD:main
