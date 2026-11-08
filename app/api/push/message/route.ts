@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { canReach } from '../../../../lib/server/visibility';
 import { createClient } from '@supabase/supabase-js';
 import webpush from 'web-push';
 import { getApps, initializeApp, cert } from 'firebase-admin/app';
@@ -16,6 +17,7 @@ export async function POST(req:NextRequest) {
   const {data:conv}=await db.from('conversations').select('user_a,user_b').eq('id',record.conversation_id).maybeSingle();
   if (!conv || ![conv.user_a,conv.user_b].includes(record.sender_id)) return NextResponse.json({ignored:true});
   const recipient=conv.user_a===record.sender_id?conv.user_b:conv.user_a;
+  if(!await canReach(db,record.sender_id,recipient)) return NextResponse.json({ignored:true});
   const [{data:devices},{data:prefs},{data:sender}] = await Promise.all([
     db.from('push_devices').select('id,platform,endpoint,subscription').eq('user_id',recipient),
     db.from('notification_preferences').select('enabled').eq('user_id',recipient).maybeSingle(),

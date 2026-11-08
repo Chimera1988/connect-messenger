@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { canReach } from '../../../../lib/server/visibility';
 import { createClient } from '@supabase/supabase-js';
 import { getApps, initializeApp, cert } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     || call.caller_id === call.callee_id)
     return NextResponse.json({ ignored: true });
 
+  if(!await canReach(db,call.caller_id,call.callee_id)) return NextResponse.json({ignored:true});
   const [{ data: settings }, { data: devices }, { data: sender }] = await Promise.all([
     db.from('notification_preferences').select('enabled').eq('user_id', call.callee_id).maybeSingle(),
     db.from('push_devices').select('id,platform,endpoint,subscription').eq('user_id', call.callee_id),

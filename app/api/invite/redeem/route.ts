@@ -9,7 +9,7 @@ export async function POST(request:Request){
   if(!/^[0-9A-F]{24}$/.test(normalized))throw new Error('Неверный код');
   const client=adminClient();
   const codeHash=createHash('sha256').update(normalized).digest('hex');
-  const {data:invite,error}=await client.from('connect_invitation_codes').select('id,email').eq('code_hash',codeHash).is('redeemed_at',null).is('revoked_at',null).gt('expires_at',new Date().toISOString()).maybeSingle();
+  const {data:invite,error}=await client.from('connect_invitation_codes').select('id,email,invite_type,created_by').eq('code_hash',codeHash).is('redeemed_at',null).is('revoked_at',null).gt('expires_at',new Date().toISOString()).maybeSingle();
   if(error)throw error;
   if(!invite)return Response.json({error:'Код недействителен, использован или истёк'},{status:400});
   // Atomically claim the code before creating the account. Concurrent attempts cannot both succeed.
@@ -20,6 +20,13 @@ export async function POST(request:Request){
   if(createError||!created.user){
    // A claimed code remains spent if account creation fails; admin can issue a fresh code.
    throw new Error(createError?.message||'Не удалось создать пользователя');
+  }
+  if(invite.invite_type==='hidden'){
+   const {error:hideError}=await client.from('connect_hidden_members').insert({user_id:created.user.id,admin_id:invite.created_by});
+   if(hideError){
+    await client.auth.admin.deleteUser(created.user.id);
+    throw new Error('Не удалось защитить скрытый аккаунт. Попросите администратора выдать новый код.');
+   }
   }
   await client.from('connect_invitation_codes').update({redeemed_by:created.user.id}).eq('id',invite.id);
   return Response.json({ok:true,email:invite.email});
