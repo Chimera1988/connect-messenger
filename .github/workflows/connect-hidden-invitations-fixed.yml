@@ -1,11 +1,11 @@
-name: Connect - hidden invitation codes and member isolation
+name: Connect - hidden invitations (fixed workflow)
 
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/connect-hidden-invitations.yml'
+      - '.github/workflows/connect-hidden-invitations-fixed.yml'
 
 permissions:
   contents: write
