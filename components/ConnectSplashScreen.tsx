@@ -87,39 +87,7 @@ export default function ConnectSplashScreen({ ready, onComplete }: Props) {
         </g>
       </svg>
       <div className="connect-splash__center">
-        <svg className="connect-splash__icon" viewBox="0 0 300 300" aria-hidden="true">
-          <defs>
-            <linearGradient id="connectSplashBlue" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#059fff"/>
-              <stop offset=".53" stopColor="#0075fb"/>
-              <stop offset="1" stopColor="#004cf2"/>
-            </linearGradient>
-            <linearGradient id="connectSplashWhite" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stopColor="#ffffff"/>
-              <stop offset="1" stopColor="#e7edff"/>
-            </linearGradient>
-            <filter id="connectSplashShadow" x="-30%" y="-30%" width="160%" height="170%">
-              <feDropShadow dx="0" dy="8" stdDeviation="8" floodColor="#002b94" floodOpacity=".28"/>
-            </filter>
-          </defs>
-          <rect width="300" height="300" rx="70" fill="url(#connectSplashBlue)"/>
-          <g>
-            {/* Back bubble first: left and below, with a distinct silhouette. */}
-            <path d="M116 94 C77 94 49 120 49 152 C49 171 59 185 76 194
-              L68 210 Q66 216 73 213 L94 200 Q107 205 121 205
-              C159 205 184 182 184 151 C184 118 156 94 116 94Z"
-              fill="#e9f0ff" filter="url(#connectSplashShadow)"/>
-            {/* Front bubble is smaller and higher, with its own shadow to keep the overlap legible. */}
-            <path d="M183 53 C141 53 110 78 110 113 C110 147 141 171 183 171
-              Q201 171 212 165 L226 176 Q235 181 233 170 L230 151
-              C242 140 249 127 249 112 C249 79 221 53 183 53Z"
-              fill="url(#connectSplashWhite)" stroke="#bfd2f3" strokeWidth="2.8"
-              filter="url(#connectSplashShadow)"/>
-            <circle cx="145" cy="113" r="9" fill="#0566ec"/>
-            <circle cx="179" cy="113" r="9" fill="#0566ec"/>
-            <circle cx="213" cy="113" r="9" fill="#0566ec"/>
-          </g>
-        </svg>
+        <img className="connect-splash__icon" src="/connect-splash-original-no-text.png" alt="" decoding="async" draggable={false} />
         <div className="connect-splash__word" aria-hidden="true">
           {BRAND.map((character, index) => (
             <span key={index}
