@@ -1,6 +1,7 @@
 'use client';
 
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
+import ConnectSplashScreen from '../components/ConnectSplashScreen';
 import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
 import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
@@ -840,6 +841,9 @@ export default function Home() {
 
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [splashVisible, setSplashVisible] = useState(true);
+  const [directoryReady, setDirectoryReady] = useState(false);
+  const finishSplash = useCallback(() => setSplashVisible(false), []);
   const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState(''); const [setup, setSetup] = useState(false);
   const [busy, setBusy] = useState(false); const [notice, setNotice] = useState('');
@@ -1012,6 +1016,8 @@ export default function Home() {
     try { const raw=localStorage.getItem('connect-cleared-chats:'+user.id); setClearedChats(raw?JSON.parse(raw):{}); } catch { setClearedChats({}); }
   }, [user?.id]);
 
+  useEffect(() => { setDirectoryReady(false); }, [user?.id]);
+
   useEffect(() => {
     if (!supabase) { setLoading(false); return; }
     let alive = true;
@@ -1164,6 +1170,7 @@ export default function Home() {
       setAvatarUrls(urls);
     }
     if (c.error) setNotice(c.error.message); else setConversations((c.data || []) as Conversation[]);
+    setDirectoryReady(true);
   }, [user?.id]);
   useEffect(() => { void loadDirectory(); }, [loadDirectory]);
   useEffect(()=>{
@@ -2113,6 +2120,7 @@ export default function Home() {
   const keyboardOpen = frame ? window.innerHeight - frame.height - frame.top > 130 : false;
   const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
   return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
+    {splashVisible && <ConnectSplashScreen ready={!loading && (!user || directoryReady)} onComplete={finishSplash}/>}
     {!supabase ? <div className="connection-error"><Icon name="info" size={32}/><h2>Подключение не настроено</h2><p>Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY в Vercel.</p></div>
       : loading ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
         : !user || setup ? <div className="login-screen">
