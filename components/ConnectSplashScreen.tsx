@@ -87,7 +87,7 @@ export default function ConnectSplashScreen({ ready, onComplete }: Props) {
         </g>
       </svg>
       <div className="connect-splash__center">
-        <img className="connect-splash__icon" src="/connect-splash-original-no-text.png" alt="" decoding="async" draggable={false} />
+        <img className="connect-splash__icon" src="/connect-splash-bubbles-transparent.png" alt="" aria-hidden="true" draggable={false} />
         <div className="connect-splash__word" aria-hidden="true">
           {BRAND.map((character, index) => (
             <span key={index}

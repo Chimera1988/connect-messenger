@@ -43,7 +43,7 @@
 }
 .connect-splash__icon {
   display: block;
-  width: min(60vw, 270px);
+  width: min(47vw, 220px);
   max-width: 100%;
   height: auto;
   filter: drop-shadow(0 15px 22px rgba(0, 13, 95, .23));
@@ -53,7 +53,7 @@
   justify-content: center;
   align-items: center;
   flex-wrap: nowrap;
-  margin-top: 17px;
+  margin-top: 4px;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
   font-size: clamp(37px, 9.3vw, 55px);
   font-weight: 750;
@@ -78,7 +78,7 @@
   to { transform: translate3d(2%, -0.6%, 0) scale(1.035); }
 }
 @media (max-height: 570px) {
-  .connect-splash__icon { width: min(35vh, 230px); }
+  .connect-splash__icon { width: min(30vh, 185px); }
   .connect-splash__word { font-size: clamp(27px, 7vw, 46px); margin-top: 9px; }
 }
 @media (prefers-reduced-motion: reduce) {
