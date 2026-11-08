@@ -38,7 +38,15 @@ export async function POST(req:NextRequest) {
         const credentials=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
         if (!credentials) continue;
         if (!getApps().length) initializeApp({credential:cert(JSON.parse(credentials))});
-        await getMessaging().send({token:device.endpoint,data:{title,body:'Новое сообщение',conversationId:String(record.conversation_id),messageId:String(record.id),createdAt:String(record.created_at||"")}});
+        // The Android application displays data-only messages itself through Notifee.
+        // High priority is necessary for timely delivery while a phone is idle / locked.
+        await getMessaging().send({
+          token:device.endpoint,
+          data:{kind:'message',title,body:'Новое сообщение',
+            conversationId:String(record.conversation_id),messageId:String(record.id),
+            createdAt:String(record.created_at||'')},
+          android:{priority:'high',ttl:86400000},
+        });
       }
       sent++;
     } catch(e:unknown) {
