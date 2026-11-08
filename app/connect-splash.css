@@ -41,7 +41,7 @@
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  transform: translateY(-2.8%);
+  transform: translateY(-5.6%);
   padding: max(24px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom));
 }
 .connect-splash__icon {
@@ -51,34 +51,31 @@
   height: auto;
   filter: drop-shadow(0 11px 16px rgba(1, 5, 10, .28));
 }
+/* Exact approved lettering. The image remains in place as letters fade in, so
+   the word never shifts horizontally on partial progress (C, Co, Con...). */
 .connect-splash__word {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: nowrap;
+  position: relative;
+  flex: 0 0 auto;
+  display: block;
+  width: min(48vw, 347px);
+  max-width: 100%;
+  aspect-ratio: 347 / 66;
   margin-top: -2px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-  font-size: clamp(41px, 11vw, 58px);
-  font-weight: 750;
-  line-height: 1.12;
-  letter-spacing: -.045em;
   user-select: none;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, .14));
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,.12));
 }
-.connect-splash__letter {
+.connect-splash__word-slice {
+  position: absolute;
+  inset: 0;
   opacity: 0;
-  transform: translateY(5px);
-  color: transparent;
-  transition: opacity 260ms ease, transform 260ms ease;
+  transition: opacity 260ms ease;
 }
-.connect-splash__letter.is-visible {
-  opacity: 1;
-  transform: translateY(0);
-  color: #dbe0e7; /* fallback when background-clip is unavailable */
-  background-image: linear-gradient(180deg, #fff 0%, #edf0f3 28%, #b5bdc7 66%, #687686 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+.connect-splash__word-slice.is-visible { opacity: 1; }
+.connect-splash__word-slice img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
 }
 @keyframes connect-splash-wave-drift {
   from { transform: translate3d(-2%, 0, 0) scale(1.01); }
@@ -86,11 +83,11 @@
 }
 @media (max-height: 570px) {
   .connect-splash__icon { width: min(30vh, 185px); }
-  .connect-splash__word { font-size: clamp(27px, 7vw, 46px); margin-top: 9px; }
+  .connect-splash__word { width: min(46vw, 290px); margin-top: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .connect-splash__upper-wave,
   .connect-splash__lower-wave { animation: none; }
-  .connect-splash__letter { transition: none; transform: none; }
+  .connect-splash__word-slice { transition: none; }
   .connect-splash { transition-duration: 100ms; }
 }

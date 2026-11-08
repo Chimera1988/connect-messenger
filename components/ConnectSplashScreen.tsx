@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 
 const BRAND = 'Connect'.split('');
+// Exact character boundaries measured from the approved Connect screenshot.
+const WORD_CUTS = [0, 17.6, 32.6, 46.7, 61.1, 75.8, 89.6, 100] as const;
 
 type Props = {
   ready: boolean;
@@ -88,11 +90,12 @@ export default function ConnectSplashScreen({ ready, onComplete }: Props) {
       </svg>
       <div className="connect-splash__center">
         <img className="connect-splash__icon" src="/connect-splash-bubbles-silver-v1.png" alt="" aria-hidden="true" draggable={false} />
-        <div className="connect-splash__word" aria-hidden="true">
+        <div className="connect-splash__word" role="img" aria-label="Connect">
           {BRAND.map((character, index) => (
-            <span key={index}
-              className={'connect-splash__letter' + (index < letters ? ' is-visible' : '')}>
-              {character}
+            <span key={character + index} aria-hidden="true"
+              className={'connect-splash__word-slice' + (index < letters ? ' is-visible' : '')}
+              style={{clipPath: `inset(0 ${100 - WORD_CUTS[index + 1]}% 0 ${WORD_CUTS[index]}%)`}}>
+              <img src="/connect-splash-wordmark-reference.png" alt="" draggable={false}/>
             </span>
           ))}
         </div>
