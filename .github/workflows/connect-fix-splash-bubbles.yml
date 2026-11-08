@@ -1,0 +1,59 @@
+name: Connect - fix splash logo bubbles
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-fix-splash-bubbles.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Connect
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Restore distinct speech bubbles in splash logo
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          p=Path('components/ConnectSplashScreen.tsx')
+          if not p.is_file():
+              raise SystemExit('Connect splash component not found; apply initial splash installation first')
+          content=p.read_text(encoding='utf-8')
+          start_marker='          <g filter="url(#connectSplashShadow)">'
+          if start_marker not in content:
+              if 'Back bubble first: left and below' in content:
+                  print('Already fixed; no file changes needed')
+                  raise SystemExit(0)
+              raise SystemExit('Unexpected splash markup: no change applied')
+          start=content.index(start_marker)
+          end=content.index('          </g>', start)+len('          </g>')
+          replacement='          <g>\n            {/* Back bubble first: left and below, with a distinct silhouette. */}\n            <path d="M116 94 C77 94 49 120 49 152 C49 171 59 185 76 194\n              L68 210 Q66 216 73 213 L94 200 Q107 205 121 205\n              C159 205 184 182 184 151 C184 118 156 94 116 94Z"\n              fill="#e9f0ff" filter="url(#connectSplashShadow)"/>\n            {/* Front bubble is smaller and higher, with its own shadow to keep the overlap legible. */}\n            <path d="M183 53 C141 53 110 78 110 113 C110 147 141 171 183 171\n              Q201 171 212 165 L226 176 Q235 181 233 170 L230 151\n              C242 140 249 127 249 112 C249 79 221 53 183 53Z"\n              fill="url(#connectSplashWhite)" stroke="#bfd2f3" strokeWidth="2.8"\n              filter="url(#connectSplashShadow)"/>\n            <circle cx="145" cy="113" r="9" fill="#0566ec"/>\n            <circle cx="179" cy="113" r="9" fill="#0566ec"/>\n            <circle cx="213" cy="113" r="9" fill="#0566ec"/>\n          </g>'
+          p.write_text(content[:start]+replacement+content[end:], encoding='utf-8')
+          print('Restored two distinct message bubbles with independent shadows')
+          PYCODE
+      - name: Check formatting
+        run: git diff --check
+      - name: Install dependencies
+        run: npm install --no-package-lock --ignore-scripts --no-audit --no-fund
+      - name: Check TypeScript
+        run: npx tsc --noEmit
+      - name: Commit correction
+        shell: bash
+        run: |
+          git add components/ConnectSplashScreen.tsx
+          if git diff --cached --quiet; then
+            echo 'Already up to date'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: restore separation of Connect splash chat bubbles'
+          git push origin HEAD:main
