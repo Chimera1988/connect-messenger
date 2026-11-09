@@ -93,15 +93,15 @@ function isPlayableAudioFile(m: Message): boolean {
 
 type ChatReadingEntry = { chatId: string; readAt: string; firstUnreadId: string | null; anchorId: string | null };
 type Gesture = { id: string; x: number; y: number; dx: number; dy: number; timer: number | null; opened: boolean };
-type IconName = 'chats' | 'contacts' | 'settings' | 'back' | 'search' | 'write' | 'send' | 'reply' |
+type IconName = 'chats' | 'contacts' | 'settings' | 'smile' | 'back' | 'search' | 'write' | 'send' | 'reply' |
   'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user' | 'plus' | 'mic' | 'stop' | 'file' | 'play' | 'dots' | 'forward';
 
 function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number; stroke?: number }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   const paths: Record<IconName, React.ReactNode> = {
-    chats: <><path d="M20 11.4a7.5 7.5 0 0 1-7.9 7.5 8.2 8.2 0 0 1-3.3-.7L4 20l1.2-4.5A7.6 7.6 0 1 1 20 11.4Z"/></>,
-    contacts: <><circle cx="12" cy="8" r="3.5"/><path d="M4.8 20v-1.4a7.2 7.2 0 0 1 14.4 0V20"/></>,
-    settings: <><circle cx="12" cy="12" r="3"/><path d="m9.5 2.8-.5 2a8 8 0 0 0-1.8 1L5.3 5l-2 3.5 1.6 1.5a7.9 7.9 0 0 0 0 2.1l-1.6 1.5 2 3.5 1.9-.8a8 8 0 0 0 1.8 1l.5 2h5l.5-2a8 8 0 0 0 1.8-1l1.9.8 2-3.5-1.6-1.5a7.9 7.9 0 0 0 0-2.1l1.6-1.5-2-3.5-1.9.8a8 8 0 0 0-1.8-1l-.5-2z"/></>,
+    chats: <><path d="M10.1 4.4a8.3 8.3 0 0 1 9.6 11.7l1.3 3.1-3.4-1.2"/><path d="M12 7.4a7.8 7.8 0 0 0-6.5 12.1L4 22l3.9-1.3a7.8 7.8 0 1 0 4.1-13.3Z"/></>,
+    contacts: <><circle cx="8.8" cy="8.5" r="2.8"/><path d="M2.8 19.9v-1.4a6 6 0 0 1 11.9-1.3"/><circle cx="16.7" cy="7.4" r="2.5"/><path d="M14.9 14a6.3 6.3 0 0 1 6.3 6v.3h-8.6"/></>,
+    settings: <><path d="M10.2 2.7h3.6l.6 2.1c.6.2 1.3.5 1.8 1l2-.9 2.4 2.5-1.1 1.9c.3.6.4 1.3.5 1.9l2 1.1v3.4l-2.1.7c-.2.7-.5 1.3-.8 1.9l.8 2-2.5 2.4-1.9-1.1c-.6.3-1.2.5-1.9.6l-1 2.1h-3.4l-.7-2.1c-.7-.2-1.3-.5-1.9-.8l-2 .8-2.4-2.5 1.1-1.9c-.3-.6-.5-1.2-.6-1.9L1.8 14v-3.4l2.1-.7c.2-.7.5-1.3.8-1.9l-.9-2 2.5-2.4 1.9 1.1c.6-.3 1.2-.5 1.9-.6z"/><circle cx="12" cy="12.3" r="3.1"/></>,
     back: <path d="m14.7 5-7 7 7 7"/>,
     search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.3 15.3 5 5"/></>,
     write: <><path d="M11 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="m12 12 8-8a2.1 2.1 0 0 0-3-3l-8 8-.8 3.8z"/></>,
@@ -119,10 +119,11 @@ function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number
     info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
     chevron: <path d="m9 5 7 7-7 7"/>,
     arrow: <path d="m5 12 14 0m-6-6 6 6-6 6"/>,
-    camera: <><rect x="2" y="6" width="20" height="15" rx="3"/><circle cx="12" cy="13" r="4"/><path d="M7 6 9 3h6l2 3"/></>,
+    camera: <><path d="M3.2 7.4h3.7l1.7-2.6h6.8l1.7 2.6h3.7c.7 0 1.2.6 1.2 1.3v10c0 .8-.5 1.3-1.2 1.3H3.2c-.7 0-1.2-.5-1.2-1.3v-10c0-.7.5-1.3 1.2-1.3Z"/><circle cx="12" cy="13.3" r="3.6"/></>,
     user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
-    plus: <path d="M12 4v16M4 12h16"/>,
-    mic: <><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></>,
+    smile: <><circle cx="12" cy="12" r="9.1"/><circle cx="8.5" cy="9.4" r=".8" fill="currentColor" stroke="none"/><circle cx="15.5" cy="9.4" r=".8" fill="currentColor" stroke="none"/><path d="M7.8 14.4c1 1.9 2.6 2.9 4.2 2.9s3.2-1 4.2-2.9"/></>,
+    plus: <path d="M12 3.4v17.2M3.4 12h17.2"/>,
+    mic: <><rect x="9" y="2" width="6" height="13.1" rx="3"/><path d="M5.2 10.5a6.8 6.8 0 0 0 13.6 0M12 17.3V22m-4.2 0h8.4"/></>,
     stop: <rect x="5" y="5" width="14" height="14" rx="3"/>,
     file: <><path d="M6 2h8l5 5v15H6zM14 2v5h5"/></>,
     play: <path d="m8 5 11 7-11 7z"/>,
@@ -2252,7 +2253,7 @@ export default function Home() {
                     <button type="button" className="sticker-fav" onClick={()=>void deleteCustomSticker(st)} aria-label="Удалить из избранного">★</button>
                   </div>)}{customPack?customStickers.filter(st=>st.pack_id===customPack).map(st=><button key={st.id} type="button" className="sticker-choice" onClick={()=>void sendCustomSticker(st)} disabled={busy}><img src={customStickerUrl(st)} alt={st.name}/></button>):(stickerPack==='favorites'?stickerFavorites:stickerPack==='recent'?stickerRecent:STICKER_PACKS.find(p=>p.id===stickerPack)?.stickers.map(st=>stickerPack+':'+st.id)||[]).map(key=>{const [pack,id]=key.split(':');const found=STICKER_PACKS.find(p=>p.id===pack)?.stickers.find(st=>st.id===id);if(!found)return null;return <div key={key} className="sticker-choice"><button type="button" onClick={()=>void sendSticker(pack as StickerPackId,id)} disabled={busy} aria-label={'Отправить '+found.name}><img src={stickerUrl({pack,id})} alt={found.name}/></button><button type="button" className="sticker-fav" onClick={()=>toggleFavorite(key)} aria-label="В избранное">{stickerFavorites.includes(key)?'★':'☆'}</button></div>;})}</div>
               </div>}
-              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры">☺</button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && !recording && <button className="composer-extra" type="button" disabled={busy} onClick={()=>setVideoNoteOpen(true)} aria-label="Записать видеокружок"><Icon name="camera" size={22}/></button>}{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
+              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры"><Icon name="smile" size={24}/></button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>attachmentInput.current?.click()} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && !recording && <button className="composer-extra" type="button" disabled={busy} onClick={()=>setVideoNoteOpen(true)} aria-label="Записать видеокружок"><Icon name="camera" size={22}/></button>}{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
           </div>
             : <><div className="main-view">

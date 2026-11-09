@@ -13,6 +13,7 @@ import './call-journal-editor.css';
 import './profile-media.css';
 import './music-system.css';
 import './connect-splash.css';
+import './connect-icons.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
