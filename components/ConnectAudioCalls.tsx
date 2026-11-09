@@ -31,9 +31,9 @@ const friendlyError = (e: unknown) => e instanceof Error ? e.message : 'Неиз
 const initials = (name: string) => name.trim().slice(0, 1).toLocaleUpperCase('ru-RU') || '☎';
 
 function Glyph({ name }: { name: 'call' | 'end' | 'mic' | 'muted' | 'speaker' }) {
-  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
+  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: name === 'call' ? 2.0 : 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   const paths = {
-    call: <path d="M5 3.8c-1.6 1-1.3 4.8 1.2 8.6 2.4 3.8 5.9 6.7 8.7 6.4 1.1-.1 3-1.4 3.3-2.7l.2-2.3c0-.7-.5-1.4-1.3-1.6l-3.2-.9a1.4 1.4 0 0 0-1.5.6l-1.2 1.4c-2.3-1-4.5-3.2-5.5-5.5l1.4-1.2c.5-.4.7-1 .5-1.6l-.9-3.2A1.7 1.7 0 0 0 7.7 3z"/>,
+    call: <path d="M6.3 3.2c-.65-.6-1.4-.6-2.05-.05L2.9 4.45c-.9.85-.85 2.05-.45 3.3 2.3 6.3 6.9 10.9 13.2 13.2 1.25.4 2.45.45 3.3-.45l1.3-1.35c.55-.65.55-1.4-.05-2.05l-3.65-2.9a1.8 1.8 0 0 0-2.2.15l-1.35 1.35A15 15 0 0 1 8.3 11l1.35-1.35a1.8 1.8 0 0 0 .15-2.2Z"/>,
     end: <><path d="M3.5 12c4.4-4.3 12.6-4.3 17 0"/><path d="M5.4 10.4 3 14.2m15.6-3.8 2.4 3.8"/></>,
     mic: <><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8"/></>,
     muted: <><rect x="9" y="2.5" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v5m-4 0h8M3 3l18 18"/></>,
