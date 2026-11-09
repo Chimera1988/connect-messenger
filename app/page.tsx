@@ -99,9 +99,9 @@ type IconName = 'chats' | 'contacts' | 'settings' | 'smile' | 'back' | 'search' 
 function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number; stroke?: number }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   const paths: Record<IconName, React.ReactNode> = {
-    chats: <><path d="M10.1 4.4a8.3 8.3 0 0 1 9.6 11.7l1.3 3.1-3.4-1.2"/><path d="M12 7.4a7.8 7.8 0 0 0-6.5 12.1L4 22l3.9-1.3a7.8 7.8 0 1 0 4.1-13.3Z"/></>,
-    contacts: <><circle cx="8.8" cy="8.5" r="2.8"/><path d="M2.8 19.9v-1.4a6 6 0 0 1 11.9-1.3"/><circle cx="16.7" cy="7.4" r="2.5"/><path d="M14.9 14a6.3 6.3 0 0 1 6.3 6v.3h-8.6"/></>,
-    settings: <><path d="M10.2 2.7h3.6l.6 2.1c.6.2 1.3.5 1.8 1l2-.9 2.4 2.5-1.1 1.9c.3.6.4 1.3.5 1.9l2 1.1v3.4l-2.1.7c-.2.7-.5 1.3-.8 1.9l.8 2-2.5 2.4-1.9-1.1c-.6.3-1.2.5-1.9.6l-1 2.1h-3.4l-.7-2.1c-.7-.2-1.3-.5-1.9-.8l-2 .8-2.4-2.5 1.1-1.9c-.3-.6-.5-1.2-.6-1.9L1.8 14v-3.4l2.1-.7c.2-.7.5-1.3.8-1.9l-.9-2 2.5-2.4 1.9 1.1c.6-.3 1.2-.5 1.9-.6z"/><circle cx="12" cy="12.3" r="3.1"/></>,
+    chats: <><path d="M4.6 9.8c-1.7 1.5-2.3 3.9-1.5 6.1.3.8.7 1.4 1.2 2l-1 2.6 3.1-.9c1.1.5 2.2.6 3.3.5"/><path d="M12.7 3.3c4.2 0 7.6 3.3 7.6 7.4 0 1.5-.4 2.9-1.1 4.1l.9 3.5-3.5-1.1c-1.2.7-2.6 1.1-4 1.1-4.2 0-7.6-3.3-7.6-7.6s3.4-7.4 7.7-7.4Z"/></>,
+    contacts: <><circle cx="7.7" cy="8.2" r="2.3"/><circle cx="16.2" cy="7.9" r="2.55"/><path d="M3.1 18.7v-.6c0-2.7 2.1-4.6 4.6-4.6 1.1 0 2.1.3 2.9.9"/><path d="M11.3 19.3v-.7c0-2.8 2.2-4.7 4.9-4.7s4.9 1.9 4.9 4.7v.7h-9.8Z"/></>,
+    settings: <><path d="M10.4 2.4h3.2l.65 2.2c.64.2 1.25.46 1.8.78l2.1-.97 2.25 2.25-.98 2.08c.32.56.58 1.16.77 1.8l2.21.66v3.2l-2.21.65c-.19.65-.45 1.25-.77 1.81l.98 2.08-2.25 2.25-2.1-.97c-.55.32-1.16.58-1.8.77l-.65 2.21h-3.2l-.65-2.21c-.64-.19-1.25-.45-1.81-.77l-2.08.97-2.25-2.25.97-2.08c-.32-.56-.58-1.16-.77-1.81l-2.21-.65v-3.2l2.21-.66c.19-.64.45-1.24.77-1.8l-.97-2.08 2.25-2.25 2.08.97c.56-.32 1.17-.58 1.81-.78z"/><circle cx="12" cy="12.8" r="2.9"/></>,
     back: <path d="m14.7 5-7 7 7 7"/>,
     search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.3 15.3 5 5"/></>,
     write: <><path d="M11 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="m12 12 8-8a2.1 2.1 0 0 0-3-3l-8 8-.8 3.8z"/></>,
@@ -119,11 +119,11 @@ function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number
     info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
     chevron: <path d="m9 5 7 7-7 7"/>,
     arrow: <path d="m5 12 14 0m-6-6 6 6-6 6"/>,
-    camera: <><path d="M3.2 7.4h3.7l1.7-2.6h6.8l1.7 2.6h3.7c.7 0 1.2.6 1.2 1.3v10c0 .8-.5 1.3-1.2 1.3H3.2c-.7 0-1.2-.5-1.2-1.3v-10c0-.7.5-1.3 1.2-1.3Z"/><circle cx="12" cy="13.3" r="3.6"/></>,
+    camera: <><path d="M3.6 7h3.1l1.7-2.5h7.2L17.3 7h3.1c.85 0 1.5.65 1.5 1.5v10.4c0 .9-.65 1.6-1.5 1.6H3.6c-.85 0-1.5-.7-1.5-1.6V8.5c0-.85.65-1.5 1.5-1.5Z"/><circle cx="12" cy="13.4" r="3.65"/></>,
     user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
-    smile: <><circle cx="12" cy="12" r="9.1"/><circle cx="8.5" cy="9.4" r=".8" fill="currentColor" stroke="none"/><circle cx="15.5" cy="9.4" r=".8" fill="currentColor" stroke="none"/><path d="M7.8 14.4c1 1.9 2.6 2.9 4.2 2.9s3.2-1 4.2-2.9"/></>,
+    smile: <><circle cx="12" cy="12" r="9.1"/><circle cx="8.4" cy="9.6" r="1" fill="currentColor" stroke="none"/><circle cx="15.6" cy="9.6" r="1" fill="currentColor" stroke="none"/><path d="M7.8 14.2h8.4c-.7 2.35-2.25 3.8-4.2 3.8s-3.5-1.45-4.2-3.8Z" fill="currentColor" stroke="none"/></>,
     plus: <path d="M12 3.4v17.2M3.4 12h17.2"/>,
-    mic: <><rect x="9" y="2" width="6" height="13.1" rx="3"/><path d="M5.2 10.5a6.8 6.8 0 0 0 13.6 0M12 17.3V22m-4.2 0h8.4"/></>,
+    mic: <><rect x="9.2" y="2" width="5.6" height="13.2" rx="2.8"/><path d="M5.3 10.2v1.2a6.7 6.7 0 0 0 13.4 0v-1.2M12 18v4m-3.7 0h7.4"/></>,
     stop: <rect x="5" y="5" width="14" height="14" rx="3"/>,
     file: <><path d="M6 2h8l5 5v15H6zM14 2v5h5"/></>,
     play: <path d="m8 5 11 7-11 7z"/>,
