@@ -20,7 +20,9 @@ export async function GET(req:NextRequest){
     firebaseProjectMatches=firebaseConfigured&&account.project_id==='connect-messenger-5c824';
   }catch{/* Invalid config is reported as a boolean, never an exception containing secrets. */}
   const urls=process.env.CONNECT_TURN_URLS?.split(',').map(v=>v.trim()).filter(Boolean)||[];
-  const relayConfigured=Boolean(process.env.CONNECT_TURN_SHARED_SECRET?.trim()&&urls.some(v=>/^turns?:[^\s]+$/i.test(v)));
+  const legacyRelay=Boolean(process.env.CONNECT_TURN_SHARED_SECRET?.trim()&&urls.some(v=>/^turns?:[^\s]+$/i.test(v)));
+  // Indicates configured credentials only; /api/calls/ice verifies actual provider issuance.
+  const relayConfigured=legacyRelay||Boolean(process.env.TURNIX_API_TOKEN?.trim());
   return NextResponse.json({version:1,firebaseConfigured,firebaseProjectMatches,relayConfigured},
     {headers:{'Cache-Control':'private, no-store'}});
 }
