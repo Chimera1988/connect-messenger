@@ -15,4 +15,4 @@ export function stickerFromBody(body:string):{pack:string;id:string}|null{
  if(!match || !STICKER_PACKS.some(p=>p.id===match[1]&&p.stickers.some(s=>s.id===match[2])))return null;
  return {pack:match[1],id:match[2]};
 }
-export function stickerUrl(sticker:{pack:string;id:string}){return `/stickers/${sticker.pack}/${sticker.id}.svg`;}
+export function stickerUrl(sticker:{pack:string;id:string}){return `/stickers/${sticker.pack}/${sticker.id}.webp`;}

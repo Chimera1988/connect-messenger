@@ -231,3 +231,9 @@ export async function purgeDeletedMedia(user:string,message:string){
   tx.oncomplete=()=>resolve(deleted);tx.onerror=()=>reject(tx.error);
  });for(const path of paths)await clearCachedMedia('temporary',path);
 }
+
+/** Background warmup of visible, lightweight chat previews; best effort. */
+export async function prefetchCachedMedia(url:string,user:string):Promise<void>{
+  if(!url||!user)return;
+  try{await remember(url,user);}catch{/* Network fallback remains usable. */}
+}

@@ -3,6 +3,9 @@
 import RecordingBar from '../components/ConnectRecordingBar';
 import CacheSettings from '../components/ConnectCacheSettings';
 import {mediaIdentity, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from '../lib/media-cache';
+import { prefetchCachedMedia } from '../lib/media-cache';
+import { readChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
+import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
 import ConnectSplashScreen from '../components/ConnectSplashScreen';
@@ -76,6 +79,8 @@ function parseAlbum(body:string):AlbumItem[] {
   }catch{return []}
 }
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
+// CONNECT_PWA_WEBP_HISTORY_THUMBS_AUDIO_HOLD_V1
+
 type Tab = 'chats' | 'contacts' | 'settings';
 type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'data' | 'privacy' | 'about';
 type VisualScene = 'waves' | 'aurora' | 'moon' | 'sunset' | 'lagoon' | 'nebula' | 'minimal';
@@ -284,7 +289,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
     if (audioRef.current) audioRef.current.playbackRate = next;
   }
   const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
-  return <div className="voice-player" onTouchStart={e => e.stopPropagation()} onTouchMove={e => e.stopPropagation()} onTouchEnd={e => e.stopPropagation()} onContextMenu={e => e.stopPropagation()}>
+  return <div className="voice-player">
     <audio ref={audioRef} data-connect-voice src={src} preload="metadata"
       onLoadedMetadata={e => { setError(false); const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
       onDurationChange={e => { const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
@@ -605,7 +610,7 @@ function VideoThumbnail({src,path}:{src:string;path?:string}) {
   }
   return <span className="connect-video-preview">
     {(uploadedPoster || poster) && <img src={uploadedPoster || poster || ''} alt="Предпросмотр видео" onError={()=>setUploadedPoster(null)}/>}
-    <video ref={videoRef} src={src} playsInline muted preload="auto"
+    <video ref={videoRef} src={src} playsInline muted preload="metadata"
       onLoadedMetadata={e=>{const v=e.currentTarget;if(path)connectUpdateVideoFrame(v,path);else syncVideoThumbnailSize(v);try{v.currentTime=path && Number.isFinite(v.duration) && v.duration>.3 ? Math.min(1.2,Math.max(.3,v.duration*.12),v.duration*.8) : Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
       onSeeked={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}
       onLoadedData={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}
@@ -693,7 +698,14 @@ function isVideoNote(m: Message): boolean {
 }
 
 // Connect video-note sound control v3: round progress and mute below the circle
-function VideoNoteBubble({src,name}:{src:string;name:string}) {
+function VideoNoteBubble({src,name,path}:{src:string;name:string;path:string}) {
+  const [poster,setPoster]=useState<string|undefined>();
+  useEffect(()=>{
+    let alive=true;setPoster(undefined);
+    if(supabase)void supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600)
+      .then(({data,error})=>{if(alive&&!error&&data?.signedUrl)setPoster(mediaUrl(data.signedUrl));}).catch(()=>{});
+    return()=>{alive=false;};
+  },[path]);
   const ref=useRef<HTMLVideoElement|null>(null);
   const [muted,setMuted]=useState(true);
   const [duration,setDuration]=useState(0);
@@ -734,7 +746,7 @@ function VideoNoteBubble({src,name}:{src:string;name:string}) {
           userPaused.current=!video.paused;
           if(video.paused)void video.play().catch(()=>{});else video.pause();
         }}>
-        <video ref={ref} src={src} muted={muted} autoPlay playsInline loop preload="metadata" aria-label={name}
+        <video ref={ref} src={src} poster={poster} muted={muted} autoPlay playsInline loop preload="metadata" aria-label={name}
           onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d)}}
           onTimeUpdate={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}
           onSeeked={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}/>
@@ -940,6 +952,15 @@ export default function Home() {
   const [activeChat, setActiveChat] = useState<string | null>(null);
   const [clearedChats, setClearedChats] = useState<Record<string,string>>({});
   const [messages, setMessages] = useState<Message[]>([]);
+  const [chatHistoryLoading,setChatHistoryLoading]=useState(false);
+  const [historyReadyChat,setHistoryReadyChat]=useState<string|null>(null);
+  const [historyHasMore,setHistoryHasMore]=useState(false);
+  const [historyLoadingMore,setHistoryLoadingMore]=useState(false);
+  const olderHistoryAnchor=useRef<{id:string;top:number}|null>(null);
+  const [photoPreviews,setPhotoPreviews]=useState<Record<string,string|null>>({});
+  const photoPreviewRequests=useRef(new Set<string>());
+  const activePreviewUser=useRef('');
+  activePreviewUser.current=user?.id||'';
   const messagesById=useMemo(()=>new Map(messages.map(m=>[m.id,m])),[messages]);
   const [latest, setLatest] = useState<Record<string, Message>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
@@ -957,6 +978,14 @@ export default function Home() {
   const [clock, setClock] = useState(Date.now());
   const [draft, setDraft] = useState('');
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string,string>>({});
+  function imageInChat(path:string):string|undefined {
+    const preview=photoPreviews[path];
+    if(!supportsPhotoPreview(path))return attachmentUrls[path];
+    if(preview===undefined)return undefined; // Do not download a 10MB original while locating its thumb.
+    return preview||attachmentUrls[path];
+  }
+  const failedPhotoPreview=(path:string)=>setPhotoPreviews(prev=>({...prev,[path]:null}));
+
   const [mediaViewer, setMediaViewer] = useState<{url:string;path:string;name:string;kind:'image'|'video'} | null>(null);
   const mediaTouchStart = useRef<{x:number;y:number}|null>(null);
   const [savingMedia, setSavingMedia] = useState(false);
@@ -1513,14 +1542,16 @@ export default function Home() {
     let firstLoad = true;
     let firstLoadPending = false;
     let refreshing = false;
+    let cacheHydrated = false;
     setMessages([]); setTyping(false); setPeerRecording(false); setMenuMessage(null);
+    setChatHistoryLoading(true);setHistoryHasMore(false);setHistoryReadyChat(null);
     setChatReadingEntry(null); setShowChatJump(false);
     chatPositionedRef.current = null;
     previousLast.current = ''; stickToBottom.current = false;
     const id = activeChat;
     void supabase.from('conversation_user_state').upsert({ conversation_id: id, user_id: user.id }, { onConflict: 'conversation_id,user_id', ignoreDuplicates: true });
     const refresh = async () => {
-      if (!alive || document.visibilityState === 'hidden' || firstLoadPending || refreshing) return;
+      if (!alive || !cacheHydrated || document.visibilityState === 'hidden' || firstLoadPending || refreshing) return;
       refreshing = true;
       if (firstLoad) firstLoadPending = true;
       try {
@@ -1532,8 +1563,9 @@ export default function Home() {
       refreshing = false;
       if (!alive) return;
       const { data, error } = messageResult;
-      if (error) { firstLoadPending = false; setNotice(error.message); return; }
+      if (error) { firstLoadPending = false; setChatHistoryLoading(false); setNotice(error.message); return; }
       const incoming = ((data || []) as Message[]).reverse();
+      if(firstLoad)setHistoryHasMore(incoming.length===500);
       if (firstLoad) {
         firstLoad = false;
         firstLoadPending = false;
@@ -1553,25 +1585,45 @@ export default function Home() {
           firstUnreadId:unreadIndex >= 0 ? displayed[unreadIndex].id : null,
           anchorId:displayed[anchorIndex]?.id || null });
       }
-      setMessages(prev => prev.length === incoming.length && prev.every((m, i) =>
-        m.id === incoming[i].id && m.body === incoming[i].body && m.edited_at === incoming[i].edited_at && m.deleted_at === incoming[i].deleted_at && m.attachment_path === incoming[i].attachment_path
-      ) ? prev : incoming);
+      setMessages(prev => {
+        // A 500-row response is a recent window, not proof that older cached
+        // messages were deleted. A shorter complete response supersedes cache.
+        const oldest=incoming[0]?.created_at||'';
+        const older=incoming.length===500 ? prev.filter(m=>m.conversation_id===id&&m.created_at<oldest&&!m.deleted_at&&!serverDeleted.current.has(m.id)) : [];
+        const merged=[...older,...incoming].filter(m=>!m.deleted_at&&!serverDeleted.current.has(m.id));
+        if(prev.length===merged.length&&prev.every((m,i)=>m.id===merged[i].id&&m.body===merged[i].body&&m.edited_at===merged[i].edited_at&&m.deleted_at===merged[i].deleted_at&&m.attachment_path===merged[i].attachment_path))return prev;
+        return merged;
+      });
+      if(!incoming.length)void wipeChatHistory(user.id,id).catch(()=>{});
+      setChatHistoryLoading(false);setHistoryReadyChat(id);
       // Read receipts are updated from messages actually shown in the viewport.
-      } catch (error) { if(alive)setNotice(error instanceof Error?error.message:'Ошибка обновления чата'); }
+      } catch (error) { if(alive){setChatHistoryLoading(false);setNotice(error instanceof Error?error.message:'Ошибка обновления чата');} }
       finally { refreshing=false; firstLoadPending=false; }
     };
-    void refresh();
+    // Read cache before the first network fetch so we never flash "no messages".
+    void readChatHistory<Message>(user.id,id).then(snapshot=>{
+      if(!alive||!snapshot?.messages.length)return;
+      const saved=snapshot.messages;
+      setMessages(saved);
+      const readAt=readCache.current[id]>snapshot.readAt?readCache.current[id]:snapshot.readAt;
+      const unreadIndex=saved.findIndex(m=>m.sender_id!==user.id&&m.created_at>readAt);
+      const anchorIndex=unreadIndex>=0?Math.max(0,unreadIndex-1):saved.length-1;
+      setChatReadingEntry({chatId:id,readAt,firstUnreadId:unreadIndex>=0?saved[unreadIndex].id:null,anchorId:saved[anchorIndex]?.id||null});
+      setChatHistoryLoading(false);setHistoryReadyChat(id);
+      setHistoryHasMore(saved.length>=500);
+    }).catch(()=>{}).finally(()=>{cacheHydrated=true;if(alive)void refresh();});
     const channel = supabase.channel('connect-chat-' + id).on('postgres_changes', {
       event: '*', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + id,
     }, payload => {
       if (!alive) return;
       if (payload.eventType === 'DELETE') {
         const removedId=(payload.old as {id?:string})?.id;
-        if (removedId) setMessages(prev=>prev.filter(row=>row.id!==removedId));
+        if (removedId){setMessages(prev=>prev.filter(row=>row.id!==removedId));void dropCachedMessage(user.id,id,removedId).catch(()=>{});}
         return;
       }
       const m = payload.new as Message;
       if (!m?.id) return;
+      if(m.deleted_at)void dropCachedMessage(user.id,id,m.id).catch(()=>{});
       setMessages(prev => {
         const exists = prev.some(x => x.id === m.id);
         return exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m].sort((a, b) => a.created_at.localeCompare(b.created_at));
@@ -1588,6 +1640,41 @@ export default function Home() {
       void supabase.removeChannel(channel);
     };
   }, [activeChat, user?.id, markRead]);
+
+  useEffect(()=>{
+    if(!user?.id||!activeChat||!messages.some(m=>m.conversation_id===activeChat))return;
+    const userId=user.id,chatId=activeChat;
+    const rows=messages.filter(m=>m.conversation_id===chatId&&!m.deleted_at&&!serverDeleted.current.has(m.id));
+    const timer=window.setTimeout(()=>{void writeChatHistory(userId,chatId,rows,readCache.current[chatId]||'').catch(()=>{});},400);
+    return()=>window.clearTimeout(timer);
+  },[user?.id,activeChat,messages]);
+
+  async function loadOlderChatMessages(){
+    if(!supabase||!user||!activeChat||historyLoadingMore||!historyHasMore||!visibleMessages.length)return;
+    const id=activeChat,earliest=visibleMessages[0].created_at;
+    setHistoryLoadingMore(true);
+    const root=scrollRef.current;
+    const first=root?.querySelector<HTMLElement>('.message-day-group[id]');
+    if(first)olderHistoryAnchor.current={id:first.id,top:first.getBoundingClientRect().top};
+    try{
+      const {data,error}=await supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id)
+        .lt('created_at',earliest).order('created_at',{ascending:false}).limit(300);
+      if(error)throw error;
+      if(activeChatRef.current!==id)return;
+      const older=((data||[]) as Message[]).reverse().filter(m=>!m.deleted_at&&!serverDeleted.current.has(m.id));
+      if(older.length)setMessages(prev=>{
+        const ids=new Set(prev.map(m=>m.id));
+        return [...older.filter(m=>!ids.has(m.id)),...prev];
+      });
+      setHistoryHasMore((data||[]).length===300);
+    }catch(e){olderHistoryAnchor.current=null;setNotice('Не удалось загрузить старые сообщения: '+(e instanceof Error?e.message:String(e)));}
+    finally{setHistoryLoadingMore(false);}
+  }
+  useLayoutEffect(()=>{
+    const point=olderHistoryAnchor.current;if(!point)return;
+    const root=scrollRef.current,node=document.getElementById(point.id);
+    if(root&&node){root.scrollTop+=node.getBoundingClientRect().top-point.top;olderHistoryAnchor.current=null;}
+  },[messages]);
 
   // Position before paint; a chat with unread messages starts at its read
   // boundary, not at an arbitrary retained browser scroll offset.
@@ -1775,14 +1862,14 @@ export default function Home() {
       try{const stored=JSON.parse(localStorage.getItem(key)||'null');if(stored&&Number.isFinite(Date.parse(stored.time))&&/^[0-9a-f-]{36}$/i.test(stored.id))cursor=stored;}catch{}
       for(let batch=0;batch<10&&active;batch++){
         const {data,error}=await supabase!.rpc('connect_deleted_since',{p_after:cursor.time,p_id:cursor.id,p_limit:200});if(error||!Array.isArray(data)||!data.length)break;
-        for(const row of data){serverDeleted.current.add(row.message_id);setMessages(prev=>prev.some(m=>m.id===row.message_id)?prev.filter(m=>m.id!==row.message_id):prev);await purgeDeletedMedia(user.id,row.message_id);if(!active)return;cursor={time:row.deleted_at,id:row.message_id};}
+        for(const row of data){serverDeleted.current.add(row.message_id);setMessages(prev=>prev.some(m=>m.id===row.message_id)?prev.filter(m=>m.id!==row.message_id):prev);await purgeDeletedMedia(user.id,row.message_id);await dropCachedMessageById(user.id,row.message_id).catch(()=>{});if(!active)return;cursor={time:row.deleted_at,id:row.message_id};}
         localStorage.setItem(key,JSON.stringify(cursor));if(data.length<200)break;
       }
     }catch{/* Retry without advancing cursor on storage/network failures. */}finally{running=false;}};
     void reconcile();const timer=setInterval(()=>void reconcile(),15000);const resumed=()=>{if(document.visibilityState==='visible')void reconcile();};document.addEventListener('visibilitychange',resumed);
     return()=>{active=false;clearInterval(timer);document.removeEventListener('visibilitychange',resumed);};
   },[user?.id]);
-  const visibleMessages=messages.filter(m=>!serverDeleted.current.has(m.id)&&!m.deleted_at && !hiddenMessages.includes(m.id) && (!activeChat || !clearedChats[activeChat] || m.created_at>clearedChats[activeChat]));
+  const visibleMessages=messages.filter(m=>m.conversation_id===activeChat&&!serverDeleted.current.has(m.id)&&!m.deleted_at && !hiddenMessages.includes(m.id) && (!activeChat || !clearedChats[activeChat] || m.created_at>clearedChats[activeChat]));
   const searchMatches=chatQuery.trim()?visibleMessages.filter(m=>m.body.toLocaleLowerCase('ru-RU').includes(chatQuery.trim().toLocaleLowerCase('ru-RU'))):[];
   function showMatch(index:number){if(!searchMatches.length)return;const i=(index+searchMatches.length)%searchMatches.length;setSearchPosition(i);requestAnimationFrame(()=>document.getElementById('msg-'+searchMatches[i].id)?.scrollIntoView({behavior:'smooth',block:'center'}));}
   function highlightMessage(body:string){if(!chatSearchOpen||!chatQuery.trim())return body;const i=body.toLocaleLowerCase('ru-RU').indexOf(chatQuery.trim().toLocaleLowerCase('ru-RU'));return i<0?body:<>{body.slice(0,i)}<mark className="chat-search-mark">{body.slice(i,i+chatQuery.trim().length)}</mark>{body.slice(i+chatQuery.trim().length)}</>;}
@@ -1855,7 +1942,7 @@ export default function Home() {
     if(!supabase)return {error:{message:'Нет соединения'}};
     let result=await supabase.rpc('connect_delete_message',{p_message_id:m.id});
     if(result.error?.code==='PGRST202')result=await supabase.from('messages').update({deleted_at:new Date().toISOString(),body:'',attachment_path:null,attachment_name:null,attachment_type:null,attachment_size:null,attachment_kind:null}).eq('id',m.id).eq('sender_id',user!.id) as typeof result;
-    if(!result.error){for(const path of [m.attachment_path,...parseAlbum(m.body).map(x=>x.path)])if(path)await clearCachedMedia('temporary','connect-attachments/'+path);}
+    if(!result.error){await dropCachedMessage(user!.id,m.conversation_id,m.id).catch(()=>{});for(const path of [m.attachment_path,...parseAlbum(m.body).map(x=>x.path)])if(path)await clearCachedMedia('temporary','connect-attachments/'+path);}
     return result;
   }
   async function removeForEveryone(ids:string[]){if(!supabase||!user||busy)return;const own=visibleMessages.filter(m=>ids.includes(m.id)&&m.sender_id===user.id);if(!own.length){setNotice('Можно удалить у всех только свои сообщения');return;}if(!window.confirm('Удалить '+own.length+' сообщ. у обоих участников?'))return;setBusy(true);let failed='';for(const m of own){const r=await eraseMessage(m);if(r.error){failed=r.error.message;break;}}setBusy(false);if(failed)setNotice('Не удалось удалить: '+failed);else{setMessages(prev=>prev.filter(m=>!own.some(x=>x.id===m.id)));setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}}
@@ -1976,6 +2063,39 @@ export default function Home() {
     });
     return () => {cancelled=true;};
   }, [messages, user?.id]);
+
+  useEffect(()=>{
+    if(!supabase||!user)return;
+    const owner=user.id;
+    const paths=[...new Set(messages.filter(m=>m.conversation_id===activeChat).flatMap(m=>[
+      ...(m.attachment_kind==='image'&&m.attachment_path?[m.attachment_path]:[]),
+      ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
+    ]).filter(supportsPhotoPreview))].filter(path=>!photoPreviewRequests.current.has(path));
+    if(!paths.length)return;
+    paths.forEach(path=>photoPreviewRequests.current.add(path));
+    void Promise.all(paths.map(async path=>{
+      try{const {data,error}=await supabase!.storage.from('connect-attachments').createSignedUrl(photoPreviewPath(path),3600);
+        return {path,url:!error&&data?.signedUrl?mediaUrl(data.signedUrl):null};
+      }catch{return {path,url:null};}
+    })).then(items=>{if(activePreviewUser.current===owner)setPhotoPreviews(prev=>{const next={...prev};for(const item of items)next[item.path]=item.url;return next;});});
+  },[messages,activeChat,user?.id]);
+  useEffect(()=>{photoPreviewRequests.current.clear();setPhotoPreviews({});},[user?.id]);
+
+  // Prefetch only small preview images and avatars. Never bulk-download
+  // large original videos or audio on slow/mobile connections.
+  useEffect(()=>{
+    if(!user?.id||!activeChat)return;
+    const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+    if(connection?.saveData||connection?.effectiveType==='2g')return;
+    const paths=messages.filter(m=>m.conversation_id===activeChat).slice(-35).flatMap(m=>[
+      ...(m.attachment_kind==='image'&&m.attachment_path?[m.attachment_path]:[]),
+      ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
+    ]);
+    const urls=[...new Set([...Object.values(avatarUrls), ...paths.map(p=>photoPreviews[p]).filter((v):v is string=>typeof v==='string')])].filter(Boolean).slice(-22);
+    let stopped=false;
+    const timer=window.setTimeout(()=>{void(async()=>{for(const src of urls){if(stopped)break;await prefetchCachedMedia(src,user.id);}})();},650);
+    return()=>{stopped=true;window.clearTimeout(timer);};
+  },[user?.id,activeChat,photoPreviews,avatarUrls,messages]);
 
   function isKeyboardSticker(m: Message): boolean {
     return m.attachment_kind === 'image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || '');
@@ -2100,7 +2220,21 @@ export default function Home() {
       const {data:{session}}=await client.auth.getSession();
       if(!session)throw Error('Сессия завершена');
       for(let i=0;i<files.length;i++){
-        const file=files[i],path=`${chatId}/${uid}/${crypto.randomUUID()}`;
+        const file=files[i];let path=`${chatId}/${uid}/${crypto.randomUUID()}`;
+        let thumb:Blob|null=null,poster:Blob|null=null;
+        if(file.type.startsWith('image/') && file.type!=='image/gif'){
+          const size=await connectImageFileSize(file);
+          if(size&&size.width<100000&&size.height<100000){
+            path+=`__img_${size.width}x${size.height}`;
+            thumb=await makePhotoPreview(file);
+          }
+        } else if(file.type.startsWith('video/')){
+          const info=await connectVideoFilePreview(file);
+          if(info&&info.size.width<100000&&info.size.height<100000){
+            path+=`__vid_${info.size.width}x${info.size.height}`;
+            poster=info.poster;
+          }
+        }
         if(file.size<=6*1024*1024){
           const {error}=await client.storage.from('connect-attachments').upload(path,file,{contentType:file.type||'application/octet-stream',upsert:false});
           if(error)throw error;
@@ -2115,6 +2249,8 @@ export default function Home() {
             });upload.start();
           });
         }
+        if(thumb)await client.storage.from('connect-attachments').upload(photoPreviewPath(path),thumb,{contentType:'image/webp',upsert:false}).catch(()=>{});
+        if(poster)await client.storage.from('connect-attachments').upload(path+'__poster.jpg',poster,{contentType:'image/jpeg',upsert:false}).catch(()=>{});
         items.push({path,name:file.name.slice(0,240),kind:file.type.startsWith('video/')?'video':'image'});
         setUploadProgress(Math.round((i+1)/files.length*100));
       }
@@ -2147,11 +2283,13 @@ export default function Home() {
       }
       // Create a reliable first-frame preview once for each ordinary video.
       // The dimensions go in its storage path so layout is stable before downloading.
+      let photoPreview: Blob | null = null;
+      if(kind==='image' && supportsPhotoPreview(path))photoPreview=await makePhotoPreview(file);
       let videoPoster: Blob | null = null;
-      if (kind === 'video' && !/^connect-video-note-\d+\.(?:mp4|webm)$/i.test(file.name)) {
+      if (kind === 'video') {
         const preview = await connectVideoFilePreview(file);
         if (preview && preview.size.width < 100000 && preview.size.height < 100000) {
-          path += `__vid_${preview.size.width}x${preview.size.height}`;
+          if(!/^connect-video-note-\d+\.(?:mp4|webm)$/i.test(file.name))path += `__vid_${preview.size.width}x${preview.size.height}`;
           videoPoster = preview.poster;
         }
       }
@@ -2176,6 +2314,11 @@ export default function Home() {
           });
           upload.start();
         });
+      }
+      // Preview uploads are optional and never invalidate the original.
+      if(photoPreview && kind==='image'){
+        await supabase.storage.from('connect-attachments').upload(photoPreviewPath(path),photoPreview,
+          {contentType:'image/webp',upsert:false}).catch(()=>{});
       }
       // The still image is optional: upload failures must not block video messages.
       if (videoPoster && kind === 'video') {
@@ -2426,7 +2569,7 @@ export default function Home() {
     window.history.replaceState({}, '', window.location.pathname);
   }
   async function logout() {
-    await supabase?.auth.signOut(); exitChat(); setProfiles([]); setConversations([]); setMessages([]);
+    if(user?.id)await wipeUserHistory(user.id).catch(()=>{}); await supabase?.auth.signOut(); exitChat(); setProfiles([]); setConversations([]); setMessages([]);
     setLatest({}); setUnread({}); readCache.current = {}; setPassword(''); setNotice('');
   }
 
@@ -2486,7 +2629,7 @@ export default function Home() {
             {selectionMode&&<div className="selection-toolbar"><button type="button" onClick={()=>{setSelectionMode(false);setSelectedIds([])}}>Отмена</button><strong>Выбрано: {selectedIds.length}</strong><button type="button" disabled={!selectedIds.length} onClick={()=>beginForward(selectedIds)}>Переслать</button><button type="button" disabled={!selectedIds.length} onClick={()=>hideMessages(selectedIds)}>У себя</button><button type="button" disabled={!selectedIds.length||selectedIds.some(id=>visibleMessages.find(m=>m.id===id)?.sender_id!==user.id)} onClick={()=>void removeForEveryone(selectedIds)}>У всех</button></div>}
             <div className={"message-scroll"+(wallpaper?" has-wallpaper":"")} style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`}:undefined} ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
               <div className="message-stream">
-                {visibleMessages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>Напишите первое сообщение</span></div> : visibleMessages.map((m,index) => {
+                {visibleMessages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>{chatHistoryLoading||historyReadyChat!==activeChat?'Загружаем переписку…':'Напишите первое сообщение'}</span></div> : visibleMessages.map((m,index) => {
                   const mine = m.sender_id === user.id;
                   const replied = m.reply_to ? visibleMessages.find(x => x.id === m.reply_to) : undefined;
                   return <div key={m.id} id={"msg-"+m.id} className="message-day-group">
@@ -2507,13 +2650,17 @@ export default function Home() {
                       {replied && <button type="button" className="quote-box" onClick={e=>{e.stopPropagation();document.getElementById('msg-'+replied.id)?.scrollIntoView({behavior:'smooth',block:'center'});}} onTouchStart={e=>e.stopPropagation()} aria-label="Перейти к исходному сообщению"><strong>{replied.sender_id === user.id ? 'Вы' : currentName}</strong><span>{messagePreview(replied,user.id)}</span></button>}
                       <div className="bubble-body"><>
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
-                        {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?<img src={attachmentUrls[item.path]} alt={item.name} loading="lazy"/>:<><VideoThumbnail src={attachmentUrls[item.path]}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
+                        {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?(imageInChat(item.path)?<img src={imageInChat(item.path)} alt={item.name} loading="lazy" onError={()=>failedPhotoPreview(item.path)}/>:<span>Миниатюра…</span>):<><VideoThumbnail src={attachmentUrls[item.path]}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : m.attachment_kind==='video' && !isVideoNote(m) ? "attachment-preview connect-adaptive-video" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : m.attachment_kind==='video' && !isVideoNote(m) ? connectVideoFrameStyle(m.attachment_path) : undefined}>
                           {!attachmentUrls[m.attachment_path] ? (isKeyboardSticker(m) ? <span className="connect-keyboard-sticker-loading" aria-label="Загрузка стикера"/> : <span>Загрузка вложения…</span>)
                             : m.attachment_kind==='image' ? (isKeyboardSticker(m)
                               ? <img className="connect-keyboard-sticker" src={attachmentUrls[m.attachment_path]} alt="Стикер" draggable={false} loading="lazy"/>
-                              : <button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото"><img src={attachmentUrls[m.attachment_path]} alt={m.attachment_name || 'Фото'} loading="lazy" onLoad={e=>connectUpdatePhotoSize(e.currentTarget,m.attachment_path!)}/></button>)
-                            : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'}/>
+                              : <button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото">(imageInChat(m.attachment_path!)
+                                 ? <img src={imageInChat(m.attachment_path!)} alt={m.attachment_name || 'Фото'} loading="lazy"
+                                     onError={()=>failedPhotoPreview(m.attachment_path!)}
+                                     onLoad={e=>{if(!supportsPhotoPreview(m.attachment_path!))connectUpdatePhotoSize(e.currentTarget,m.attachment_path!);}}/>
+                                 : <span>Миниатюра…</span>)</button>)
+                            : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'} path={m.attachment_path}/>
                             : m.attachment_kind==='video' ? <ConnectInlineAutoplayVideo src={attachmentUrls[m.attachment_path]} path={m.attachment_path} onOpen={()=>setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}/>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/></div>
                             : isPlayableAudioFile(m) ? <VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} fileName={m.attachment_name||'Аудиофайл'} onSave={()=>void saveAttachment(m.attachment_path!,m.attachment_name||'Аудиофайл')} delivered={Boolean(currentPeerState?.delivered&&currentPeerState.delivered>=m.created_at||currentPeerState?.read&&currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read&&currentPeerState.read>=m.created_at)}/>
@@ -2626,7 +2773,7 @@ export default function Home() {
                     {customPacks.filter(p=>p.owner_id===user.id).map(p=><div key={p.id} className="settings-group data-settings"><strong>{p.emoji} {p.name} · {customStickers.filter(st=>st.pack_id===p.id).length} шт.</strong><small>{p.is_public?'Общий набор':'Личный набор'}</small><div className="connect-custom-grid">{customStickers.filter(st=>st.pack_id===p.id).map(st=><button key={st.id} type="button" onClick={()=>void deleteCustomSticker(st)} title="Удалить стикер"><img src={customStickerUrl(st)} alt="Стикер"/></button>)}</div><button className="settings-action" type="button" onClick={()=>{setCustomPack(p.id);setTimeout(()=>document.getElementById('connect-sticker-upload')?.click(),0)}}>Добавить стикеры</button><button className="settings-action secondary" type="button" onClick={()=>void deleteCustomPack(p)}>Удалить набор</button>{customPack===p.id&&<input id="connect-sticker-upload" type="file" accept="image/png,image/webp,image/gif" multiple hidden onChange={e=>void uploadCustomStickers(e.target.files)}/>}</div>)}
                     <p className="settings-hint">В чате нажмите ☺ рядом с полем сообщения. Есть избранное и недавно отправленные.</p></>}
                   {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Приглашения</strong><p className="settings-hint">Создавайте одноразовые коды для новых участников. Код действует 24 часа.</p><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-invitations'))}>Коды приглашений</button><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-hidden-invitations'))}>Коды для скрытых</button><div style={{marginTop:20}}><ConnectHiddenMembers request={authenticatedRequest} onChanged={()=>void loadDirectory()}/></div></div>}
-                  {settingsPage==='data' && <><CacheSettings/><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
+                  {settingsPage==='data' && <><CacheSettings userId={user.id}/><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
                   {settingsPage==='privacy' && <><div className="settings-group data-settings"><strong>Личные переписки</strong><p className="settings-hint">Сообщения доступны участникам диалога в рамках настроенных правил доступа. Это не означает сквозное шифрование.</p></div><div className="settings-group data-settings"><strong>Удаление аккаунта</strong><p className="settings-hint">Учётная запись и личные данные будут удалены. Отправленные сообщения останутся у собеседников от имени «Удалённый пользователь».</p><button type="button" className="settings-action secondary" disabled={busy} onClick={()=>void deleteMyAccount()}>Удалить аккаунт навсегда</button></div></>}
                   {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 2.2.1</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
                 </div>

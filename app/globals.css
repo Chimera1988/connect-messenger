@@ -641,3 +641,8 @@
   width: fit-content !important;
   max-width: min(180px, 48vw) !important;
 }
+
+/* Connect cached history pagination */
+.connect-history-more{display:block;margin:10px auto;padding:7px 12px;border:1px solid var(--line,rgba(160,175,195,.2));border-radius:12px;background:var(--panel,rgba(40,48,65,.5));color:var(--text,#fff);font-size:12px;cursor:pointer;}
+.connect-history-more:disabled{opacity:.6;cursor:default}
+.voice-player{-webkit-touch-callout:none}
