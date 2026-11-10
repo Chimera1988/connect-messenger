@@ -1,0 +1,159 @@
+name: Connect PWA — Turnix TURN relay (AUTO)
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/connect-turnix-auto.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-turnix-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  turnix:
+    if: github.repository == 'Chimera1988/connect-messenger'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: 'https://tpwkmoxxzjfdsqsomhhr.supabase.co'
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_tAg8rPwuBNcA2iPF7voc2Q_vsKUpyZa'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply verified Turnix source bundle
+        run: |
+          python3 - <<'CONNECT_TURNIX_PACKAGE'
+          import os,json,gzip,base64,hashlib,pathlib
+          root=pathlib.Path.cwd().resolve()
+          workflow=os.environ['GITHUB_WORKFLOW_REF']
+          name='.github/workflows/'+workflow.split('/.github/workflows/',1)[1].rsplit('@',1)[0]
+          source=(root/name).read_text(encoding='utf-8')
+          block=source.split('# CONNECT_TURNIX_BUNDLE_BEGIN\n',1)[1].split('# CONNECT_TURNIX_BUNDLE_END',1)[0]
+          packed=base64.b64decode(''.join(line.removeprefix('# ') for line in block.splitlines()),validate=True)
+          assert hashlib.sha256(packed).hexdigest()=='5b54a5ce897a9dc8c4ace69e762d60ae8a30acc007db31d6ad5cce0329f28807','TURNIX package checksum mismatch'
+          data=json.loads(gzip.decompress(packed))
+          def file(name):
+              p=root/name
+              if not p.resolve().is_relative_to(root) or any(x.is_symlink() for x in [p,*p.parents] if x.is_relative_to(root)):
+                  raise SystemExit('Unsafe package path: '+name)
+              return p
+          def blob(p):
+              if not p.is_file():return None
+              buf=p.read_bytes()
+              return hashlib.sha1(('blob '+str(len(buf))+'\0').encode()+buf).hexdigest()
+          # Fail atomically if main has diverged; do not overwrite unrelated updates.
+          for path,content in data['files'].items():
+              p=file(path)
+              expected=content.encode('utf-8')
+              new=hashlib.sha1(('blob '+str(len(expected))+'\0').encode()+expected).hexdigest()
+              previous=blob(p)
+              allowed=[new]+([data['before'][path]] if path in data['before'] else [None])
+              if previous not in allowed:raise SystemExit('Source drift: '+path)
+          for path,content in data['files'].items():
+              p=file(path);p.parent.mkdir(parents=True,exist_ok=True);p.write_text(content,encoding='utf-8')
+          print('Turnix ready: 5 checked files staged; TURNIX_API_TOKEN stays server-side')
+          CONNECT_TURNIX_PACKAGE
+      - name: Install locked dependencies and Chromium
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+      - name: Verify TypeScript, regressions, production build
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Commit verified Turnix changes
+        run: |
+          set -euo pipefail
+          git add app/api/calls/ice/route.ts app/api/calls/health/route.ts tests/call-turnix.test.cjs package.json docs/turnix-setup.md
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Add authenticated Turnix TURN relay to PWA and Android ICE endpoint'
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+
+# CONNECT_TURNIX_BUNDLE_BEGIN
+# H4sIAAAAAAAC/7VbC1fbxrb+KxNuVyQTWX5gXqIOh1DSctoSFpDengsExtIYq8iSqpF4XOP/fveehzSS7ZCenpuVBbZma2b269uPGWZrIzZOMr
+# bmzdZomnZoGnZ8GkW8M2E0yiedLCly5uZ8zVvb8TfoJtvp7/TY1mirN9jY3t4YjAZB1w/YqNcdbY62RnTTp2tOY6rQZ+Y8Ptsa+Ju9/ubIH2wO
+# drZ3KN3Z9vvjbm9raxDs7g62dra6dHsH5kmpf0/vmPsHT2J4c2Obsd3d0YDudvvdMfW3d3Z3u9sbG93Nzd5gu7uxTXv9rc0RW5s7a+MwYvxb2A
+# qnaZLlZOZnjObsMApZnM/JOEumxPoHL1I6opx19If2H9zau4r1SyfsKT9jfxaM5478zNMk5kxPEMOzDmfZA8vwtSv4Ll70gSgnWRHn4ZQNrTgJ
+# mJy4Nh48x3Qa+kMLVOSztvoqJ+qsr5ODIp/AbkMfNh7gO+PwrshoHiYxAfHknCRx9OySk4QAdwGS0og7hMVBmoQxjmekgO2RgObUvYrJOvmU4u
+# s0IkFI7+KEw+zcI74QCyfTArYVJ7A1lsIsMD/JJyEnQp4kTwjPKWyfEpS2S9Y7JUeUP8c+GRexL7b349GFnbE/PUOArRlsQHGeJ/csHgKBCwoL
+# WMbdO5bbFgWGkyz8X8Gi1dp3pzT3J3bnywdGM5ZdXfF3tvuu9V0nhLHL3vVeNWORRcM0S3zGucviB/fk6PeLm9PPH345Prw5/3x68OHg/Ojm89
+# kvzj17fp1QfD//6eDDL0c3Px/9S6wTju03Yt8vL29gNfgJU7UylhdZTEzjEOZsz1iWJZlnfY41Vyyw5s4MJJgX3Bt0e/OWsf9gNDQt1IYVcKvO
+# DN/2ZinIKOT5OewaROONQc/MgaHkjI0zxicXuDH5eF6bd4aq92ZoBXNHbGk+pI80xBVdnBsl/xlGbcFbS7MqSJFTGPoPMBmxnIzDjKGPHSpDZs
+# FQ8qEHTrPkD+bnv6LSGZeD4u08exbGo5mivp+Abw3/ef7pxE1pxpltqvTj8dmRUOP50dlvx4dHNweHh58+n1zcIP3LixUXUWTJfZFlu/qQJBGj
+# sa2W2XdTubGbMHj7tnwofeaGTWkYGY/TLHwANd6gcTSWaPK3sHI5jbHicDi0gOsYvrWnwCGL71jW3vR3+gNLzD/3cb5ZZ50cxw80CjVSEPRbhs
+# 4J4EE5OO1I8uWQmAFgERoT9uQzAQj4Tk7DOIzvCGdgiTlH957XHIzXHOfw08nJ0eHFzcXnsxP0rPN9l6dRCG7sWC3w3NR+GL5/cPMsnNqtlguA
+# nYOVKdm2Xl4uTfeN2B31n89YRJ9L8a9cDBzz7OgH0O7h2dHFvlrh7VvcocuTKcOFO1/QZPm+d/kFYOP6HWCGmwMK2Q+tltRLpwMCCwS48hJcEW
+# crKBX4ukfqsY6A7MJxCC8BBBeApLDPhxBADATOCxr7zK34ypAjw7QMPl9eljGKDB7/fnNwenxz8ennoxPNntzzakd8QIAAZOg5i2a1wsGcxubm
+# jjTXmcJkb2YdUiBsA0meJZHlWcq4wYKSNs8hsbAk2oCdvJYW6JBKJMz9RPnE0Z+n1CdlSIVY6fnZc5onZiQG4R6f1oliltcoTPwk3xziiRnja5
+# IlfynKkyF5Jc4jxZJIL2kEXgFWeeTs4vDYZ+diuctreOkS1TITDuiRS4vnRezhDzdy75LkLmKun0y93u5Gt285pBrvLSO4JqhmdD257smnm/OL
+# T2dHsM6MNPVNliiczMt3la0enfxw+un45AL5m+R5yr1OB800fHLDRBjEQ69jeBVahmQ9f04ZAWYPKTgiBComdiEZ5WD3AEYv6gOghUhlQHBsX4
+# /uGc5aPhQblAnUJ3BfAiJ/pFlABDaKTArETKQ6Ic8B1MOcSUIi5FtqpM3BpQm4ocxVZK5Tpjci5lwIHqWiuA3TF8wjRXwfJ49xa0GPMxlYif1G
+# UJKXF4LsJ2Miv78ZgviSEfqn1dKOXsPIEMQ+RQaHRK6GqA6OoRcBsNPLk3nLrZ7vlUsfZBl9dkMuftt6whZuRn9xI4gw+YS8J73+8n1AvlFE+T
+# JDlVQgcGKrLedsSoDFaiUVx8VuxGglB/G1LgaMSmFcsD0z+oO+s2dYTtCDCE4hJQUD+N40pPe1N3z9mMNrajUxi4u2Roa4pjQei+yTy2romngG
+# 4Z6x97okqwWELKuvdWkuZUfG7KH5koqVmASCIcFPjOXKuofvNQf4vLb1t2/lvASH9Mrfk353sANjpPPF3hfA8II/+AtqVvzgrYUoiSu3TH7FLt
+# WcKxgJuYhrwIokFqFYbPI9KcPxqgXUy6WByKd1XSn3lzaimQZxv2mMw6P6k0oLUJfCsF4C/9WWqOBk1SIGRblM9ay20IKYiHIdNy34xNZAJ4Tl
+# lODmNfbuGBjnLW5zroU4JwzS5dUraMq5yn3OLz6ftDG/wVdEvIOEJmOi+qNlIQcrIMrLPKZegrpGQqJWFRpXyApKl58qvYANqkcVAy1wOPk2uJ
+# oAkLlG78NEzQ0ZdswxXU108QqlQTSi/r3AGvYElRG6Bi6EdAGWr1HyPMWatoHcMgFD6LaR/DjQYWMFYlfJL9j1X0t/lemjL65Igsn+fh1aZer9
+# tZVquW8F7OpFtNMqDW763lInX47xkL9Azog8Q7I4ccdRkmT2DwBOLoQXu0U6pNftdlvkHdnY6nbNOlwre0huv5upaebedzMp7fmtmcdeSgutjL
+# 9u7FV2aFt8QnuQ3Ug+W26RIlLa+r2WG4R3yJKFGd7WAELHvGZLHxmkvAQCBqRlFKKHMGoz0xeGBNkPofWmCxgaoTm+mEtLajQ6ZKKzxJ4cgv0P
+# M7sEC4MEfBpy9n3d0t6bpgb5kijmG0awqi6oTEC/2FQoBsta9azTe3LG/CQLvtf7lb/fYw6m8co6qHVkPHIrOzHku5lebn7rlNSYOILs2heAqZ
+# g9QkEQoSDh3Q6WKZYinSvMAhj6jUFCHIFecy5bTXlWcJQ8C+6Y2uoeCRKBSzqVo6ph1YacHlYA6t/bH+UYC/CTuzT6A2cLLaen9oPYQXtcvg+f
+# sPdUefNl91qLGz3Wsmpx6/i0Cv/gTWr2S+v3NuqsffjL8dHJRfv41Lo2g3wtciYpBQvBLgzm0MWNBX5VlUnC+PubW1bN7I+Dyugn7AkGOcia2V
+# 2nP2jVZtf4DnPLzs8YncFuZO9OpfUpA6WDIVunn84vwOkUS6WeR0nw7BHRfJE2E46fIdjkOfgswoED+V4IbgX1wo1UlGeyOG+VM/HwLkZPPxhB
+# tXQuvrhYTEHZaO8gwAAgYEniYW2lChBtQ7X0RPPoJvdGCgH2Nej2PDKigUzj98igv+tBWcdYOw8x4c/oeAylWRROQ3DwH6SdYfXGsdCPA4CFUn
+# 7weSTNX9YEehkUMwC6C/YT2+gE2KwREONVzYGMYU7b6C9kEhksp1zEla2zlpEymM6s4ncVL0SCj1ixWJFIZWe1PkE9qVOvm2ndSkbiBFCajiKm
+# c4EaGz4LH1hQNtXUprlRf8yJ6FOZULRqqQqml8gKShz6ADUbbqW5nhLS3AD+8wnFps7oWdR2MWDRA5Z1P4s04fS/D/ag8gthKNNMcEEoJdms/7
+# 7e665hfQ3SAUQ1pv+He96NKLGq6228dM+ev+Wl5R1wDDMlMyrZEL+x21lTxZIWFZHNYlLvFpM5IA9RDWN0V6cKUGVzotbS5iME0mazHBnDmUS/
+# HH43OuZEtprJQs9cDoB51tvm4sgE5xHnJ7BHsXkg0yDKG+3zUi5VSJavCDFhF/3/Wz7V7qc0pncsKPfaSFJcrDfAEE2GqY+eoQs4NYEuZ/bLGb
+# 1mAg1zvdKaVE1Fo08Bib7rurrj5RD4Yix/7TS7pp65u6rE6pKyY7lMJGKsak4Gic9VW6oN2UaRutNgzVv7L6Kx56rod3sD7fkiQRR0xAaYgIBc
+# YUcLZa1fK7BwSmLWSBxvARUajePb8mBOZJujBLjAqRGJEJH6bt8duOQC4AdrGzx/U5jH0ZrbOJEjM3OsdhZhWHQr5f4Br9ZPREsrLXJy28weby
+# FC54lAOljZwW045Mcw/6kYiTMDHkKoBXdK8JTgmdyaELF+CwVlFiL+uuvrKIqeSw6FO2KNpk4wIGkmi81AjPcgUeTYnyQYY3ELGI5JGsHLdq9L
+# fvwgWQMhTiGfnESwD8gyoOrL2B24Mjbr5IFniLkdpIMgHMW2BZIqRlHIJ/B2Mh6D10GU7rvkODZhXQUfBSKQTqrjFrGx8lub+0nKAjMIqPyAo2
+# 5C7MgBGzSHJTbEEiqZXV9fOLBB6+rt9sk5y7FU5fr7UfwQZkmMlSr5TUmVr68DTgXBMrVRDrOfsxgUBMYI8Q0taX0d6oqgENEIHolD4at4gDZw
+# xmQpjDxVFMJQUB4RtptyfaIBK2KpfQvymUI6BABm7A4YBUaqHkEYq3xGWFISBaKbWpbdKPdNl2BOh2ICEmFj6CLw/QHEudxFHiEYi62VVf256t
+# ujZYE4tSoOJwzq/9sFqID6AaYRisRjJYrpNXjnLRqhd4sWLT5y+AyB0SXSSzimCWJdiWMoi8q1xGsZfSzzvi2XiDWzqTR5cQ4kHRKby1XFIQ0q
+# f0zaj+isWE2OWP7IQAqG64PToxqCEC0WhR0DTZLdc3dBSPKCw61QMugEZIAJC80b1wOgkEohxsFce2ioQcLQcEBvoH1MSRnB+VG8ainkkBdCwu
+# MiEjvlLjq3xGwZm2Rz5c8iyanMmLnoxAi4QhXHSTYFQWBrqSPjBGwLxan766CPeyFlIUhHTBcld4qbBHPYKmMeQ5YHOgVzGeO8oucE6Ais1di5
+# K2hGoe5kC/sHxWQJx8wRyxQRQsjJwQV5RCMsgUeyA7OypwkVtafEYBOakxEejhKRNqxIT8sGQr1lcBAHWRIGAEy6By5wHF0IXE7WxoBoHw9/dU
+# AS/j2ATobWIYg+H0sRTUNgJJ2gHQPWTUOR0ojgEGZ4YAHJPxpbwB7wfBJdGhv5qL0qj/WWwLGIiWBb7YwJw/OZeU4jwmbjio7Iaq/WsOdytebB
+# pwWku1pzJI06kZRkGNs2yiF1qoRD6K7qKXAepjnHp6pIuFoDluQEeAZHxDdHj42KMAqMUfW9HBd3VYxx9b0cx86v8CBJk3OftNtxcgR2bVKBNN
+# UkSSCFyzvyfFJ00Vz/D46dTWN0Gt6pFukKAlHTtkdZ8ogZ1KpZIMBR0IwP3po9r54qitpS8e3kMQaZT8L0q8TqfOsrxO22LIDbd775Ypb7LoA9
+# 08wtzj8On7bU/Ku2AO6LqcVrzIsFsYkNvEXhqwKQqPhVEmX1muRqTVSKyvTkdSdwgJDV7Q8NR2q/t+luuv0dwzIgefD14K7bc7vNsXaQTFeMLz
+# 2W1q6yuV2jhcQfBtuykyJpBu6G2zNIHtlISEuOftlwt9xtY1if/7dpAAikiHobbre+DoSlPKZ+pPYMwxtNMT38sEpS/8gSOp382XkEM5ETdN1e
+# YwFwOOnkkmDT3XX7plAEQQc1p0TRd3s77tYiSVP0vY0VNA0V7C6SLRHdwKRiEcAbRI82/zPqpHdRmDPNHujAJIUM9vkxC+8medtPMqaluLmDTF
+# Z9CQDV1WaJ9yflDTlMCIYa42154wEfip6HqtkAcrNFKvm4I2OeQT7mC6RjboynFFKvJgU+NGgepgsUD1NjXALjAo26z1HR5bW9VIZhTpVM0zAS
+# VWzO3RxiPMfvv0IeGzF7zF1QcPARnpw/x76N+3T/gOLKvrkJQnmYYLluZ/WdFKvlWEU+3rFkO3Km1svkDUnuzSBcQHHvweLnYm8X4rt7dN7v9v
+# vOVOwDR+WOfg7jwD2ExDmJ/3nuMC6fHgNeQuj2MMzN5y0X1oaC7AJQpeTz8/nR2dDqqn9t8WOAP7AB2u71NwabW9s7u3TkWw6R5z5D69d/3Zye
+# Hf92cHF0o4qEj8e/w6cjWShgh7rsTwEqg5Uxewbp/HA2d4oUTIPRqVN1GYYiDEuEOT4dWv0ugkMPIGLXmsM75t1NXZMOL68d7N5hOYOfZXOMA7
+# V5rZGl8ER6SM0U1G/HHMILPV7dcPCRbhevuMvj1a72enZr+N5WtyZVb8YTDTs5UF2H9Cr292dh4KEe5h7eDVQXJU0CfOwd4VPbKsz2TGveAr3O
+# Sz6Mq0LezGyGeDNMoTwbm+dOkgpBiR2p1g4+Us3fl5d+t+sIQt3XEKPqy8vLDJeUa0phP0zdrIiP4xP2KM5gnnJbu48zU4pxlGS9ePh+JjHCTe
+# 5t1NBlfA2+gO1NWdLBM2K9i1t7qqmjaDSXqnnooUEBkyt6jl55GYg90WkaMUgexEm05XxLx9GzVCUvGr2O62Kvcq63oCp4b4YW6NkwirdBOAhU
+# m6Q8AhdPJS5YxGqVihJHIMousHuI8oWXZ9q41QG6HpqXotDOs68/VK97s+Re3cxVOt3sbpQ7No44HDxIdfD8xFEHglKVtUZauZXSyRxEIzS94X
+# ulUhdbz9V1PRxH4Bu+Fz+Hw0ZzeV94ha0HVxx97WsYEL4grFs20fQtD14AYMyMdp68oCbuGpjX08o6w9sYbO9Yynw0najHWdH28UoDHvvUqPcl
+# 3gOTwyJILceSNftS+sFgwyDP/dS6dsrbFBYHAeTtSBxPOMbpslWWcZa4Eeeos+qD3AP462+1ez34f9HteuL//1goBXFsXgOA8uo81PzYFtGnFM
+# 0DZsspQcg8GRia4OzNmg0fT+I9XrJUHgvT08hWZztUHCEINbUUdjiDbq9BTN3SqmXv1Omand/RN+7BCBfqovnyTY3kuYY6KNY+/7UNjpZvUPiD
+# lLju2xn19ggKoykz7vLJEtys2rGXBAGXBCH3o4Rjt0N2PFU/7+/ppIyjZngBBBChVGB9+Vz6DDhSa+Ea3dDUpBYal4cWVkNO+paNlCPEiOXjGD
+# jcRl/MwV3J1V+xDVCOOgIpwW9YUV12rxcnQcJvv/m5ZBdmdHNrVw4cLRLrnRT7K28vO3Z3aulM7SSJ1f+IQMyE4msIFuncPI8cPN2u7UAe1onx
+# 5pm30/lS3FzS9rjb3r2e9Qfz7zqNacVy8rDdkWftS7hrHLNLHbdgNT8qAsZtJRZHuOSS902jqDDbHUO6aj8N3z+V17MwJJhg2TJuaTkGWq5eo9
+# RB/RoxKGDxGnHDwUVPC/1TnCxGjOqD2DRjD2FScNFUrO59JSmTXQgavebF2p6/yd9WsfZv+dwqlSwF5CojW6ExdUi/FBjFseCgv+tUf9Ehe7VT
+# GmHztHHtwGjGqj/2WC5EjXCQ38skpo50tVxH/K2P8zWC/m5586NaLJ9kySNRmbW6xQahVP+JSpqChqwybXsVae1aXiJzjdUpyfwaMflvza1hb5
+# LwvEpwq/SD1pOOkblmeV3arosbb0yXom/N/s2wNG/cAvpLkeYrBv+qrZfWjra80owrmjdNiFtEt8WJqVsm+ktmNEZl7m+tmnNec6fy0Mn/hrun
+# 4hhBOWDIa/dS/k5i4SzcLPVksixErm1MGrCz+m6oZ6nV2kkUtKVnWSuTloWypZGr/DXj+bYMZKl5iIurMi7hPdZSaStFIP+cy9AhlAHJePFKIK
+# oIqi+IPcEeOT4lKe4ikCdP8jx08eLh30wQy0LKEpeqY1jW+vezxr+ggVq+5r6aHxVxwCAfYEEpybX5/P8A6R6hMTs+AAA=
+# CONNECT_TURNIX_BUNDLE_END
