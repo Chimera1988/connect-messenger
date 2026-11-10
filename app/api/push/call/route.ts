@@ -48,6 +48,12 @@ export async function POST(req: NextRequest) {
     db.from('profiles').select('display_name').eq('id', call.caller_id).maybeSingle(),
   ]);
   if (settings?.enabled === false || !devices?.length) return NextResponse.json({ ok: true, sent: 0 });
+  const androidReady=Boolean(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  const webReady=Boolean(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY&&process.env.VAPID_SUBJECT);
+  if(!devices.some(d=>d.platform==='android'?androidReady&&d.endpoint:d.platform==='web'&&webReady&&d.subscription)){
+    console.warn('ConnectCall',{callId:call.id,stage:'push',code:'TRANSPORT_NOT_CONFIGURED'});
+    return NextResponse.json({error:'Call push transport is not configured',sent:0},{status:503,headers:{'Cache-Control':'no-store'}});
+  }
 
   // A call may be observed by several active clients. Send the push only once.
   const { error: reservationError } = await db.from('connect_call_push_log').insert({ call_id: call.id });
@@ -62,32 +68,36 @@ export async function POST(req: NextRequest) {
     callId: String(call.id), conversationId: String(call.conversation_id),
   };
   const vapidReady = Boolean(process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY && process.env.VAPID_SUBJECT);
-  if (vapidReady) webpush.setVapidDetails(process.env.VAPID_SUBJECT!, process.env.VAPID_PUBLIC_KEY!, process.env.VAPID_PRIVATE_KEY!);
   let sent = 0;
-  for (const device of devices) {
-    try {
-      if (device.platform === 'web') {
-        if (!vapidReady || !device.subscription) continue;
-        await webpush.sendNotification(device.subscription, JSON.stringify(payload), { TTL: 45, urgency: 'high' });
-      } else if (device.platform === 'android') {
-        const credentials = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-        if (!credentials || !device.endpoint) continue;
-        if (!getApps().length) initializeApp({ credential: cert(JSON.parse(credentials)) });
-        await getMessaging().send({
-          token: device.endpoint,
-          data: payload,
-          android: { priority: 'high', ttl: 45000 },
-        });
-      } else continue;
-      sent++;
-    } catch (e: unknown) {
-      const status = (e as { statusCode?: number })?.statusCode;
-      const code = (e as { code?: string })?.code;
-      if (status === 404 || status === 410 || code === 'messaging/registration-token-not-registered') {
-        await db.from('push_devices').delete().eq('id', device.id);
-      } else console.warn('Call push failed:', device.platform, status || code || 'unknown');
+  // A stalled browser subscription must not delay Android's high-priority FCM.
+  // Devices are independent; receiver-side callId ownership handles redelivery.
+  const targets=[...devices].sort((a,b)=>Number(b.platform==='android')-Number(a.platform==='android'));let cursor=0;
+  const deliver=async(device:(typeof targets)[number])=>{
+    for(let attempt=0;attempt<2;attempt++) {
+      try {
+        if (device.platform === 'web') {
+          if (!vapidReady || !device.subscription) return;
+          webpush.setVapidDetails(process.env.VAPID_SUBJECT!,process.env.VAPID_PUBLIC_KEY!,process.env.VAPID_PRIVATE_KEY!);
+          await webpush.sendNotification(device.subscription, JSON.stringify(payload), { TTL:45, urgency:'high', timeout:6000 });
+        } else if (device.platform === 'android') {
+          const credentials=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+          if (!credentials || !device.endpoint) return;
+          if (!getApps().length) initializeApp({credential:cert(JSON.parse(credentials))});
+          await getMessaging().send({token:device.endpoint,data:payload,android:{priority:'high',ttl:45000}});
+        } else return;
+        sent++;return;
+      } catch(e:unknown) {
+        const status=(e as {statusCode?:number})?.statusCode;
+        const code=(e as {code?:string})?.code;
+        if(status===404||status===410||code==='messaging/registration-token-not-registered') {
+          await db.from('push_devices').delete().eq('id',device.id);return;
+        }
+        console.warn('ConnectCall',{callId:call.id,stage:'push',code:status?'HTTP_'+status:typeof code==='string'?code.replace(/[^a-zA-Z0-9_/-]/g,'').slice(0,80):'TRANSPORT_ERROR'});
+      }
     }
-  }
+  };
+  await Promise.all(Array.from({length:Math.min(4,targets.length)},async()=>{while(cursor<targets.length){const device=targets[cursor++];await deliver(device);}}));
   if (sent === 0) await db.from('connect_call_push_log').delete().eq('call_id', call.id);
+  console.info('ConnectCall',{callId:call.id,stage:'push',sent,targets:devices.length});
   return NextResponse.json({ ok: true, sent }, { headers: { 'Cache-Control': 'no-store' } });
 }

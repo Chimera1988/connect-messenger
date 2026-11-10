@@ -4,7 +4,8 @@ import RecordingBar from '../components/ConnectRecordingBar';
 import CacheSettings from '../components/ConnectCacheSettings';
 import {mediaIdentity, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from '../lib/media-cache';
 import { prefetchCachedMedia } from '../lib/media-cache';
-import { readChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
+import { readChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
+import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
 import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
@@ -222,6 +223,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
   const [bars, setBars] = useState<number[]>(Array(43).fill(0.28));
   const [error, setError] = useState(false);
   const seeking = useRef(false);
+  const wavePointer=useRef<{x:number;y:number;started:number}|null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -302,10 +304,10 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
     <div className="voice-content">
       {fileName&&<div className="voice-file-name" title={fileName}>{fileName}</div>}
       <div className="voice-wave" role="slider" tabIndex={0} aria-label="Перемотка голосового сообщения" aria-valuemin={0} aria-valuemax={Math.max(0,Math.round(duration))} aria-valuenow={Math.round(position)}
-        onPointerDown={e => {e.stopPropagation();seeking.current=true;e.currentTarget.setPointerCapture(e.pointerId);seek(e);}}
-        onPointerMove={e => {if(seeking.current)seek(e);}}
-        onPointerUp={e => {seeking.current=false;e.stopPropagation();}}
-        onPointerCancel={() => {seeking.current=false;}}
+        onPointerDown={e => {e.stopPropagation();seeking.current=false;wavePointer.current={x:e.clientX,y:e.clientY,started:performance.now()};e.currentTarget.setPointerCapture(e.pointerId);}}
+        onPointerMove={e => {const p=wavePointer.current;if(!p)return;if(Math.abs(e.clientY-p.y)>Math.abs(e.clientX-p.x)+8){wavePointer.current=null;seeking.current=false;return;}if(Math.abs(e.clientX-p.x)>8)seeking.current=true;if(seeking.current)seek(e);}}
+        onPointerUp={e => {const p=wavePointer.current;if(p&&(seeking.current||performance.now()-p.started<480))seek(e);wavePointer.current=null;seeking.current=false;e.stopPropagation();}}
+        onPointerCancel={() => {wavePointer.current=null;seeking.current=false;}}
         onKeyDown={e => {const audio=audioRef.current;if(!audio)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();audio.currentTime=Math.max(0,Math.min(duration,audio.currentTime+(e.key==='ArrowRight'?5:-5)));}}}>
         {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
       </div>
@@ -584,18 +586,22 @@ function VideoThumbnail({src,path}:{src:string;path?:string}) {
   const [poster,setPoster]=useState<string|null>(null);
   const [uploadedPoster,setUploadedPoster]=useState<string|null>(null);
   const [failed,setFailed]=useState(false);
+  const [posterChecked,setPosterChecked]=useState(false),[near,setNear]=useState(false);
+  const frameRef=useRef<HTMLSpanElement|null>(null);
   const videoRef=useRef<HTMLVideoElement|null>(null);
+  useEffect(()=>{const frame=frameRef.current;if(!frame)return;const io=new IntersectionObserver(items=>setNear(Boolean(items[0]?.isIntersecting)),{root:frame.closest('.message-scroll'),rootMargin:'120px'});io.observe(frame);return()=>io.disconnect();},[]);
   useEffect(()=>{setPoster(null);setFailed(false)},[src]);
   useEffect(() => {
-    setUploadedPoster(null);
-    if (!path || !/__vid_\d{1,5}x\d{1,5}$/.test(path) || !supabase) return;
+    setUploadedPoster(null);setPosterChecked(false);
+    if (!path || !/__vid_\d{1,5}x\d{1,5}$/.test(path) || !supabase) {setPosterChecked(true);return;}
+    if(!near)return;
     let cancelled = false;
     void supabase.storage.from('connect-attachments').createSignedUrl(path + '__poster.jpg', 3600)
       .then(({data,error}) => {
-        if (!cancelled && !error && data?.signedUrl) setUploadedPoster(mediaUrl(data.signedUrl));
-      }).catch(() => {});
+        if (!cancelled) {if(!error&&data?.signedUrl)setUploadedPoster(mediaUrl(data.signedUrl));setPosterChecked(true);}
+      }).catch(() => {if(!cancelled)setPosterChecked(true);});
     return () => {cancelled = true;};
-  }, [path]);
+  }, [path,near]);
   function capture(video:HTMLVideoElement){
     if(!video.videoWidth||!video.videoHeight)return;
     try{
@@ -608,16 +614,45 @@ function VideoThumbnail({src,path}:{src:string;path?:string}) {
       if(url.length>100)setPoster(url);
     }catch{setFailed(true)}
   }
-  return <span className="connect-video-preview">
-    {(uploadedPoster || poster) && <img src={uploadedPoster || poster || ''} alt="Предпросмотр видео" onError={()=>setUploadedPoster(null)}/>}
-    <video ref={videoRef} src={src} playsInline muted preload="metadata"
+  return <span ref={frameRef} className="connect-video-preview">
+    {(uploadedPoster || poster) && <img src={uploadedPoster || poster || ''} alt="Предпросмотр видео" onError={()=>{setUploadedPoster(null);setPosterChecked(true);}}/>}
+    {near&&posterChecked&&!uploadedPoster&&!poster&&<video ref={videoRef} src={src} playsInline muted preload="metadata"
       onLoadedMetadata={e=>{const v=e.currentTarget;if(path)connectUpdateVideoFrame(v,path);else syncVideoThumbnailSize(v);try{v.currentTime=path && Number.isFinite(v.duration) && v.duration>.3 ? Math.min(1.2,Math.max(.3,v.duration*.12),v.duration*.8) : Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
       onSeeked={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}
       onLoadedData={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}
       onError={()=>setFailed(true)}
-      style={poster?{visibility:'hidden'}:undefined}/>
+      style={poster?{visibility:'hidden'}:undefined}/>}
     {failed&&!poster&&<span className="connect-video-fallback">Видео</span>}
   </span>;
+}
+
+// Keep decoder/network ownership outside render; only one visible inline video owns it.
+type VisibleVideo={visible:boolean;paused:()=>boolean;activate:(active:boolean)=>void};
+const visibleVideos=new Map<HTMLVideoElement,VisibleVideo>();
+let preferredVideo:HTMLVideoElement|null=null;
+let inlineVideoForeground=true;
+if(typeof window!=='undefined')window.addEventListener('connect:native-lifecycle',event=>{inlineVideoForeground=(event as CustomEvent).detail==='active';reconcileVisibleVideos();});
+function claimVisibleVideo(video:HTMLVideoElement){preferredVideo=video;reconcileVisibleVideos();}
+function reconcileVisibleVideos(){
+ const candidates=[...visibleVideos].filter(([,item])=>item.visible&&!item.paused()&&inlineVideoForeground&&document.visibilityState==='visible');
+ candidates.sort(([a],[b])=>Number(b===preferredVideo)-Number(a===preferredVideo)||Math.abs(a.getBoundingClientRect().top-innerHeight/2)-Math.abs(b.getBoundingClientRect().top-innerHeight/2));
+ const winner=candidates[0]?.[0];for(const[video,item]of visibleVideos)item.activate(video===winner);
+}
+function useVisibleVideo(ref:{current:HTMLVideoElement|null},src:string,userPaused:{current:boolean},muted:{current:boolean}){
+ const resumePosition=useRef(0);
+ useEffect(()=>{
+  const video=ref.current;if(!video)return;let attached=false;
+  const resume=()=>{if(resumePosition.current>0&&Number.isFinite(video.duration))video.currentTime=Math.min(resumePosition.current,Math.max(0,video.duration-.05));};
+  video.addEventListener('loadedmetadata',resume);
+  const item:VisibleVideo={visible:false,paused:()=>userPaused.current,activate(active){
+   if(active){video.muted=muted.current;if(!attached){attached=true;video.src=src;video.load();}if(video.paused)void video.play().catch(()=>{});}
+   else if(attached){resumePosition.current=video.currentTime||resumePosition.current;attached=false;video.pause();video.removeAttribute('src');video.load();}
+  }};
+  visibleVideos.set(video,item);
+  const observer=new IntersectionObserver(entries=>{item.visible=Boolean(entries[0]?.isIntersecting);reconcileVisibleVideos();},{root:video.closest('.message-scroll'),threshold:.35});
+  observer.observe(video);document.addEventListener('visibilitychange',reconcileVisibleVideos);
+  return()=>{observer.disconnect();document.removeEventListener('visibilitychange',reconcileVisibleVideos);visibleVideos.delete(video);if(preferredVideo===video)preferredVideo=null;item.activate(false);video.removeEventListener('loadedmetadata',resume);reconcileVisibleVideos();};
+ },[ref,src,userPaused,muted]);
 }
 
 // Connect inline autoplay video and separate audio controls v1
@@ -647,36 +682,13 @@ function ConnectInlineAutoplayVideo({src,path,onOpen}:{src:string;path:string;on
     return()=>{cancelled=true;};
   },[path]);
 
-  useEffect(()=>{
-    const video=ref.current;
-    if(!video)return;
-    soundRef.current=true;video.muted=true;setMuted(true);
-    let inView=false;
-    function update(){
-      if(!video)return;
-      if(inView&&document.visibilityState==='visible'){
-        video.muted=soundRef.current;
-        void video.play().catch(()=>{}); // iOS low-power mode may block autoplay
-      }else{
-        video.pause();video.muted=true;soundRef.current=true;setMuted(true);
-      }
-    }
-    const observer=new IntersectionObserver(entries=>{
-      inView=Boolean(entries[0]?.isIntersecting);
-      update();
-    },{root:video.closest<HTMLElement>('.message-scroll'),threshold:.35});
-    observer.observe(video);
-    document.addEventListener('visibilitychange',update);
-    return()=>{
-      observer.disconnect();document.removeEventListener('visibilitychange',update);
-      video.pause();video.muted=true;
-    };
-  },[src]);
+  const userPaused=useRef(false);
+  useVisibleVideo(ref,src,userPaused,soundRef);
 
   return <div className="connect-inline-autoplay-video">
     <button type="button" className="connect-inline-autoplay-video-open" aria-label="Открыть видео на весь экран"
       onClick={event=>{event.stopPropagation();onOpen();}}>
-      <video ref={ref} src={src} poster={poster||undefined} autoPlay muted={muted} loop playsInline preload="metadata"
+      <video ref={ref} poster={poster||undefined} muted={muted} loop playsInline preload="none"
         onLoadedMetadata={event=>connectUpdateVideoFrame(event.currentTarget,path)}
         onError={()=>setError(true)}/>
       {error&&<span className="connect-inline-video-error">Видео недоступно</span>}
@@ -687,7 +699,7 @@ function ConnectInlineAutoplayVideo({src,path,onOpen}:{src:string;path:string;on
         event.stopPropagation();const video=ref.current;if(!video)return;
         const next=!video.muted;
         soundRef.current=next;video.muted=next;setMuted(next);
-        if(!next)void video.play().catch(()=>{});
+        if(!next){userPaused.current=false;claimVisibleVideo(video);}
       }}><ConnectSoundGlyph muted={muted}/></button>
   </div>;
 }
@@ -711,32 +723,7 @@ function VideoNoteBubble({src,name,path}:{src:string;name:string;path:string}) {
   const [duration,setDuration]=useState(0);
   const [progress,setProgress]=useState(0);
   const userPaused=useRef(false),mutedRef=useRef(true);
-  useEffect(()=>{
-    const video=ref.current;
-    if(!video)return;
-    userPaused.current=false;
-    mutedRef.current=true;
-    video.muted=true;setMuted(true);setProgress(0);
-    let inView=false;
-    function update(){
-      if(!video)return;
-      if(inView&&document.visibilityState==='visible'&&!userPaused.current){
-        video.muted=mutedRef.current;
-        void video.play().catch(()=>{});
-      }else{
-        video.pause();
-      }
-    }
-    const observer=new IntersectionObserver(entries=>{
-      inView=Boolean(entries[0]?.isIntersecting);update();
-    },{root:video.closest<HTMLElement>('.message-scroll'),threshold:.35});
-    observer.observe(video);
-    document.addEventListener('visibilitychange',update);
-    return()=>{
-      observer.disconnect();document.removeEventListener('visibilitychange',update);
-      video.pause();video.muted=true;
-    };
-  },[src]);
+  useVisibleVideo(ref,src,userPaused,mutedRef);
   const circumference=2*Math.PI*47;
   return <div className="connect-video-note">
     <div className="connect-video-note-media">
@@ -744,9 +731,9 @@ function VideoNoteBubble({src,name,path}:{src:string;name:string;path:string}) {
         onClick={event=>{
           event.stopPropagation();const video=ref.current;if(!video)return;
           userPaused.current=!video.paused;
-          if(video.paused)void video.play().catch(()=>{});else video.pause();
+          if(!userPaused.current)claimVisibleVideo(video);else reconcileVisibleVideos();
         }}>
-        <video ref={ref} src={src} poster={poster} muted={muted} autoPlay playsInline loop preload="metadata" aria-label={name}
+        <video ref={ref} poster={poster} muted={muted} playsInline loop preload="none" aria-label={name}
           onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d)}}
           onTimeUpdate={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}
           onSeeked={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}/>
@@ -764,7 +751,7 @@ function VideoNoteBubble({src,name,path}:{src:string;name:string;path:string}) {
         onClick={event=>{
           event.stopPropagation();const video=ref.current;if(!video)return;
           const next=!video.muted;mutedRef.current=next;video.muted=next;setMuted(next);
-          if(!next)void video.play().catch(()=>{});
+          if(!next){userPaused.current=false;claimVisibleVideo(video);}
         }}><ConnectSoundGlyph muted={muted}/></button>
     </div>
   </div>;
@@ -956,6 +943,10 @@ export default function Home() {
   const [historyReadyChat,setHistoryReadyChat]=useState<string|null>(null);
   const [historyHasMore,setHistoryHasMore]=useState(false);
   const [historyLoadingMore,setHistoryLoadingMore]=useState(false);
+  const [historyHasNewer,setHistoryHasNewer]=useState(false);
+  const historyNewer=useRef(false),historyGeneration=useRef(0),historyPaging=useRef(false),historyAppend=useRef(false),historyTouched=useRef(false);
+  const historyOldest=useRef<Message|null>(null),historyNewest=useRef<Message|null>(null);
+  function setNewerHistory(value:boolean){historyNewer.current=value;setHistoryHasNewer(value);}
   const olderHistoryAnchor=useRef<{id:string;top:number}|null>(null);
   const [photoPreviews,setPhotoPreviews]=useState<Record<string,string|null>>({});
   const photoPreviewRequests=useRef(new Set<string>());
@@ -1118,6 +1109,7 @@ export default function Home() {
   },[activeChat,user?.id]);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const gesture = useRef<Gesture | null>(null);
+  const suppressMessageClick=useRef(0);
   const activeChatRef = useRef<string | null>(null);
   const readCache = useRef<Record<string, string>>({});
   const deliveredCache = useRef<Record<string, string>>({});
@@ -1543,6 +1535,8 @@ export default function Home() {
     let firstLoadPending = false;
     let refreshing = false;
     let cacheHydrated = false;
+    historyGeneration.current++;historyPaging.current=false;historyTouched.current=false;historyAppend.current=false;
+    historyOldest.current=null;historyNewest.current=null;setNewerHistory(false);
     setMessages([]); setTyping(false); setPeerRecording(false); setMenuMessage(null);
     setChatHistoryLoading(true);setHistoryHasMore(false);setHistoryReadyChat(null);
     setChatReadingEntry(null); setShowChatJump(false);
@@ -1556,7 +1550,7 @@ export default function Home() {
       if (firstLoad) firstLoadPending = true;
       try {
       const [messageResult, entryStateResult] = await Promise.all([
-        supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id', id).order('created_at', { ascending: false }).limit(500),
+        (()=>{let query=supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null);const upper=historyNewest.current;if(!firstLoad&&historyNewer.current&&upper)query=query.or(`created_at.lt.${upper.created_at},and(created_at.eq.${upper.created_at},id.lte.${upper.id})`);return query.order('created_at',{ascending:false}).order('id',{ascending:false}).limit(200);})(),
         firstLoad ? supabase.from('conversation_user_state').select('last_read_at')
           .eq('conversation_id', id).eq('user_id', user.id).maybeSingle() : Promise.resolve(null),
       ]);
@@ -1564,8 +1558,32 @@ export default function Home() {
       if (!alive) return;
       const { data, error } = messageResult;
       if (error) { firstLoadPending = false; setChatHistoryLoading(false); setNotice(error.message); return; }
-      const incoming = ((data || []) as Message[]).reverse();
-      if(firstLoad)setHistoryHasMore(incoming.length===500);
+      let incoming = ((data || []) as Message[]).reverse();
+      const firstResponse=firstLoad;let recentered=false;
+      if(firstLoad){
+        const readAt=[readCache.current[id]||'',entryStateResult?.data?.last_read_at||''].sort((a,b)=>chatTimeKey(a).localeCompare(chatTimeKey(b)))[1];
+        const latest=incoming[incoming.length-1],cachedUpper=historyNewest.current,recent=incoming;let restoredCached=false;
+        if(cachedUpper&&(historyNewer.current||historyTouched.current)){
+          const {data:windowRows,error:windowError}=await supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null).or(`created_at.lt.${cachedUpper.created_at},and(created_at.eq.${cachedUpper.created_at},id.lte.${cachedUpper.id})`).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(200);
+          if(windowError)throw windowError;if(!alive)return;incoming=((windowRows||[])as Message[]).reverse();
+          if(incoming.length){restoredCached=true;setNewerHistory(!!latest&&compareChatMessages(latest,incoming[incoming.length-1])>0);}else{incoming=recent;recentered=true;setNewerHistory(false);}
+        }
+        if(!restoredCached&&readAt&&latest?.sender_id!==user.id&&incoming.length&&chatTimeKey(incoming[0].created_at)>chatTimeKey(readAt)){
+          const {data:unreadRow,error:unreadError}=await supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null).neq('sender_id',user.id).gt('created_at',readAt).order('created_at',{ascending:true}).order('id',{ascending:true}).limit(1).maybeSingle();
+          if(unreadError)throw unreadError;if(!alive)return;
+          if(unreadRow){const anchor=unreadRow as Message;const [before,after]=await Promise.all([
+            supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null).or(`created_at.lt.${anchor.created_at},and(created_at.eq.${anchor.created_at},id.lt.${anchor.id})`).order('created_at',{ascending:false}).order('id',{ascending:false}).limit(30),
+            supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null).or(`created_at.gt.${anchor.created_at},and(created_at.eq.${anchor.created_at},id.gte.${anchor.id})`).order('created_at',{ascending:true}).order('id',{ascending:true}).limit(170)
+          ]);if(before.error||after.error)throw before.error||after.error;if(!alive)return;
+            incoming=[...((before.data||[])as Message[]).reverse(),...(after.data||[])as Message[]];recentered=true;
+            setNewerHistory(!!latest&&!!incoming.length&&compareChatMessages(latest,incoming[incoming.length-1])>0);
+          }
+        }
+        setHistoryHasMore(recentered?incoming.length>=30:incoming.length===200);
+      }
+      for(const row of incoming)if(row.deleted_at){serverDeleted.current.add(row.id);void dropCachedMessage(user.id,id,row.id).catch(()=>{});}
+      if(recentered&&!historyTouched.current)chatPositionedRef.current=null;
+      if(incoming.length){if(firstResponse||!historyOldest.current)historyOldest.current=incoming[0];if(firstResponse||!historyNewest.current||compareChatMessages(incoming[incoming.length-1],historyNewest.current)>0)historyNewest.current=incoming[incoming.length-1];}
       if (firstLoad) {
         firstLoad = false;
         firstLoadPending = false;
@@ -1588,8 +1606,8 @@ export default function Home() {
       setMessages(prev => {
         // A 500-row response is a recent window, not proof that older cached
         // messages were deleted. A shorter complete response supersedes cache.
-        const oldest=incoming[0]?.created_at||'';
-        const older=incoming.length===500 ? prev.filter(m=>m.conversation_id===id&&m.created_at<oldest&&!m.deleted_at&&!serverDeleted.current.has(m.id)) : [];
+        const firstIncoming=incoming[0];
+        const older=!recentered&&incoming.length===200 ? prev.filter(m=>m.conversation_id===id&&firstIncoming&&compareChatMessages(m,firstIncoming)<0&&!m.deleted_at&&!serverDeleted.current.has(m.id)) : [];
         const merged=[...older,...incoming].filter(m=>!m.deleted_at&&!serverDeleted.current.has(m.id));
         if(prev.length===merged.length&&prev.every((m,i)=>m.id===merged[i].id&&m.body===merged[i].body&&m.edited_at===merged[i].edited_at&&m.deleted_at===merged[i].deleted_at&&m.attachment_path===merged[i].attachment_path))return prev;
         return merged;
@@ -1604,13 +1622,14 @@ export default function Home() {
     void readChatHistory<Message>(user.id,id).then(snapshot=>{
       if(!alive||!snapshot?.messages.length)return;
       const saved=snapshot.messages;
+      historyOldest.current=saved[0];historyNewest.current=saved[saved.length-1];setNewerHistory(!!snapshot.hasNewer);
       setMessages(saved);
       const readAt=readCache.current[id]>snapshot.readAt?readCache.current[id]:snapshot.readAt;
       const unreadIndex=saved.findIndex(m=>m.sender_id!==user.id&&m.created_at>readAt);
       const anchorIndex=unreadIndex>=0?Math.max(0,unreadIndex-1):saved.length-1;
       setChatReadingEntry({chatId:id,readAt,firstUnreadId:unreadIndex>=0?saved[unreadIndex].id:null,anchorId:saved[anchorIndex]?.id||null});
       setChatHistoryLoading(false);setHistoryReadyChat(id);
-      setHistoryHasMore(saved.length>=500);
+      setHistoryHasMore(true);
     }).catch(()=>{}).finally(()=>{cacheHydrated=true;if(alive)void refresh();});
     const channel = supabase.channel('connect-chat-' + id).on('postgres_changes', {
       event: '*', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + id,
@@ -1624,9 +1643,14 @@ export default function Home() {
       const m = payload.new as Message;
       if (!m?.id) return;
       if(m.deleted_at)void dropCachedMessage(user.id,id,m.id).catch(()=>{});
+      if(historyNewer.current&&historyNewest.current&&compareChatMessages(m,historyNewest.current)>0){
+        void writeChatHistory(user.id,id,[m],readCache.current[id]||'').catch(()=>{});setShowChatJump(true);
+        if(m.sender_id!==user.id)return;
+        setNewerHistory(false);historyOldest.current=m;historyNewest.current=m;setMessages([m]);void refresh();return;
+      }
       setMessages(prev => {
         const exists = prev.some(x => x.id === m.id);
-        return exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m].sort((a, b) => a.created_at.localeCompare(b.created_at));
+        return exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m].sort(compareChatMessages);
       });
       // The viewport scan acknowledges messages only after they are actually shown.
     }).subscribe(status => { if (status === 'SUBSCRIBED') void refresh(); });
@@ -1634,6 +1658,7 @@ export default function Home() {
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
+      historyGeneration.current++;
       alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisible);
       if (scrollCheckFrame.current !== null) cancelAnimationFrame(scrollCheckFrame.current);
       scrollCheckFrame.current = null;
@@ -1644,31 +1669,37 @@ export default function Home() {
   useEffect(()=>{
     if(!user?.id||!activeChat||!messages.some(m=>m.conversation_id===activeChat))return;
     const userId=user.id,chatId=activeChat;
-    const rows=messages.filter(m=>m.conversation_id===chatId&&!m.deleted_at&&!serverDeleted.current.has(m.id));
+    const rows=messages.filter(m=>m.conversation_id===chatId&&!m.deleted_at&&!hiddenMessages.includes(m.id)&&!serverDeleted.current.has(m.id));
     const timer=window.setTimeout(()=>{void writeChatHistory(userId,chatId,rows,readCache.current[chatId]||'').catch(()=>{});},400);
     return()=>window.clearTimeout(timer);
-  },[user?.id,activeChat,messages]);
+  },[user?.id,activeChat,messages,hiddenMessages]);
 
-  async function loadOlderChatMessages(){
-    if(!supabase||!user||!activeChat||historyLoadingMore||!historyHasMore||!visibleMessages.length)return;
-    const id=activeChat,earliest=visibleMessages[0].created_at;
+  async function loadOlderChatMessages(){await loadHistoryPage(false);}
+  async function loadNewerChatMessages(){await loadHistoryPage(true);}
+  async function loadHistoryPage(forward:boolean){
+    if(!supabase||!user||!activeChat||historyPaging.current||!(forward?historyNewer.current:historyHasMore))return;
+    const id=activeChat,generation=historyGeneration.current,cursor=(forward?historyNewest.current:historyOldest.current)||(forward?visibleMessages[visibleMessages.length-1]:visibleMessages[0]);
+    if(!cursor)return;
+    historyPaging.current=true;
     setHistoryLoadingMore(true);
     const root=scrollRef.current;
     const first=root?.querySelector<HTMLElement>('.message-day-group[id]');
     if(first)olderHistoryAnchor.current={id:first.id,top:first.getBoundingClientRect().top};
     try{
-      const {data,error}=await supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id)
-        .lt('created_at',earliest).order('created_at',{ascending:false}).limit(300);
+      const cached=await(forward?readNewerChatHistory<Message>(user.id,id,cursor.created_at,cursor.id):readOlderChatHistory<Message>(user.id,id,cursor.created_at,cursor.id)).catch(()=>null);
+      if(activeChatRef.current!==id||historyGeneration.current!==generation)return;
+      const merge=(rows:Message[])=>setMessages(prev=>{const ids=new Set(prev.map(m=>m.id)),added=rows.filter(m=>!ids.has(m.id)&&!m.deleted_at&&!serverDeleted.current.has(m.id));if(!added.length)return prev;if(forward){historyAppend.current=true;stickToBottom.current=false;}return[...prev,...added].sort(compareChatMessages);});
+      if(cached?.messages.length)merge(cached.messages);
+      const {data,error}=await supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null)
+        .or(`created_at.${forward?'gt':'lt'}.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.${forward?'gt':'lt'}.${cursor.id})`).order('created_at',{ascending:forward}).order('id',{ascending:forward}).limit(120);
       if(error)throw error;
-      if(activeChatRef.current!==id)return;
-      const older=((data||[]) as Message[]).reverse().filter(m=>!m.deleted_at&&!serverDeleted.current.has(m.id));
-      if(older.length)setMessages(prev=>{
-        const ids=new Set(prev.map(m=>m.id));
-        return [...older.filter(m=>!ids.has(m.id)),...prev];
-      });
-      setHistoryHasMore((data||[]).length===300);
-    }catch(e){olderHistoryAnchor.current=null;setNotice('Не удалось загрузить старые сообщения: '+(e instanceof Error?e.message:String(e)));}
-    finally{setHistoryLoadingMore(false);}
+      if(activeChatRef.current!==id||historyGeneration.current!==generation)return;
+      const rows=(forward?(data||[]):[...(data||[])].reverse())as Message[];
+      for(const row of rows)if(row.deleted_at){serverDeleted.current.add(row.id);await dropCachedMessage(user.id,id,row.id).catch(()=>{});}
+      if(rows.length){if(forward)historyNewest.current=rows[rows.length-1];else historyOldest.current=rows[0];merge(rows);}
+      if(forward)setNewerHistory(rows.length===120);else setHistoryHasMore(rows.length===120);
+    }catch(e){if(historyGeneration.current===generation){olderHistoryAnchor.current=null;setNotice('Не удалось загрузить историю: '+(e instanceof Error?e.message:String(e)));}}
+    finally{if(historyGeneration.current===generation){historyPaging.current=false;setHistoryLoadingMore(false);}}
   }
   useLayoutEffect(()=>{
     const point=olderHistoryAnchor.current;if(!point)return;
@@ -1704,6 +1735,7 @@ export default function Home() {
     if (!activeChat || !messages.length || chatPositionedRef.current !== activeChat) return;
     const last = messages[messages.length - 1];
     if (previousLast.current === last.id) return; // edits/deletions never force a jump
+    if(historyAppend.current){historyAppend.current=false;previousLast.current=last.id;return;}
     const previousIndex=messages.findIndex(message=>message.id===previousLast.current);
     const initial = previousLast.current === '';
     previousLast.current = last.id;
@@ -1742,7 +1774,9 @@ export default function Home() {
     const el = scrollRef.current;
     if (!el || !activeChat || chatPositionedRef.current !== activeChat) return;
     const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottom.current = remaining < 110;
+    stickToBottom.current = remaining < 110 && !historyNewer.current;
+    if(el.scrollTop<90&&historyHasMore&&!historyPaging.current)void loadOlderChatMessages();
+    else if(remaining<160&&historyNewer.current&&!historyPaging.current)void loadNewerChatMessages();
     setShowChatJump(remaining > 170);
     // Throttle the read-receipt scan to one animation frame per scroll burst.
     if (scrollCheckFrame.current !== null || document.visibilityState !== 'visible') return;
@@ -1764,6 +1798,7 @@ export default function Home() {
   }
 
   function jumpToReadingPoint() {
+    if(historyNewer.current){void loadNewerChatMessages();return;}
     const root = scrollRef.current;
     if (!root || !activeChat) return;
     const readAt = readCache.current[activeChat] || chatReadingEntry?.readAt || '';
@@ -1862,7 +1897,7 @@ export default function Home() {
       try{const stored=JSON.parse(localStorage.getItem(key)||'null');if(stored&&Number.isFinite(Date.parse(stored.time))&&/^[0-9a-f-]{36}$/i.test(stored.id))cursor=stored;}catch{}
       for(let batch=0;batch<10&&active;batch++){
         const {data,error}=await supabase!.rpc('connect_deleted_since',{p_after:cursor.time,p_id:cursor.id,p_limit:200});if(error||!Array.isArray(data)||!data.length)break;
-        for(const row of data){serverDeleted.current.add(row.message_id);setMessages(prev=>prev.some(m=>m.id===row.message_id)?prev.filter(m=>m.id!==row.message_id):prev);await purgeDeletedMedia(user.id,row.message_id);await dropCachedMessageById(user.id,row.message_id).catch(()=>{});if(!active)return;cursor={time:row.deleted_at,id:row.message_id};}
+        for(const row of data){serverDeleted.current.add(row.message_id);setMessages(prev=>prev.some(m=>m.id===row.message_id)?prev.filter(m=>m.id!==row.message_id):prev);await purgeDeletedMedia(user.id,row.message_id);await dropCachedMessageById(user.id,row.message_id);if(!active)return;cursor={time:row.deleted_at,id:row.message_id};}
         localStorage.setItem(key,JSON.stringify(cursor));if(data.length<200)break;
       }
     }catch{/* Retry without advancing cursor on storage/network failures. */}finally{running=false;}};
@@ -1870,11 +1905,17 @@ export default function Home() {
     return()=>{active=false;clearInterval(timer);document.removeEventListener('visibilitychange',resumed);};
   },[user?.id]);
   const visibleMessages=messages.filter(m=>m.conversation_id===activeChat&&!serverDeleted.current.has(m.id)&&!m.deleted_at && !hiddenMessages.includes(m.id) && (!activeChat || !clearedChats[activeChat] || m.created_at>clearedChats[activeChat]));
+  useEffect(()=>{
+    if(historyReadyChat!==activeChat||visibleMessages.length||historyLoadingMore)return;
+    if(historyHasNewer)void loadNewerChatMessages();else if(historyHasMore)void loadOlderChatMessages();
+  // Reconcile pages containing only locally hidden rows without an empty-chat flash.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[activeChat,historyReadyChat,visibleMessages.length,historyLoadingMore,historyHasNewer,historyHasMore]);
   const searchMatches=chatQuery.trim()?visibleMessages.filter(m=>m.body.toLocaleLowerCase('ru-RU').includes(chatQuery.trim().toLocaleLowerCase('ru-RU'))):[];
   function showMatch(index:number){if(!searchMatches.length)return;const i=(index+searchMatches.length)%searchMatches.length;setSearchPosition(i);requestAnimationFrame(()=>document.getElementById('msg-'+searchMatches[i].id)?.scrollIntoView({behavior:'smooth',block:'center'}));}
   function highlightMessage(body:string){if(!chatSearchOpen||!chatQuery.trim())return body;const i=body.toLocaleLowerCase('ru-RU').indexOf(chatQuery.trim().toLocaleLowerCase('ru-RU'));return i<0?body:<>{body.slice(0,i)}<mark className="chat-search-mark">{body.slice(i,i+chatQuery.trim().length)}</mark>{body.slice(i+chatQuery.trim().length)}</>;}
   useEffect(()=>{if(!user)return;try{setHiddenMessages(JSON.parse(localStorage.getItem('connect-hidden-messages:'+user.id)||'[]'));}catch{setHiddenMessages([])}},[user?.id]);
-  function hideMessages(ids:string[]){if(!user)return;const next=Array.from(new Set([...hiddenMessages,...ids]));setHiddenMessages(next);try{localStorage.setItem('connect-hidden-messages:'+user.id,JSON.stringify(next))}catch{}setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}
+  function hideMessages(ids:string[]){if(!user)return;const next=Array.from(new Set([...hiddenMessages,...ids]));setHiddenMessages(next);try{localStorage.setItem('connect-hidden-messages:'+user.id,JSON.stringify(next))}catch{}for(const id of ids)void dropCachedMessageById(user.id,id).catch(()=>{});setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}
   function beginForward(ids:string[]){setForwardIds(ids);setMenuMessage(null);setChatActions(false);}
   async function forwardTo(contact:Profile) {
     if (!supabase || !user || busy) return;
@@ -2521,7 +2562,7 @@ export default function Home() {
     if (m.deleted_at || !e.touches[0]) return;
     clearGestureTimer(); const touch = e.touches[0]; const element = e.currentTarget;
     gesture.current = { id: m.id, x: touch.clientX, y: touch.clientY, dx: 0, dy: 0, opened: false, timer: window.setTimeout(() => {
-      if (gesture.current?.id === m.id) { gesture.current.opened = true; openMenu(m, element); }
+      if (gesture.current?.id === m.id) { gesture.current.opened = true; suppressMessageClick.current=Date.now()+1000;openMenu(m, element); }
     }, 480) };
   }
   function touchMove(e: TouchEvent<HTMLDivElement>, m: Message) {
@@ -2534,10 +2575,12 @@ export default function Home() {
   function touchEnd(m: Message) {
     if (selectionMode) return;
     const g = gesture.current; if (!g || g.id !== m.id) return;
+    if(g.opened)suppressMessageClick.current=Date.now()+600;
     clearGestureTimer(); gesture.current = null; setSwipe(null);
     if (!g.opened && g.dx > 58 && g.dx > Math.abs(g.dy) * 1.3 && !m.deleted_at) startReply(m);
   }
   function bubbleKey(e: ReactKeyboardEvent<HTMLDivElement>, m: Message) {
+    if(e.target!==e.currentTarget)return;
     if ((e.key === 'Enter' || e.key === ' ') && !m.deleted_at) { e.preventDefault(); openMenu(m, e.currentTarget); }
   }
 
@@ -2627,9 +2670,10 @@ export default function Home() {
             </header>
             {chatSearchOpen&&<div className="chat-search-bar"><Icon name="search" size={18}/><input autoFocus placeholder="Поиск по чату" value={chatQuery} onChange={e=>{setChatQuery(e.target.value);setSearchPosition(0)}}/><small>{searchMatches.length?`${searchPosition+1}/${searchMatches.length}`:'0'}</small><button type="button" onClick={()=>showMatch(searchPosition-1)}>↑</button><button type="button" onClick={()=>showMatch(searchPosition+1)}>↓</button><button type="button" onClick={()=>{setChatSearchOpen(false);setChatQuery('')}} aria-label="Закрыть поиск"><Icon name="close" size={17}/></button></div>}
             {selectionMode&&<div className="selection-toolbar"><button type="button" onClick={()=>{setSelectionMode(false);setSelectedIds([])}}>Отмена</button><strong>Выбрано: {selectedIds.length}</strong><button type="button" disabled={!selectedIds.length} onClick={()=>beginForward(selectedIds)}>Переслать</button><button type="button" disabled={!selectedIds.length} onClick={()=>hideMessages(selectedIds)}>У себя</button><button type="button" disabled={!selectedIds.length||selectedIds.some(id=>visibleMessages.find(m=>m.id===id)?.sender_id!==user.id)} onClick={()=>void removeForEveryone(selectedIds)}>У всех</button></div>}
-            <div className={"message-scroll"+(wallpaper?" has-wallpaper":"")} style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`}:undefined} ref={scrollRef} onScroll={trackScroll} aria-label="История сообщений">
+            <div className={"message-scroll"+(wallpaper?" has-wallpaper":"")} style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`}:undefined} ref={scrollRef} onScroll={trackScroll} onPointerDownCapture={()=>{historyTouched.current=true}} onWheelCapture={()=>{historyTouched.current=true}} aria-label="История сообщений">
               <div className="message-stream">
-                {visibleMessages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>{chatHistoryLoading||historyReadyChat!==activeChat?'Загружаем переписку…':'Напишите первое сообщение'}</span></div> : visibleMessages.map((m,index) => {
+                {historyHasMore&&<button type="button" className="connect-history-more" disabled={historyLoadingMore} onClick={()=>void loadOlderChatMessages()}>{historyLoadingMore?'Загружаем…':'Предыдущие сообщения'}</button>}
+                {visibleMessages.length === 0 ? <div className="empty-chat"><Icon name="message" size={32}/><span>{chatHistoryLoading||historyReadyChat!==activeChat||historyHasNewer||historyLoadingMore?'Загружаем переписку…':'Напишите первое сообщение'}</span></div> : visibleMessages.map((m,index) => {
                   const mine = m.sender_id === user.id;
                   const replied = m.reply_to ? visibleMessages.find(x => x.id === m.reply_to) : undefined;
                   return <div key={m.id} id={"msg-"+m.id} className="message-day-group">
@@ -2643,6 +2687,8 @@ export default function Home() {
                       style={swipe?.id===m.id ? { transform:`translate3d(${swipe.offset}px,0,0)` } : undefined}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
+                      onPointerMoveCapture={e=>{const g=gesture.current;if(g&&e.target instanceof Element&&e.target.closest('.voice-wave')&&(Math.abs(e.clientX-g.x)>8||Math.abs(e.clientY-g.y)>8)){clearGestureTimer();gesture.current=null;setSwipe(null);}}}
+                      onClickCapture={e=>{if(selectionMode){e.preventDefault();e.stopPropagation();selectOne(m.id);}else if(Date.now()<suppressMessageClick.current){e.preventDefault();e.stopPropagation();}}}
                       onClick={()=>{if(selectionMode)selectOne(m.id)}}
                       onContextMenu={e => { e.preventDefault(); if(selectionMode)selectOne(m.id);else openMenu(m, e.currentTarget); }}
                       onKeyDown={e => bubbleKey(e, m)} tabIndex={m.deleted_at ? -1 : 0}
@@ -2650,16 +2696,16 @@ export default function Home() {
                       {replied && <button type="button" className="quote-box" onClick={e=>{e.stopPropagation();document.getElementById('msg-'+replied.id)?.scrollIntoView({behavior:'smooth',block:'center'});}} onTouchStart={e=>e.stopPropagation()} aria-label="Перейти к исходному сообщению"><strong>{replied.sender_id === user.id ? 'Вы' : currentName}</strong><span>{messagePreview(replied,user.id)}</span></button>}
                       <div className="bubble-body"><>
                         {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
-                        {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?(imageInChat(item.path)?<img src={imageInChat(item.path)} alt={item.name} loading="lazy" onError={()=>failedPhotoPreview(item.path)}/>:<span>Миниатюра…</span>):<><VideoThumbnail src={attachmentUrls[item.path]}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
+                        {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?(imageInChat(item.path)?<img src={imageInChat(item.path)} alt={item.name} loading="lazy" onError={()=>failedPhotoPreview(item.path)}/>:<span>Миниатюра…</span>):<><VideoThumbnail src={attachmentUrls[item.path]} path={item.path}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : m.attachment_kind==='video' && !isVideoNote(m) ? "attachment-preview connect-adaptive-video" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : m.attachment_kind==='video' && !isVideoNote(m) ? connectVideoFrameStyle(m.attachment_path) : undefined}>
                           {!attachmentUrls[m.attachment_path] ? (isKeyboardSticker(m) ? <span className="connect-keyboard-sticker-loading" aria-label="Загрузка стикера"/> : <span>Загрузка вложения…</span>)
                             : m.attachment_kind==='image' ? (isKeyboardSticker(m)
                               ? <img className="connect-keyboard-sticker" src={attachmentUrls[m.attachment_path]} alt="Стикер" draggable={false} loading="lazy"/>
-                              : <button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото">(imageInChat(m.attachment_path!)
+                              : <button type="button" className="connect-media-thumb connect-adaptive-image" onClick={e=>{e.stopPropagation();setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Фото.jpg',kind:'image'})}} aria-label="Открыть фото">{imageInChat(m.attachment_path!)
                                  ? <img src={imageInChat(m.attachment_path!)} alt={m.attachment_name || 'Фото'} loading="lazy"
                                      onError={()=>failedPhotoPreview(m.attachment_path!)}
                                      onLoad={e=>{if(!supportsPhotoPreview(m.attachment_path!))connectUpdatePhotoSize(e.currentTarget,m.attachment_path!);}}/>
-                                 : <span>Миниатюра…</span>)</button>)
+                                 : <span>Миниатюра…</span>}</button>)
                             : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'} path={m.attachment_path}/>
                             : m.attachment_kind==='video' ? <ConnectInlineAutoplayVideo src={attachmentUrls[m.attachment_path]} path={m.attachment_path} onOpen={()=>setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}/>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/></div>
@@ -2673,9 +2719,10 @@ export default function Home() {
                   </div>
                   </div>;
                 })}
+                {historyHasNewer&&<button type="button" className="connect-history-more" disabled={historyLoadingMore} onClick={()=>void loadNewerChatMessages()}>{historyLoadingMore?'Загружаем…':'Следующие сообщения'}</button>}
               </div>
             </div>
-            {showChatJump && <button type="button" className="connect-chat-jump" onClick={jumpToReadingPoint}
+            {(showChatJump||historyHasNewer) && <button type="button" className="connect-chat-jump" onClick={jumpToReadingPoint}
               aria-label="Вниз к последнему прочитанному или последнему сообщению" title="К последнему сообщению">
               <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="2"
                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -2775,7 +2822,7 @@ export default function Home() {
                   {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Приглашения</strong><p className="settings-hint">Создавайте одноразовые коды для новых участников. Код действует 24 часа.</p><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-invitations'))}>Коды приглашений</button><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-hidden-invitations'))}>Коды для скрытых</button><div style={{marginTop:20}}><ConnectHiddenMembers request={authenticatedRequest} onChanged={()=>void loadDirectory()}/></div></div>}
                   {settingsPage==='data' && <><CacheSettings userId={user.id}/><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
                   {settingsPage==='privacy' && <><div className="settings-group data-settings"><strong>Личные переписки</strong><p className="settings-hint">Сообщения доступны участникам диалога в рамках настроенных правил доступа. Это не означает сквозное шифрование.</p></div><div className="settings-group data-settings"><strong>Удаление аккаунта</strong><p className="settings-hint">Учётная запись и личные данные будут удалены. Отправленные сообщения останутся у собеседников от имени «Удалённый пользователь».</p><button type="button" className="settings-action secondary" disabled={busy} onClick={()=>void deleteMyAccount()}>Удалить аккаунт навсегда</button></div></>}
-                  {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 2.2.1</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
+                  {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 2.2.3</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
                 </div>
               </>}
             </div><nav className="bottom-nav" aria-label="Основная навигация">
@@ -2799,7 +2846,7 @@ export default function Home() {
         {galleryIndex>=0 && galleryIndex<gallery.length-1 && <button type="button" className="connect-gallery-arrow next" aria-label="Следующее вложение" onClick={()=>stepGallery(1)}>›</button>}
       </div>
     </div>}
-    {menuMessage && <div className="context-overlay" role="presentation"><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
+    {menuMessage && <div className="context-overlay" role="presentation" onClickCapture={e=>{if(Date.now()<suppressMessageClick.current){e.preventDefault();e.stopPropagation();}}} onPointerDownCapture={()=>{suppressMessageClick.current=0;clearGestureTimer();gesture.current=null;}} onKeyDownCapture={()=>{suppressMessageClick.current=0;}}><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
       {isKeyboardSticker(menuMessage) && <button type="button" onClick={() => void saveKeyboardStickerFavorite(menuMessage)} disabled={busy}><Icon name="plus" size={22}/>Добавить в избранное</button>}
       <button type="button" onClick={() => beginForward([menuMessage.id])}><Icon name="forward" size={22}/>Переслать</button>
       <button type="button" onClick={() => startSelection([menuMessage.id])}><Icon name="check" size={22}/>Выбрать</button>

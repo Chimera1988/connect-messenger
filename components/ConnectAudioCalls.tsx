@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import ConnectCallAvatar, { loadCallAvatarUrls } from './ConnectCallAvatar';
+import { traceCall } from '../lib/call-diagnostics';
 
 type Status = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
 type CallRow = {
@@ -11,7 +12,7 @@ type CallRow = {
   created_at: string; answered_at: string | null; ended_at: string | null;
 };
 type IceRow = { id: number; call_id: string; sender_id: string; candidate: RTCIceCandidateInit };
-type Phase = 'idle' | 'preparing' | 'ringing' | 'incoming' | 'connecting' | 'active';
+type Phase = 'idle' | 'preparing' | 'ringing' | 'incoming' | 'connecting' | 'active' | 'reconnecting';
 // A contact chosen directly from the Calls tab, not inferred from a chat title.
 type OutgoingTarget = { conversationId: string; peerId: string; peerName: string };
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -196,10 +197,16 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generationRef = useRef(0);
   const answerPendingRef = useRef(false);
+  // localDescription grows as ICE is gathered. Compare the immutable SDP that
+  // won the server's answer transaction, never the mutable browser snapshot.
+  const submittedAnswerRef = useRef<RTCSessionDescriptionInit | null>(null);
   const outgoingPendingRef = useRef(false);
   const enteredRef = useRef(false);
   const syncingRef = useRef(false);
   const iceSyncingRef = useRef(false);
+  const iceSendingRef = useRef(false);
+  const remoteIceCursorRef = useRef(0);
+  const transportTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const missedCheckedRef = useRef(false);
   // A single sound engine is kept for this component's lifetime.
   const soundRef = useRef<ConnectCallSound | null>(null);
@@ -247,32 +254,44 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
 
   async function getIceServers(): Promise<RTCIceServer[]> {
     if (!client) return STUN;
+    const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);
     try {
       const { data } = await client.auth.getSession();
       if (!data.session?.access_token) return STUN;
       const response = await fetch('/api/calls/ice', {
         headers: { Authorization: `Bearer ${data.session.access_token}` },
         cache: 'no-store',
+        signal: controller.signal,
       });
-      if (!response.ok) return STUN;
+      if (!response.ok) {traceCall(callRef.current?.id,'ice-config','fallback','HTTP_'+response.status);return STUN;}
       const body = await response.json();
-      return Array.isArray(body.iceServers) && body.iceServers.length ? body.iceServers as RTCIceServer[] : STUN;
-    } catch { return STUN; }
+      const servers:RTCIceServer[]=Array.isArray(body.iceServers)&&body.iceServers.length?body.iceServers:STUN;
+      const relay=servers.some(server=>(Array.isArray(server.urls)?server.urls:[server.urls]).some(url=>/^turns?:/.test(url)));
+      traceCall(callRef.current?.id,'ice-config','ready',relay?'TURN':'STUN_ONLY');
+      return servers;
+    } catch { traceCall(callRef.current?.id,'ice-config','fallback','NETWORK');return STUN; }
+    finally {clearTimeout(timeout);}
   }
 
   async function sendIce(candidate: RTCIceCandidateInit) {
-    const call = callRef.current;
-    if (!call || !client || !userId) { localIceRef.current.push(candidate); return; }
-    if (!isLive(call.status)) return;
-    const { error: iceError } = await client.from('connect_call_ice').insert({
-      call_id: call.id, sender_id: userId, candidate,
-    });
-    if (iceError) console.warn('Connect call ICE was not delivered:', iceError.message);
+    localIceRef.current.push(candidate);
+    await flushLocalIce();
   }
 
   async function flushLocalIce() {
-    const queued = localIceRef.current.splice(0);
-    for (const candidate of queued) await sendIce(candidate);
+    const call=callRef.current,generation=generationRef.current;
+    if(!client||!userId||!call||!isLive(call.status)||iceSendingRef.current)return;
+    iceSendingRef.current=true;
+    try{
+      while(localIceRef.current.length&&generation===generationRef.current&&callRef.current?.id===call.id){
+        const candidate=localIceRef.current[0];
+        const {error}=await client.from('connect_call_ice').insert({call_id:call.id,sender_id:userId,candidate});
+        if(error){traceCall(call.id,'ice-send','retry','HTTP_ERROR');return;}
+        if(generation!==generationRef.current)return;
+        if(localIceRef.current[0]===candidate)localIceRef.current.shift();
+      }
+    }catch{traceCall(call.id,'ice-send','retry','NETWORK');}
+    finally{if(generation===generationRef.current)iceSendingRef.current=false;}
   }
 
   async function flushRemoteIce() {
@@ -299,21 +318,26 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   async function pullIce() {
     const call = callRef.current;
     if (!client || !call || !pcRef.current || iceSyncingRef.current) return;
+    const generation=generationRef.current;
     iceSyncingRef.current = true;
     try {
-      const { data, error } = await client.from('connect_call_ice')
-        .select('id,call_id,sender_id,candidate')
-        .eq('call_id', call.id).order('id', { ascending: true }).limit(250);
-      if (error || !data || callRef.current?.id !== call.id) return;
-      for (const candidate of data) await receiveIce(candidate as IceRow);
+      for(let page=0;page<4;page++){
+        const { data, error } = await client.from('connect_call_ice')
+          .select('id,call_id,sender_id,candidate').eq('call_id', call.id)
+          .neq('sender_id',userId).gt('id',remoteIceCursorRef.current).order('id', { ascending: true }).limit(250);
+        if(error||!data||callRef.current?.id!==call.id||generation!==generationRef.current)return;
+        for(const candidate of data){await receiveIce(candidate as IceRow);if(generation!==generationRef.current)return;remoteIceCursorRef.current=Math.max(remoteIceCursorRef.current,candidate.id);}
+        if(data.length<250)break;
+      }
     } catch { /* A transient fetch failure is retried on the next sync. */ }
-    finally { iceSyncingRef.current = false; }
+    finally { if(generation===generationRef.current)iceSyncingRef.current = false; }
   }
 
   function watchIce(callId: string) {
     if (!client) return;
     if (iceChannelRef.current) void client.removeChannel(iceChannelRef.current);
     knownIceRef.current = new Set();
+    remoteIceCursorRef.current = 0;
     const channel = client.channel(`connect-call-ice-${callId}-${userId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'connect_call_ice', filter: `call_id=eq.${callId}` },
         payload => { void receiveIce(payload.new as IceRow); })
@@ -332,6 +356,8 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     generationRef.current++;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     ringTimeoutRef.current = null;
+    if(transportTimeoutRef.current)clearTimeout(transportTimeoutRef.current);
+    transportTimeoutRef.current=null;
     if (iceChannelRef.current && client) void client.removeChannel(iceChannelRef.current);
     iceChannelRef.current = null;
     pcRef.current?.close(); pcRef.current = null;
@@ -341,7 +367,9 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     localIceRef.current = [];
     remoteIceRef.current = [];
     knownIceRef.current = new Set();
+    iceSendingRef.current=false;iceSyncingRef.current=false;remoteIceCursorRef.current=0;
     answerPendingRef.current = false;
+    submittedAnswerRef.current = null;
     outgoingPendingRef.current = false;
     enteredRef.current = false;
     setShown(null); setShownPeerId(null); setShownAvatarUrl(''); setPhase('idle'); setElapsed(0); setMuted(false);
@@ -365,14 +393,26 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
 
   async function finish(reason: 'hangup' | 'decline' | 'missed' | 'failed' | 'busy' = 'hangup') {
     const current = callRef.current;
+    const acceptedHere=current?.status==='active'&&!!submittedAnswerRef.current?.sdp&&current.answer?.sdp===submittedAnswerRef.current.sdp;
+    const wireReason=current?.callee_id===userId&&!acceptedHere?'decline':reason;
+    traceCall(current?.id,'finish','ended',reason);
     cleanup();
     if (current && client) {
       const { error: rpcError } = await client.rpc('connect_finish_audio_call', {
-        p_call_id: current.id, p_reason: reason,
+        p_call_id: current.id, p_reason: wireReason,
       });
       if (rpcError) console.warn('Connect call state:', rpcError.message);
       else void notifyCallEnded(current.id);
     }
+  }
+
+  function connectionDeadline(pc:RTCPeerConnection,generation:number,ms=25000){
+    if(transportTimeoutRef.current)clearTimeout(transportTimeoutRef.current);
+    transportTimeoutRef.current=setTimeout(()=>{
+      if(generation!==generationRef.current||pcRef.current!==pc||pc.connectionState==='connected')return;
+      traceCall(callRef.current?.id,'transport','failed','TIMEOUT');
+      setToast('Не удалось соединить звонок. Проверьте интернет и повторите вызов.');void finish('failed');
+    },ms);
   }
 
   async function createPeer(): Promise<RTCPeerConnection> {
@@ -402,6 +442,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     pcRef.current = pc;
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
     const ownsPeer = () => generation === generationRef.current && pcRef.current === pc;
+    pc.oniceconnectionstatechange=()=>{if(ownsPeer())traceCall(callRef.current?.id,'ice',pc.iceConnectionState);};
     pc.onicecandidate = event => { if (ownsPeer() && event.candidate) void sendIce(event.candidate.toJSON()); };
     pc.ontrack = event => {
       if (!ownsPeer()) return;
@@ -412,7 +453,10 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     };
     pc.onconnectionstatechange = () => {
       if (!ownsPeer()) return;
+      traceCall(callRef.current?.id,'transport',pc.connectionState);
       if (pc.connectionState === 'connected') { if (!enteredRef.current) soundRef.current?.connected(); enteredRef.current = true; if (callRef.current) window.ConnectAndroid?.setCallState(callRef.current.id, 'active'); setPhase('active'); setError(''); }
+      if(pc.connectionState==='connected'&&transportTimeoutRef.current){clearTimeout(transportTimeoutRef.current);transportTimeoutRef.current=null;}
+      if(pc.connectionState==='disconnected'&&enteredRef.current){setPhase('reconnecting');connectionDeadline(pc,generation,20000);}
       if (pc.connectionState === 'failed') { setToast('Связь прервалась. Для некоторых сетей необходим TURN-сервер.'); void finish('failed'); }
     };
     return pc;
@@ -424,8 +468,9 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     // The first accepted SDP identifies the receiving device. Other devices
     // release local ringing without finishing the conversation on the server.
     if (next.status === 'active' && next.callee_id === userId &&
-        (!pcRef.current?.localDescription?.sdp || next.answer?.sdp !== pcRef.current.localDescription.sdp)) {
+        (!submittedAnswerRef.current?.sdp || next.answer?.sdp !== submittedAnswerRef.current.sdp)) {
       cleanup();
+      traceCall(next.id,'answer-owner','released','OTHER_DEVICE');
       setToast('Звонок принят на другом устройстве');
       return;
     }
@@ -444,11 +489,12 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       const generation = generationRef.current;
       if (pc.remoteDescription) return;
       answerPendingRef.current = true;
+      connectionDeadline(pc,generation);
       try {
         await pc.setRemoteDescription(next.answer);
         if (generation !== generationRef.current || pcRef.current !== pc) return;
         await flushRemoteIce();
-        if (generation === generationRef.current && pcRef.current === pc) setPhase('connecting');
+        if (generation === generationRef.current && pcRef.current === pc && pc.connectionState!=='connected') setPhase('connecting');
       }
       catch (e) {
         if (generation !== generationRef.current || pcRef.current !== pc) return;
@@ -516,7 +562,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
             }
           }
         }
-        if (active && callRef.current && pcRef.current) await pullIce();
+        if (active && callRef.current && pcRef.current) {await flushLocalIce();await pullIce();}
       } catch { /* Realtime or the next poll will retry transient errors. */ }
       finally { syncingRef.current = false; }
     }
@@ -547,11 +593,28 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   }, [client, userId]);
 
   useEffect(() => {
-    if (phase !== 'active') return;
+    if (phase !== 'active' && phase !== 'reconnecting') return;
     const started = Date.parse(shown?.answered_at || '') || Date.now();
     const id = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000))), 1000);
     return () => clearInterval(id);
   }, [phase, shown?.answered_at]);
+
+  async function notifyIncoming(callId:string,generation:number){
+    if(!client)return;
+    for(let attempt=0;attempt<3;attempt++){
+      if(generation!==generationRef.current||callRef.current?.id!==callId||callRef.current.status!=='ringing')return;
+      const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),6000);
+      try{
+        const {data:{session}}=await client.auth.getSession();if(!session)return;
+        const response=await fetch('/api/push/call',{method:'POST',cache:'no-store',signal:controller.signal,
+          headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({callId})});
+        const result=response.ok?await response.json():null;
+        if(result&&(result.sent>0||result.duplicate||result.ignored)){traceCall(callId,'push','accepted');return;}
+        traceCall(callId,'push','retry','HTTP_'+response.status);
+      }catch{traceCall(callId,'push','retry','NETWORK');}finally{clearTimeout(timeout);}
+      if(attempt<2)await new Promise(resolve=>setTimeout(resolve,1500*(attempt+1)));
+    }
+  }
 
   async function startOutgoing(target?: OutgoingTarget) {
     const selectedConversation = target?.conversationId || conversationId;
@@ -581,17 +644,10 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
         return;
       }
       callRef.current = row; setShown(row); setPhase('ringing');
+      traceCall(row.id,'start','ringing');
       // Push directly from the call controller. The Calls tab also retains its
       // Realtime fallback; the server deduplicates both attempts by call ID.
-      void client.auth.getSession().then(({ data }) => {
-        const token = data.session?.access_token;
-        if (!token) return;
-        return fetch('/api/push/call', {
-          method: 'POST', cache: 'no-store',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ callId: row.id }),
-        }).catch(() => {});
-      }).catch(() => {});
+      void notifyIncoming(row.id,generation);
       watchIce(row.id); await flushLocalIce();
       if (generation !== generationRef.current) return;
       ringTimeoutRef.current = setTimeout(() => {
@@ -638,6 +694,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     try {
       const pc = await createPeer();
       if (generation !== generationRef.current) { pc.close(); return; }
+      connectionDeadline(pc,generation);
       watchIce(row.id);
       await pc.setRemoteDescription(row.offer);
       if (generation !== generationRef.current || pcRef.current !== pc) return;
@@ -647,8 +704,12 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       if (generation !== generationRef.current || pcRef.current !== pc) return;
       await pc.setLocalDescription(answer);
       if (generation !== generationRef.current || pcRef.current !== pc) return;
+      const submitted = pc.localDescription?.toJSON();
+      if (!submitted?.sdp) throw new Error('Не удалось подготовить аудиоответ');
+      submittedAnswerRef.current = submitted;
+      traceCall(row.id,'answer','submitting');
       const { data, error: rpcError } = await client.rpc('connect_answer_audio_call', {
-        p_call_id: row.id, p_answer: pc.localDescription?.toJSON(),
+        p_call_id: row.id, p_answer: submitted,
       });
       if (rpcError || !data) throw new Error(rpcError?.message || 'Звонок уже завершён');
       if (generation !== generationRef.current) {
@@ -663,7 +724,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       if (generation !== generationRef.current) return;
       setToast(`Не удалось принять звонок: ${friendlyError(e)}`);
       const acceptedHere = callRef.current?.status === 'active' &&
-        !!pcRef.current?.localDescription?.sdp && callRef.current.answer?.sdp === pcRef.current.localDescription.sdp;
+        !!submittedAnswerRef.current?.sdp && callRef.current.answer?.sdp === submittedAnswerRef.current.sdp;
       // A losing device must not hang up a call already accepted elsewhere.
       // The matching server guard ignores a late decline of an active call.
       void finish(acceptedHere ? 'failed' : 'decline');
@@ -708,6 +769,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const phaseTitle: Record<Phase, string> = {
     idle: '', preparing: 'Подключаем микрофон…', ringing: 'Вызываем…', incoming: 'Входящий аудиозвонок',
     connecting: 'Соединяем…', active: `Разговор · ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`,
+    reconnecting: 'Восстанавливаем соединение…',
   };
 
   return <>
@@ -721,7 +783,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
           {incoming && <button className="connect-call-action accept" type="button" onClick={() => void acceptIncoming()}>
             <span><Glyph name="call"/></span><span>Принять</span>
           </button>}
-          {!incoming && (phase === 'active' || phase === 'connecting') && <button className={'connect-call-action' + (muted ? ' muted' : '')}
+          {!incoming && (phase === 'active' || phase === 'connecting' || phase === 'reconnecting') && <button className={'connect-call-action' + (muted ? ' muted' : '')}
             type="button" onClick={toggleMute}><span><Glyph name={muted ? 'muted' : 'mic'}/></span><span>{muted ? 'Включить микрофон' : 'Выключить микрофон'}</span></button>}
           {!incoming && <button className="connect-call-action" type="button" onClick={enableRemoteAudio}>
             <span><Glyph name="speaker"/></span><span>{window.ConnectAndroid ? speakerOn ? 'Обычный звук' : 'Громкая связь' : 'Звук'}</span>

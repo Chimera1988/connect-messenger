@@ -67,7 +67,7 @@
 .voice-player audio{display:none}.voice-play{flex:0 0 39px;width:39px;height:39px;border:0;border-radius:50%;background:#ffffff35;color:#fff;display:flex;align-items:center;justify-content:center;padding:0}
 .received .voice-play{background:var(--accent);color:white}.voice-play svg{fill:currentColor;stroke-width:1.5}
 .voice-pause-icon{height:16px;width:13px;border-left:4px solid currentColor;border-right:4px solid currentColor}
-.voice-content{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}.voice-wave{display:flex;align-items:center;gap:2px;height:29px;width:100%;cursor:pointer;touch-action:none;outline-offset:3px}
+.voice-content{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px}.voice-wave{display:flex;align-items:center;gap:2px;height:29px;width:100%;cursor:pointer;touch-action:pan-y;outline-offset:3px}
 .voice-bar{display:block;flex:1;min-width:2px;max-width:5px;border-radius:3px;background:currentColor;opacity:.35;pointer-events:none}
 .voice-bar.listened{opacity:.95}.voice-bottom{display:flex;align-items:center;justify-content:space-between;gap:7px;font-size:10.5px;opacity:.88;min-height:17px}
 .voice-speed{border:0;border-radius:9px;background:#ffffff2b;color:inherit;padding:2px 6px;font-size:10px;font-weight:700;line-height:1.4}
@@ -646,3 +646,6 @@
 .connect-history-more{display:block;margin:10px auto;padding:7px 12px;border:1px solid var(--line,rgba(160,175,195,.2));border-radius:12px;background:var(--panel,rgba(40,48,65,.5));color:var(--text,#fff);font-size:12px;cursor:pointer;}
 .connect-history-more:disabled{opacity:.6;cursor:default}
 .voice-player{-webkit-touch-callout:none}
+
+/* Message controls use the Connect menu; text inputs retain system editing. */
+.voice-player{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}

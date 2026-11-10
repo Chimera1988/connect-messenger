@@ -26,12 +26,14 @@ function harness() {
     console, clearTimeout, setTimeout, Date, Error, navigator: {}, window: {},
     callRef: { current: row }, pcRef: { current: null }, streamRef: { current: null },
     generationRef: { current: 1 }, ringTimeoutRef: { current: null }, answerPendingRef: { current: false }, outgoingPendingRef: { current: false },
+    submittedAnswerRef:{current:null},iceSendingRef:{current:false},localIceRef:{current:[]},remoteIceCursorRef:{current:0},iceSyncingRef:{current:false},
     enteredRef: { current: false }, remoteAudioRef: { current: null },
     phase: 'incoming', userId: 'self', shownName: 'Peer',
     soundRef: { current: { unlock() {}, connected() { events.push('connected'); } } },
     setToast: text => events.push(['toast', text]), setPhase: text => events.push(['phase', text]),
     setError() {}, setShown() {}, setShownName() {}, setShownPeerId() {},
     friendlyError: e => e.message, isLive: status => ['ringing', 'active'].includes(status),
+    traceCall(){},connectionDeadline(){},
     async notifyCallEnded(id) { events.push(['notify-end', id]); },
     async flushLocalIce() {}, async flushRemoteIce() {}, watchIce() {}, async sendIce() {},
     cleanup() { events.push('cleanup'); c.generationRef.current++; c.callRef.current = null; c.pcRef.current = null; c.answerPendingRef.current = false; },
@@ -54,6 +56,7 @@ test('another device accepts: stop local ringing without ending the shared call'
 });
 test('own accepted SDP preserves this device and does not claim transport is active', async () => {
   const h = harness(); h.c.pcRef.current = h.pc; h.pc.localDescription = { sdp: 'this-device' };
+  h.c.submittedAnswerRef.current={sdp:'this-device'};
   await h.load('onUpdatedCall')({ ...h.row, status: 'active', answer: { sdp: 'this-device' } });
   assert.equal(h.events.includes('cleanup'), false);
   await h.load('acceptIncoming')();
@@ -127,4 +130,28 @@ test('a WebRTC constructor error releases the granted microphone', async () => {
   h.c.getIceServers = async () => [];
   h.c.RTCPeerConnection = function() { throw new Error('audio device unavailable'); };
   await assert.rejects(h.load('createPeer')()); assert.equal(stopped, 1);
+});
+test('ICE gathering cannot make the winning device release its own accepted call',async()=>{
+  const h=harness(),submitted='v=0\r\na=ice-ufrag:same\r\na=fingerprint:sha-256 SAME\r\n';
+  h.c.pcRef.current=h.pc;h.c.submittedAnswerRef.current={sdp:submitted};
+  h.pc.localDescription={sdp:submitted+'a=candidate:1 1 UDP 1 127.0.0.1 1234 typ host\r\n'};
+  await h.load('onUpdatedCall')({...h.row,status:'active',answer:{sdp:submitted}});
+  assert.equal(h.events.includes('cleanup'),false);
+});
+test('failed ICE insert stays queued and is retried without duplicate successful sends',async()=>{
+  const h=harness();let fail=true,successful=0;
+  h.c.client.from=()=>({insert:async()=>{if(fail)return{error:{message:'network'}};successful++;return{};}});
+  const flush=h.load('flushLocalIce'),send=h.load('sendIce');
+  await send({candidate:'first'});assert.equal(h.c.localIceRef.current.length,1);
+  fail=false;await flush();await flush();assert.equal(h.c.localIceRef.current.length,0);assert.equal(successful,1);
+});
+test('ICE polling advances past 250 candidates and keeps one cursor per call',async()=>{
+  const h=harness(),seen=[];h.c.pcRef.current=h.pc;
+  h.c.receiveIce=async row=>seen.push(row.id);
+  h.c.client.from=()=>{let cursor=0;const q={select(){return q},eq(){return q},neq(){return q},gt(_key,n){cursor=n;return q},order(){return q},async limit(n){return{data:Array.from({length:Math.max(0,Math.min(n,501-cursor))},(_,i)=>({id:cursor+i+1}))}}};return q;};
+  await h.load('pullIce')();assert.equal(seen.length,501);assert.equal(new Set(seen).size,501);assert.equal(h.c.remoteIceCursorRef.current,501);
+});
+test('pre-answer callee cancellation cannot send hangup against another winning device',async()=>{
+  const h=harness(),sent=[];h.c.client.rpc=async(name,args)=>{sent.push(args);return{};};
+  await h.load('finish')('hangup');assert.equal(sent[0].p_reason,'decline');
 });

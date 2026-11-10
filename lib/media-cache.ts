@@ -138,9 +138,15 @@ export async function resolveCachedMedia(url: string, user = owner): Promise<str
 catch {
     return url;
 } }
+// Bound cache fills independently of the number of mounted messages. Visible
+// interface/avatars precede small previews; originals enter only on playback.
+let cacheWorkers=0;
+const cacheJobs:{priority:number;run:()=>Promise<void>;resolve:()=>void}[]=[];
+function cacheJob(priority:number,run:()=>Promise<void>){return new Promise<void>(resolve=>{cacheJobs.push({priority,run,resolve});cacheJobs.sort((a,b)=>a.priority-b.priority);pumpCacheJobs();});}
+function pumpCacheJobs(){while(cacheWorkers<3&&cacheJobs.length){const job=cacheJobs.shift()!;cacheWorkers++;void job.run().catch(()=>{}).finally(()=>{cacheWorkers--;job.resolve();pumpCacheJobs();});}}
 async function remember(url: string, user: string) { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
     return; const key = user + ':' + id; if (pending.has(key))
-    return pending.get(key); const operation = (async () => { if (await run('readonly', s => s.get(key)))
+    return pending.get(key); const operation = cacheJob(mediaCategory(id)==='system'?0:/__(thumb\.webp|poster\.jpg)$/.test(id)?1:2,async () => { if (owner!==user || await run('readonly', s => s.get(key)))
     return; const response = await fetch(url, { cache: 'force-cache' }); if (!response.ok || response.status === 206)
     return; const length = Number(response.headers.get('content-length') || 0); if (length > 256 * 1024 ** 2)
     return; const blob = await response.blob(); if (!blob.size || blob.size > 256 * 1024 ** 2)
@@ -148,7 +154,7 @@ async function remember(url: string, user: string) { const id = mediaIdentity(ur
     // ArrayBuffer avoids WebKit's IndexedDB Blob-file staging failures. Old Blob
     // records remain readable; cache errors always leave the network URL usable.
     const bytes = await blob.arrayBuffer();
-    const database=await db();await new Promise<void>((resolve,reject)=>{const tx=database.transaction([STORE,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);check.onsuccess=()=>{if(!check.result)tx.objectStore(STORE).put({key,user,category:mediaCategory(id,type),size:blob.size,used:Date.now(),bytes,type} satisfies Entry);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error || Error('Cache write aborted'));}); await trimCache(); })().catch(() => { }).finally(() => pending.delete(key)); pending.set(key, operation); return operation; }
+    const database=await db();await new Promise<void>((resolve,reject)=>{const tx=database.transaction([STORE,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);check.onsuccess=()=>{if(!check.result)tx.objectStore(STORE).put({key,user,category:mediaCategory(id,type),size:blob.size,used:Date.now(),bytes,type} satisfies Entry);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error || Error('Cache write aborted'));}); await trimCache(); }).catch(() => { }).finally(() => pending.delete(key)); pending.set(key, operation); return operation; }
 export function installMediaCache(user: string, refreshUrl?: (source: string) => Promise<string | undefined>) {
     owner = user;
     let alive = true;
@@ -222,11 +228,11 @@ export function installMediaCache(user: string, refreshUrl?: (source: string) =>
 
 /** Local content index contains only message IDs and stable storage identities. */
 export async function linkMessageMedia(user:string,message:string,paths:string[]){
- if(!paths.length)return;const d=await db();await new Promise<void>((resolve,reject)=>{const tx=d.transaction(['links','retired'],'readwrite');const identities=paths.map(path=>'connect-attachments/'+path);tx.objectStore('links').put(identities,user+':'+message);for(const identity of identities)tx.objectStore('retired').delete(user+':'+identity);tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});
+ if(!paths.length)return;const d=await db();await new Promise<void>((resolve,reject)=>{const tx=d.transaction(['links','retired'],'readwrite');const identities=[...new Set(paths.flatMap(path=>[path,path+'__thumb.webp',path+'__poster.jpg']))].map(path=>'connect-attachments/'+path);const guard=tx.objectStore('retired').get(user+':message:'+message);guard.onsuccess=()=>{if(guard.result)return;tx.objectStore('links').put(identities,user+':'+message);for(const identity of identities)tx.objectStore('retired').delete(user+':'+identity);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});
 }
 export async function purgeDeletedMedia(user:string,message:string){
  if(owner!==user)return;const d=await db();const paths=await new Promise<string[]>((resolve,reject)=>{
-  const tx=d.transaction(['links','retired'],'readwrite'),store=tx.objectStore('links'),keys=store.getAllKeys(),values=store.getAll();let deleted:string[]=[];
+  const tx=d.transaction(['links','retired'],'readwrite'),store=tx.objectStore('links'),keys=store.getAllKeys(),values=store.getAll();tx.objectStore('retired').put(true,user+':message:'+message);let deleted:string[]=[];
   values.onsuccess=()=>{const index=keys.result.findIndex(key=>key===user+':'+message);const current:string[]=index<0?[]:values.result[index];deleted=current.filter(path=>!values.result.some((other,i)=>i!==index&&String(keys.result[i]).startsWith(user+':')&&other.includes(path)));store.delete(user+':'+message);for(const path of deleted)tx.objectStore('retired').put(true,user+':'+path);};
   tx.oncomplete=()=>resolve(deleted);tx.onerror=()=>reject(tx.error);
  });for(const path of paths)await clearCachedMedia('temporary',path);
@@ -234,6 +240,6 @@ export async function purgeDeletedMedia(user:string,message:string){
 
 /** Background warmup of visible, lightweight chat previews; best effort. */
 export async function prefetchCachedMedia(url:string,user:string):Promise<void>{
-  if(!url||!user)return;
+  const id=mediaIdentity(url);if(!url||!user||!id||mediaCategory(id)!=='system'&&!/__(thumb\.webp|poster\.jpg)$/.test(id))return;
   try{await remember(url,user);}catch{/* Network fallback remains usable. */}
 }

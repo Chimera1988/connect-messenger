@@ -26,5 +26,5 @@ export async function GET(req: NextRequest) {
     const credential = createHmac('sha1', secret).update(username).digest('base64');
     iceServers.push({ urls: turnUrls, username, credential });
   }
-  return NextResponse.json({ iceServers }, { headers: { 'Cache-Control': 'no-store' } });
+  return NextResponse.json({ iceServers, relayConfigured: iceServers.length > 1 }, { headers: { 'Cache-Control': 'no-store' } });
 }
