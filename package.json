@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/crypto.test.cjs && node tests/migration.test.cjs && node tests/cache-browser.test.cjs && node tests/media-recovery.test.cjs"
+    "test": "node tests/crypto.test.cjs && node tests/migration.test.cjs && node tests/cache-browser.test.cjs && node tests/media-recovery.test.cjs && node tests/call-device-ownership.test.cjs && node tests/call-server-ownership.test.cjs"
   },
   "dependencies": {
     "next": "15.5.28",

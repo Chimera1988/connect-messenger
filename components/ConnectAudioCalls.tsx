@@ -196,6 +196,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const ringTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const generationRef = useRef(0);
   const answerPendingRef = useRef(false);
+  const outgoingPendingRef = useRef(false);
   const enteredRef = useRef(false);
   const syncingRef = useRef(false);
   const iceSyncingRef = useRef(false);
@@ -341,6 +342,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     remoteIceRef.current = [];
     knownIceRef.current = new Set();
     answerPendingRef.current = false;
+    outgoingPendingRef.current = false;
     enteredRef.current = false;
     setShown(null); setShownPeerId(null); setShownAvatarUrl(''); setPhase('idle'); setElapsed(0); setMuted(false);
   }
@@ -374,6 +376,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   }
 
   async function createPeer(): Promise<RTCPeerConnection> {
+    const generation = generationRef.current;
     if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === 'undefined') {
       throw new Error('Для звонков нужен современный браузер с доступом к микрофону и HTTPS.');
     }
@@ -382,20 +385,33 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     const stream = await navigator.mediaDevices.getUserMedia({ audio: {
       echoCancellation: true, noiseSuppression: true, autoGainControl: true,
     }, video: false });
+    let iceServers: RTCIceServer[];
+    try {
+      if (generation !== generationRef.current) throw new Error('Звонок уже завершён');
+      iceServers = await getIceServers();
+      if (generation !== generationRef.current) throw new Error('Звонок уже завершён');
+    } catch (error) {
+      // A permission/TURN response from an old call owns only its own stream.
+      stream.getTracks().forEach(track => track.stop());
+      throw error;
+    }
+    let pc: RTCPeerConnection;
+    try { pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' }); }
+    catch (error) { stream.getTracks().forEach(track => track.stop()); throw error; }
     streamRef.current = stream;
-    const iceServers = await getIceServers();
-    const pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle' });
     pcRef.current = pc;
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
-    pc.onicecandidate = event => { if (event.candidate) void sendIce(event.candidate.toJSON()); };
+    const ownsPeer = () => generation === generationRef.current && pcRef.current === pc;
+    pc.onicecandidate = event => { if (ownsPeer() && event.candidate) void sendIce(event.candidate.toJSON()); };
     pc.ontrack = event => {
+      if (!ownsPeer()) return;
       const audio = remoteAudioRef.current;
       if (!audio) return;
       audio.srcObject = event.streams[0] || new MediaStream([event.track]);
-      void audio.play().catch(() => setError('Нажмите «Звук», чтобы включить собеседника.'));
+      void audio.play().catch(() => { if (ownsPeer()) setError('Нажмите «Звук», чтобы включить собеседника.'); });
     };
     pc.onconnectionstatechange = () => {
-      if (pc !== pcRef.current) return;
+      if (!ownsPeer()) return;
       if (pc.connectionState === 'connected') { if (!enteredRef.current) soundRef.current?.connected(); enteredRef.current = true; if (callRef.current) window.ConnectAndroid?.setCallState(callRef.current.id, 'active'); setPhase('active'); setError(''); }
       if (pc.connectionState === 'failed') { setToast('Связь прервалась. Для некоторых сетей необходим TURN-сервер.'); void finish('failed'); }
     };
@@ -405,6 +421,14 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   async function onUpdatedCall(next: CallRow) {
     const current = callRef.current;
     if (!current || current.id !== next.id) return;
+    // The first accepted SDP identifies the receiving device. Other devices
+    // release local ringing without finishing the conversation on the server.
+    if (next.status === 'active' && next.callee_id === userId &&
+        (!pcRef.current?.localDescription?.sdp || next.answer?.sdp !== pcRef.current.localDescription.sdp)) {
+      cleanup();
+      setToast('Звонок принят на другом устройстве');
+      return;
+    }
     callRef.current = next;
     setShown(next);
     if (!isLive(next.status)) {
@@ -417,16 +441,25 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     }
     if (next.status === 'active' && next.caller_id === userId && next.answer && pcRef.current && !answerPendingRef.current) {
       const pc = pcRef.current;
+      const generation = generationRef.current;
       if (pc.remoteDescription) return;
       answerPendingRef.current = true;
-      try { await pc.setRemoteDescription(next.answer); await flushRemoteIce(); setPhase('connecting'); }
-      catch (e) { setError(`Не удалось установить соединение: ${friendlyError(e)}`); void finish('failed'); }
-      finally { answerPendingRef.current = false; }
+      try {
+        await pc.setRemoteDescription(next.answer);
+        if (generation !== generationRef.current || pcRef.current !== pc) return;
+        await flushRemoteIce();
+        if (generation === generationRef.current && pcRef.current === pc) setPhase('connecting');
+      }
+      catch (e) {
+        if (generation !== generationRef.current || pcRef.current !== pc) return;
+        setError(`Не удалось установить соединение: ${friendlyError(e)}`); void finish('failed');
+      }
+      finally { if (generation === generationRef.current) answerPendingRef.current = false; }
     }
   }
 
   function presentIncoming(row: CallRow) {
-    if (!userId || row.callee_id !== userId || callRef.current) return;
+    if (!userId || row.callee_id !== userId || callRef.current || outgoingPendingRef.current) return;
     if (row.status !== 'ringing' || Date.now() - Date.parse(row.created_at) > 59000) return;
     callRef.current = row; setShown(row); setShownName('Собеседник'); setShownPeerId(row.caller_id); setPhase('incoming'); setError('');
     if (client) {
@@ -526,15 +559,18 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     const selectedName = target?.peerName || peerName;
     if (!client || !userId || !selectedConversation || !selectedPeer ||
         !uuidPattern.test(selectedConversation) || !uuidPattern.test(selectedPeer) ||
-        selectedPeer === userId || callRef.current || phase !== 'idle') return;
+        selectedPeer === userId || callRef.current || phase !== 'idle' || outgoingPendingRef.current) return;
+    outgoingPendingRef.current = true;
     soundRef.current?.unlock();
     const generation = ++generationRef.current;
     setShownName(selectedName); setShownPeerId(selectedPeer); setError(''); setToast(''); setPhase('preparing');
     try {
       const pc = await createPeer();
-      if (generation !== generationRef.current) { pc.close(); streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null; return; }
+      if (generation !== generationRef.current) { pc.close(); return; }
       const offer = await pc.createOffer();
+      if (generation !== generationRef.current || pcRef.current !== pc) return;
       await pc.setLocalDescription(offer);
+      if (generation !== generationRef.current || pcRef.current !== pc) return;
       const { data, error: rpcError } = await client.rpc('connect_start_audio_call', {
         p_conversation_id: selectedConversation, p_offer: pc.localDescription?.toJSON(),
       });
@@ -557,6 +593,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
         }).catch(() => {});
       }).catch(() => {});
       watchIce(row.id); await flushLocalIce();
+      if (generation !== generationRef.current) return;
       ringTimeoutRef.current = setTimeout(() => {
         if (callRef.current?.id === row.id && callRef.current?.status === 'ringing') {
           setToast('Нет ответа'); void finish('missed');
@@ -566,6 +603,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       const { data: latest } = await client.from('connect_calls').select('*').eq('id', row.id).maybeSingle();
       if (latest) void onUpdatedCall(latest as CallRow);
     } catch (e) {
+      if (generation !== generationRef.current) return;
       const msg = friendlyError(e);
       const failed = callRef.current;
       cleanup();
@@ -591,29 +629,46 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
 
   async function acceptIncoming() {
     const row = callRef.current;
-    if (!row || !client || row.status !== 'ringing' || phase !== 'incoming') return;
+    if (!row || !client || row.status !== 'ringing' || phase !== 'incoming' || answerPendingRef.current) return;
+    answerPendingRef.current = true;
     soundRef.current?.unlock();
     const generation = generationRef.current;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
     setError(''); setPhase('connecting');
     try {
       const pc = await createPeer();
-      if (generation !== generationRef.current) { pc.close(); streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null; return; }
+      if (generation !== generationRef.current) { pc.close(); return; }
       watchIce(row.id);
       await pc.setRemoteDescription(row.offer);
+      if (generation !== generationRef.current || pcRef.current !== pc) return;
       await flushRemoteIce();
+      if (generation !== generationRef.current || pcRef.current !== pc) return;
       const answer = await pc.createAnswer();
+      if (generation !== generationRef.current || pcRef.current !== pc) return;
       await pc.setLocalDescription(answer);
+      if (generation !== generationRef.current || pcRef.current !== pc) return;
       const { data, error: rpcError } = await client.rpc('connect_answer_audio_call', {
         p_call_id: row.id, p_answer: pc.localDescription?.toJSON(),
       });
       if (rpcError || !data) throw new Error(rpcError?.message || 'Звонок уже завершён');
+      if (generation !== generationRef.current) {
+        // The accepted RPC may complete after a local cancel. Finish that ID,
+        // without touching a new call's microphone, state or timers.
+        await client.rpc('connect_finish_audio_call', { p_call_id: row.id, p_reason: 'hangup' });
+        return;
+      }
       callRef.current = data as CallRow; setShown(data as CallRow);
-      window.ConnectAndroid?.setCallState(row.id, 'active');
       await flushLocalIce();
     } catch (e) {
+      if (generation !== generationRef.current) return;
       setToast(`Не удалось принять звонок: ${friendlyError(e)}`);
-      void finish('failed');
+      const acceptedHere = callRef.current?.status === 'active' &&
+        !!pcRef.current?.localDescription?.sdp && callRef.current.answer?.sdp === pcRef.current.localDescription.sdp;
+      // A losing device must not hang up a call already accepted elsewhere.
+      // The matching server guard ignores a late decline of an active call.
+      void finish(acceptedHere ? 'failed' : 'decline');
+    } finally {
+      if (generation === generationRef.current) answerPendingRef.current = false;
     }
   }
 

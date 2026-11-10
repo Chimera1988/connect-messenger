@@ -29,6 +29,15 @@ for(const browserName of names)test(browserName+': actual image/audio decoding, 
  await page.setViewportSize({width:390,height:844});await page.evaluate(()=>document.documentElement.style.fontSize='16px');if(process.env.CONNECT_SCREENSHOT_DIR)await page.screenshot({path:process.env.CONNECT_SCREENSHOT_DIR+'/stickers-fixed-'+browserName+'.png'});
  await page.evaluate(()=>{fixtures.innerHTML='<img id="avatar" width="32" height="32" src="/storage/v1/object/sign/connect-avatars/a.png?token=one"><img id="photo" width="32" height="32" src="/storage/v1/object/sign/connect-attachments/a.png?token=one"><audio id="sound" controls preload="auto" src="/storage/v1/object/sign/connect-attachments/a.wav?token=one"></audio>';});
  await page.waitForFunction(async()=>{const s=await cache.cacheStats();return s.system>0&&s.photos>0;});
+ // CONNECT_CALLS_MEDIA_FIX2_WAIT_FOR_EXACT_OBJECTS
+ await page.waitForFunction(async()=>{
+   const base=location.origin+'/storage/v1/object/sign/';
+   const urls=await Promise.all([
+     cache.resolveCachedMedia(base+'connect-avatars/a.png?token=one'),
+     cache.resolveCachedMedia(base+'connect-attachments/a.png?token=one')
+   ]);
+   return urls.every(url=>url.startsWith('blob:'));
+ },null,{timeout:30000});
  await page.evaluate(async()=>{
  const base=location.origin+'/storage/v1/object/sign/';
  const urls=await Promise.all([

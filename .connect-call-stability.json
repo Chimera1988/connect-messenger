@@ -1,0 +1,15 @@
+{
+  "packageSha256": "c7a88c634786f815ede5be8f77e596dcefefa9670f5f884139eeb2ffda75b275",
+  "base": "65b713b597cb0d9e23ec8bf6c26b915cc9fc800a",
+  "version": "2.2.2",
+  "files": [
+    "package.json",
+    "components/ConnectAudioCalls.tsx",
+    "tests/call-device-ownership.test.cjs",
+    "tests/call-server-ownership.test.cjs",
+    "tests/fixtures/call-finish-before.sql",
+    "supabase/migrations/20261110000100_connect_call_response_owner.sql",
+    "supabase/rollback/20261110000100_connect_call_response_owner.sql"
+  ],
+  "serverAutomaticallyMigrated": false
+}
