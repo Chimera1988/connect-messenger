@@ -1,0 +1,68 @@
+name: Connect PWA - raise video note sound button
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-videonote-mute-button-up.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-videonote-mute-button-up
+  cancel-in-progress: false
+
+jobs:
+  fix-button-position:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PWA repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Raise only the videonote mute button
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/liquid-glass.css')
+          css = path.read_text(encoding='utf-8')
+
+          selector = '.connect-app .bubble.video-note-bubble .connect-video-note-controls > .connect-video-note-sound {'
+          assert css.count(selector) == 1, 'Expected video-note control selector not found exactly once; no changes made'
+          start = css.index(selector)
+          end = css.find('\n}', start)
+          assert end > start, 'Could not find the end of the video-note button rule'
+          end += 2
+          original = css[start:end]
+          old = 'transform: none !important;'
+          new = 'transform: translateY(-18px) !important;'
+
+          if new in original:
+              print('Sound button is already raised; no changes required')
+          else:
+              assert original.count(old) == 1, 'Unexpected video-note CSS; refusing unsafe edit'
+              patched = original.replace(old, new, 1)
+              css = css[:start] + patched + css[end:]
+              path.write_text(css, encoding='utf-8')
+              print('Raised the sound button 18px without changing message timestamps or video playback')
+          PY
+          git diff --check
+
+      - name: Commit this single CSS adjustment
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/liquid-glass.css
+          if git diff --cached --quiet; then
+            echo 'Already applied; nothing to commit'
+            exit 0
+          fi
+          git commit -m 'style(pwa): lift video note mute control above timestamp'
+          git push origin HEAD:main
