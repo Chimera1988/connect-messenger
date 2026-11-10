@@ -2460,7 +2460,7 @@
   min-height: 34px !important;
   margin: 0 !important;
   padding: 0 !important;
-  transform: none !important;
+  transform: translateY(-18px) !important;
   opacity: 1 !important;
   visibility: visible !important;
   pointer-events: auto !important;
