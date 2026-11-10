@@ -692,16 +692,19 @@ function isVideoNote(m: Message): boolean {
   return m.attachment_kind === 'video' && /^connect-video-note-\d+\.(?:mp4|webm)$/i.test(m.attachment_name || '');
 }
 
-// Connect video-note sound control v2
+// Connect video-note sound control v3: round progress and mute below the circle
 function VideoNoteBubble({src,name}:{src:string;name:string}) {
   const ref=useRef<HTMLVideoElement|null>(null);
   const [muted,setMuted]=useState(true);
   const [duration,setDuration]=useState(0);
+  const [progress,setProgress]=useState(0);
   const userPaused=useRef(false),mutedRef=useRef(true);
   useEffect(()=>{
     const video=ref.current;
     if(!video)return;
-    video.muted=true;setMuted(true);
+    userPaused.current=false;
+    mutedRef.current=true;
+    video.muted=true;setMuted(true);setProgress(0);
     let inView=false;
     function update(){
       if(!video)return;
@@ -722,23 +725,36 @@ function VideoNoteBubble({src,name}:{src:string;name:string}) {
       video.pause();video.muted=true;
     };
   },[src]);
+  const circumference=2*Math.PI*47;
   return <div className="connect-video-note">
-    <button type="button" className="connect-video-note-screen" aria-label="Приостановить или продолжить видеокружок"
-      onClick={event=>{
-        event.stopPropagation();const video=ref.current;if(!video)return;
-        userPaused.current=!video.paused;if(video.paused)void video.play().catch(()=>{});else video.pause();
-      }}>
-      <video ref={ref} src={src} muted={muted} autoPlay playsInline loop preload="metadata" aria-label={name}
-        onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d))setDuration(d)}}/>
-    </button>
-    {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
-    <button type="button" className="connect-video-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
-      title={muted?'Включить звук':'Выключить звук'}
-      onClick={event=>{
-        event.stopPropagation();const video=ref.current;if(!video)return;
-        const next=!video.muted;mutedRef.current=next;video.muted=next;setMuted(next);
-        if(!next)void video.play().catch(()=>{});
-      }}><ConnectSoundGlyph muted={muted}/></button>
+    <div className="connect-video-note-media">
+      <button type="button" className="connect-video-note-screen" aria-label="Приостановить или продолжить видеокружок"
+        onClick={event=>{
+          event.stopPropagation();const video=ref.current;if(!video)return;
+          userPaused.current=!video.paused;
+          if(video.paused)void video.play().catch(()=>{});else video.pause();
+        }}>
+        <video ref={ref} src={src} muted={muted} autoPlay playsInline loop preload="metadata" aria-label={name}
+          onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d)}}
+          onTimeUpdate={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}
+          onSeeked={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}/>
+      </button>
+      <svg className="connect-video-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+        <circle className="connect-video-note-progress-track" cx="50" cy="50" r="47" fill="none" strokeWidth="2.7"/>
+        <circle className="connect-video-note-progress-fill" cx="50" cy="50" r="47" fill="none" strokeWidth="2.7"
+          strokeDasharray={circumference} strokeDashoffset={circumference*(1-progress)}/>
+      </svg>
+      {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
+    </div>
+    <div className="connect-video-note-controls">
+      <button type="button" className="connect-video-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
+        title={muted?'Включить звук':'Выключить звук'}
+        onClick={event=>{
+          event.stopPropagation();const video=ref.current;if(!video)return;
+          const next=!video.muted;mutedRef.current=next;video.muted=next;setMuted(next);
+          if(!next)void video.play().catch(()=>{});
+        }}><ConnectSoundGlyph muted={muted}/></button>
+    </div>
   </div>;
 }
 
@@ -752,6 +768,9 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
   const startRef=useRef(0);
   const previewRef=useRef<string|null>(null);
   const savedRef=useRef<File|null>(null);
+  // Connect video-note orientation normalization v1
+  const normalizedStreamRef=useRef<MediaStream|null>(null);
+  const frameRequestRef=useRef<number|null>(null);
   const [phase,setPhase]=useState<VideoNotePhase>('loading');
   const [facing,setFacing]=useState<'user'|'environment'>('user');
   const [seconds,setSeconds]=useState(0);
@@ -759,6 +778,36 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
   const [error,setError]=useState('');
   function stopCamera(){streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;}
   function clearClock(){if(timerRef.current!==null){window.clearInterval(timerRef.current);timerRef.current=null;}}
+  function stopNormalizedFrames(){
+    if(frameRequestRef.current!==null){window.cancelAnimationFrame(frameRequestRef.current);frameRequestRef.current=null;}
+    normalizedStreamRef.current?.getTracks().forEach(track=>track.stop());
+    normalizedStreamRef.current=null;
+  }
+  function normalizedRecordingStream(camera:MediaStream):MediaStream{
+    const source=live.current;
+    if(!source || !source.videoWidth || !source.videoHeight)throw Error('Камера ещё не готова, повторите запись');
+    const canvas=document.createElement('canvas');
+    canvas.width=480;canvas.height=480;
+    const context=canvas.getContext('2d',{alpha:false});
+    if(!context)throw Error('Не удалось подготовить запись видео');
+    // Preserve recording on older browsers that lack canvas.captureStream.
+    if(typeof canvas.captureStream!=='function')return camera;
+    const draw=()=>{
+      if(source.readyState>=2&&source.videoWidth>0&&source.videoHeight>0){
+        const crop=Math.min(source.videoWidth,source.videoHeight);
+        const x=(source.videoWidth-crop)/2;
+        const y=(source.videoHeight-crop)/2;
+        context.drawImage(source,x,y,crop,crop,0,0,480,480);
+      }
+      frameRequestRef.current=window.requestAnimationFrame(draw);
+    };
+    draw();
+    const pixels=canvas.captureStream(24);
+    normalizedStreamRef.current=pixels;
+    const track=pixels.getVideoTracks()[0];
+    if(!track)throw Error('Не удалось получить видео для записи');
+    return new MediaStream([track,...camera.getAudioTracks()]);
+  }
   useEffect(()=>{
     let disposed=false;
     void (async()=>{
@@ -775,6 +824,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
       disposed=true;clearClock();
       const recorder=recorderRef.current;
       if(recorder&&recorder.state!=='inactive')try{recorder.onstop=null;recorder.stop();}catch{}
+      stopNormalizedFrames();
       stopCamera();
       if(previewRef.current)URL.revokeObjectURL(previewRef.current);
     };
@@ -784,12 +834,13 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
     try{
       const formats=['video/mp4;codecs=h264,aac','video/mp4','video/webm;codecs=vp8,opus','video/webm;codecs=vp9,opus','video/webm'];
       const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
-      const recorder=new MediaRecorder(stream,{...(mime?{mimeType:mime}:{}),videoBitsPerSecond:800000,audioBitsPerSecond:64000});
+      const recordingStream=normalizedRecordingStream(stream);
+      const recorder=new MediaRecorder(recordingStream,{...(mime?{mimeType:mime}:{}),videoBitsPerSecond:800000,audioBitsPerSecond:64000});
       chunksRef.current=[];recorderRef.current=recorder;savedRef.current=null;
       recorder.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data)};
-      recorder.onerror=()=>{setError('Ошибка записи видео');setPhase('error');clearClock();stopCamera()};
+      recorder.onerror=()=>{setError('Ошибка записи видео');setPhase('error');clearClock();stopNormalizedFrames();stopCamera()};
       recorder.onstop=()=>{
-        clearClock();stopCamera();
+        clearClock();stopNormalizedFrames();stopCamera();
         const type=recorder.mimeType||chunksRef.current[0]?.type||'video/webm';
         const blob=new Blob(chunksRef.current,{type});
         if(blob.size<100){setError('Видео не записалось. Попробуйте ещё раз.');setPhase('error');return;}
@@ -803,7 +854,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
         setSeconds(Math.min(60,time));
         if(time>=60&&recorder.state==='recording')recorder.stop();
       },250);
-    }catch(e){setError(e instanceof Error?e.message:'Не удалось начать запись');setPhase('error')}
+    }catch(e){stopNormalizedFrames();setError(e instanceof Error?e.message:'Не удалось начать запись');setPhase('error')}
   }
   function stop(){if(recorderRef.current?.state==='recording')recorderRef.current.stop()}
   async function flipCamera() {

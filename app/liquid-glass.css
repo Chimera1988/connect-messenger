@@ -2381,3 +2381,91 @@
 .connect-app .bubble.video-note-bubble .connect-video-note{margin-right:42px;overflow:visible}.connect-app .bubble.video-note-bubble .connect-video-note>button.connect-video-note-sound{right:-39px;left:auto;top:auto;bottom:3px;width:32px;height:32px;z-index:1}.connect-app .connect-video-note-screen{overflow:hidden;border-radius:50%}.connect-app .connect-video-note{max-width:calc(100vw - 110px)}
 .connect-cache-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(200,215,235,.1)}.connect-cache-row span{min-width:0}.connect-cache-row small{display:block;opacity:.65;margin-top:4px}.connect-cache-row button,.connect-cache-settings select{background:rgba(150,170,200,.12);border:1px solid rgba(220,230,245,.15);border-radius:14px;padding:8px;color:inherit}.connect-cache-settings label{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:18px 0}
 @media(max-width:340px){.connect-recording-bar{gap:5px;padding:5px}.connect-recording-bar button{font-size:11px}.connect-app .voice-player{min-width:0}}
+
+
+/* Connect video-note progress and external mute control v1 */
+/* Keep the video and its progress ring circular, but put the sound
+   button in a separate row BELOW the video: never overlay the face. */
+.connect-app .bubble.video-note-bubble .connect-video-note {
+  display: flex !important;
+  flex-direction: column !important;
+  position: relative !important;
+  width: 100% !important;
+  height: auto !important;
+  aspect-ratio: auto !important;
+  margin-right: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-media {
+  position: relative !important;
+  display: block !important;
+  flex: 0 0 auto !important;
+  width: 100% !important;
+  aspect-ratio: 1 / 1 !important;
+  overflow: visible !important;
+  border-radius: 50% !important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-media > .connect-video-note-screen {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: hidden !important;
+  border-radius: 50% !important;
+  z-index: 1 !important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-progress {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  overflow: visible !important;
+  pointer-events: none !important;
+  transform: rotate(-90deg);
+  z-index: 3 !important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-progress-track {
+  stroke: rgba(255,255,255,.34);
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-progress-fill {
+  stroke: var(--accent, #087dff);
+  stroke-linecap: round;
+  transition: stroke-dashoffset .19s linear;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-media > .connect-video-note-length {
+  z-index: 4 !important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-controls {
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  width: 100% !important;
+  height: 36px !important;
+  margin: 5px 0 0 !important;
+  padding: 0 2px !important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-controls > .connect-video-note-sound {
+  position: static !important;
+  inset: auto !important;
+  display: grid !important;
+  place-items: center !important;
+  flex: 0 0 34px !important;
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  min-height: 34px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  z-index: 2 !important;
+  border-radius: 50% !important;
+  background: rgba(8,15,25,.72) !important;
+  color: #fff !important;
+}
