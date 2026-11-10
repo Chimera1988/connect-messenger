@@ -2469,3 +2469,15 @@
   background: rgba(8,15,25,.72) !important;
   color: #fff !important;
 }
+
+/* Connect PWA: subtle video-note progress ring v1 */
+/* Only affects circular VIDEO NOTES; ordinary videos and other controls remain unchanged. */
+.connect-app .bubble.video-note-bubble .connect-video-note-progress .connect-video-note-progress-track {
+  stroke: rgba(255, 255, 255, .12) !important;
+  stroke-width: .7px !important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-progress .connect-video-note-progress-fill {
+  stroke: var(--accent, #087dff) !important;
+  stroke-width: .7px !important;
+  opacity: .34 !important;
+}
