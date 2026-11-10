@@ -1,5 +1,6 @@
 {
-  "packageSha256": "9c6e8f25576386d0a0e2c832d95ffcdb7489ac1c0ad2e7bb2965e6e733a9d713",
+  "packageSha256": "058a024211e9cf2bee73ffd5d34501a544341a2e282d1ccf5e6eae7cd70b5efc",
   "base": "5b9e3cb4591213936431ad492847684bb8bfcbd1",
+  "version": "2.2.1",
   "e2eeEnabled": false
 }

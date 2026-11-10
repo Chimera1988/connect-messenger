@@ -2348,7 +2348,36 @@
 .connect-app .bubble{-webkit-touch-callout:none}
 .connect-recording-bar{display:flex;align-items:center;gap:9px;min-height:42px;padding:7px 10px;border:1px solid var(--glass-border,rgba(255,255,255,.18));border-radius:22px;background:rgba(160,170,190,.08);backdrop-filter:blur(14px)}
 .connect-recording-wave{display:flex;align-items:center;gap:2px;flex:1;min-width:30px;height:26px;overflow:hidden}.connect-recording-wave span{width:3px;flex:0 0 3px;height:24px;background:currentColor;border-radius:2px;transform:scaleY(.07);transition:transform 60ms linear}.connect-recording-bar time{font:13px ui-monospace,monospace;min-width:35px}.connect-recording-bar button{padding:7px 6px;border:0;border-radius:16px;background:transparent;color:inherit;font:inherit;font-size:12px}.connect-recording-bar .connect-recording-send{background:rgba(210,225,245,.15)}
-.connect-app .voice-file-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;font-size:12px;margin-bottom:3px}.connect-app .voice-bottom{flex-wrap:wrap;row-gap:3px}.connect-app .sticker-choice{padding-bottom:0;min-height:0;aspect-ratio:1}.connect-app .sticker-choice>button:not(.sticker-fav){height:100%;padding:5px}.connect-app .sticker-choice-name{display:none}
+.connect-app .voice-file-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;font-size:12px;margin-bottom:3px}.connect-app .voice-bottom{flex-wrap:wrap;row-gap:3px}
+/* Definite row heights prevent a scrollable flex/grid from squeezing all rows
+   into the picker while square images overflow their tracks (Safari/Chromium). */
+.connect-app .sticker-grid {
+  --sticker-tile-size: 100px;
+  --sticker-tile-size: clamp(76px, 24vw, 104px);
+  grid-auto-rows: var(--sticker-tile-size);
+}
+.connect-app .sticker-choice {
+  display: block;
+  height: var(--sticker-tile-size);
+  min-height: var(--sticker-tile-size);
+  padding: 0;
+  aspect-ratio: auto;
+}
+.connect-app .sticker-choice > button:not(.sticker-fav) {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 5px;
+  overflow: hidden;
+}
+.connect-app .sticker-choice img {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+  object-fit: contain;
+}
+.connect-app .sticker-choice-name { display: none; }
 .connect-app .bubble.video-note-bubble .connect-video-note{margin-right:42px;overflow:visible}.connect-app .bubble.video-note-bubble .connect-video-note>button.connect-video-note-sound{right:-39px;left:auto;top:auto;bottom:3px;width:32px;height:32px;z-index:1}.connect-app .connect-video-note-screen{overflow:hidden;border-radius:50%}.connect-app .connect-video-note{max-width:calc(100vw - 110px)}
 .connect-cache-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(200,215,235,.1)}.connect-cache-row span{min-width:0}.connect-cache-row small{display:block;opacity:.65;margin-top:4px}.connect-cache-row button,.connect-cache-settings select{background:rgba(150,170,200,.12);border:1px solid rgba(220,230,245,.15);border-radius:14px;padding:8px;color:inherit}.connect-cache-settings label{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:18px 0}
 @media(max-width:340px){.connect-recording-bar{gap:5px;padding:5px}.connect-recording-bar button{font-size:11px}.connect-app .voice-player{min-width:0}}

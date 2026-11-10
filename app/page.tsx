@@ -2,7 +2,7 @@
 
 import RecordingBar from '../components/ConnectRecordingBar';
 import CacheSettings from '../components/ConnectCacheSettings';
-import {resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from '../lib/media-cache';
+import {mediaIdentity, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from '../lib/media-cache';
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
 import ConnectSplashScreen from '../components/ConnectSplashScreen';
@@ -54,6 +54,17 @@ const supabase = supabaseUrl && supabaseKey
       global: { fetch: supabaseFetch },
     })
   : null;
+
+// Signed storage links expire independently of authentication. Renew only the
+// failing object through the existing session, never make a private bucket public.
+async function refreshMediaUrl(source: string): Promise<string | undefined> {
+  const identity = mediaIdentity(source);
+  if (!supabase || !identity) return;
+  const slash = identity.indexOf('/'), bucket = identity.slice(0, slash);
+  if (slash < 1 || !['connect-avatars', 'connect-attachments', 'connect-stickers', 'connect-profile-media'].includes(bucket)) return;
+  const {data} = await supabase.storage.from(bucket).createSignedUrl(identity.slice(slash + 1), 3600);
+  return data?.signedUrl ? mediaUrl(data.signedUrl) : undefined;
+}
 
 type AlbumItem = {path:string;name:string;kind:'image'|'video'};
 const ALBUM_PREFIX = '[[connect-album:';
@@ -275,7 +286,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
   const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
   return <div className="voice-player" onTouchStart={e => e.stopPropagation()} onTouchMove={e => e.stopPropagation()} onTouchEnd={e => e.stopPropagation()} onContextMenu={e => e.stopPropagation()}>
     <audio ref={audioRef} data-connect-voice src={src} preload="metadata"
-      onLoadedMetadata={e => { const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
+      onLoadedMetadata={e => { setError(false); const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
       onDurationChange={e => { const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
       onTimeUpdate={e => setPosition(e.currentTarget.currentTime)}
       onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
@@ -902,7 +913,7 @@ export default function Home() {
   const [pendingFiles,setPendingFiles]=useState<File[]>([]);
   const [videoNoteOpen,setVideoNoteOpen]=useState(false);
   const [recording, setRecording] = useState(false);
-  useEffect(()=>{if(!user?.id)return;return installMediaCache(user.id);},[user?.id]);
+  useEffect(()=>{if(!user?.id)return;return installMediaCache(user.id, refreshMediaUrl);},[user?.id]);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const attachmentInput = useRef<HTMLInputElement | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
@@ -1280,7 +1291,7 @@ export default function Home() {
       const urls: Record<string,string> = {};
       await Promise.all(directory.filter(x=>x.avatar_path).map(async x => {
         const { data } = await supabase.storage.from('connect-avatars').createSignedUrl(x.avatar_path!, 3600);
-        if (data?.signedUrl) urls[x.id] = await resolveCachedMedia(mediaUrl(data.signedUrl),user.id);
+        if (data?.signedUrl) urls[x.id] = mediaUrl(data.signedUrl);
       }));
       setAvatarUrls(urls);
     }
@@ -1903,7 +1914,7 @@ export default function Home() {
     if (!missing.length) return;
     void Promise.all(missing.map(async path => {
       const {data} = await supabase.storage.from('connect-attachments').createSignedUrl(path, 3600);
-      return {path, url:data?.signedUrl ? await resolveCachedMedia(mediaUrl(data.signedUrl),user.id) : undefined};
+      return {path, url:data?.signedUrl ? mediaUrl(data.signedUrl) : undefined};
     })).then(rows => {
       if (cancelled) return;
       setAttachmentUrls(prev => {
@@ -2566,7 +2577,7 @@ export default function Home() {
                   {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Приглашения</strong><p className="settings-hint">Создавайте одноразовые коды для новых участников. Код действует 24 часа.</p><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-invitations'))}>Коды приглашений</button><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-hidden-invitations'))}>Коды для скрытых</button><div style={{marginTop:20}}><ConnectHiddenMembers request={authenticatedRequest} onChanged={()=>void loadDirectory()}/></div></div>}
                   {settingsPage==='data' && <><CacheSettings/><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
                   {settingsPage==='privacy' && <><div className="settings-group data-settings"><strong>Личные переписки</strong><p className="settings-hint">Сообщения доступны участникам диалога в рамках настроенных правил доступа. Это не означает сквозное шифрование.</p></div><div className="settings-group data-settings"><strong>Удаление аккаунта</strong><p className="settings-hint">Учётная запись и личные данные будут удалены. Отправленные сообщения останутся у собеседников от имени «Удалённый пользователь».</p><button type="button" className="settings-action secondary" disabled={busy} onClick={()=>void deleteMyAccount()}>Удалить аккаунт навсегда</button></div></>}
-                  {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 2.2.0</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
+                  {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 2.2.1</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
                 </div>
               </>}
             </div><nav className="bottom-nav" aria-label="Основная навигация">

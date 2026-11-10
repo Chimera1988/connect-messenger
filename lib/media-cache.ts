@@ -6,12 +6,35 @@ type Entry = {
     category: CacheCategory;
     size: number;
     used: number;
-    blob: Blob;
+    blob?: Blob;
+    bytes?: ArrayBuffer;
+    type?: string;
 };
 const NAME = 'connect-media-v1', STORE = 'objects';
 let opening: Promise<IDBDatabase> | undefined;
 let owner = '';
 const objectUrls = new Map<string, string>(), pending = new Map<string, Promise<void>>();
+const originals = new Map<string, string>();
+type MediaElement = HTMLImageElement | HTMLMediaElement;
+type Binding = { source: string; current: string; retried: boolean };
+const bindings = new Map<MediaElement, Binding>();
+function restoreUrl(url: string) {
+    for (const [element, binding] of bindings) {
+        if (element.getAttribute('src') === url) {
+            binding.current = binding.source;
+            element.src = binding.source;
+        }
+    }
+    URL.revokeObjectURL(url);
+    originals.delete(url);
+}
+function contentType(key: string, type = '') {
+    type = type.split(';')[0].toLowerCase();
+    if (type && type !== 'application/octet-stream') return type;
+    const extension = key.split('.').pop()?.toLowerCase();
+    return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', svg: 'image/svg+xml', mp3: 'audio/mpeg', m4a: 'audio/mp4', aac: 'audio/aac', ogg: 'audio/ogg', opus: 'audio/ogg', wav: 'audio/wav', mp4: 'video/mp4', webm: 'video/webm' } as Record<string, string>)[extension || ''] || type;
+}
+function usableType(type: string) { return !/^(?:text\/html|application\/(?:json|xhtml\+xml))$/.test(type); }
 const LIMITS = { '500': 500 * 1024 ** 2, '1000': 1024 ** 3, '2000': 2 * 1024 ** 3, auto: 500 * 1024 ** 2 };
 export function mediaIdentity(url: string): string | null {
     try {
@@ -66,7 +89,7 @@ export async function clearCachedMedia(category: CacheCategory | 'temporary', id
         await run('readwrite', s => s.delete(row.key));
         const url = objectUrls.get(row.key);
         if (url) {
-            URL.revokeObjectURL(url);
+            restoreUrl(url);
             objectUrls.delete(row.key);
         }
     }
@@ -81,66 +104,120 @@ export async function trimCache() {
         if (row.category === 'system' ? !avatar || avatars <= 64 * 1024 ** 2 : temporary <= limit && !expired)
             continue;
         await run('readwrite', s => s.delete(row.key));
+        const local = objectUrls.get(row.key);
+        if (local) { restoreUrl(local); objectUrls.delete(row.key); }
         if (avatar)
             avatars -= row.size;
         else
             temporary -= row.size;
     }
 }
-export async function resolveCachedMedia(url: string, user = owner): Promise<string> { const id = mediaIdentity(url); if (!id || !user)
+export async function resolveCachedMedia(url: string, user = owner): Promise<string> { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
     return url; const key = user + ':' + id; try {
     const row = await run<Entry | undefined>('readonly', s => s.get(key));
     if (!row)
         return url;
-    row.used = Date.now();
-    void run('readwrite', s => s.put(row)).catch(() => { });
+    const type = contentType(id, row.type || row.blob?.type);
+    const blob = row.blob || (row.bytes instanceof ArrayBuffer ? new Blob([row.bytes], { type }) : undefined);
+    if (!blob?.size || !usableType(type)) {
+        await run('readwrite', s => s.delete(key));
+        return url;
+    }
+    if (Date.now() - row.used > 60000) {
+        row.used = Date.now();
+        void run('readwrite', s => s.put(row)).catch(() => { });
+    }
     let local = objectUrls.get(key);
     if (!local) {
-        local = URL.createObjectURL(row.blob);
+        local = URL.createObjectURL(blob.type === type ? blob : blob.slice(0, blob.size, type));
         objectUrls.set(key, local);
     }
+    originals.set(local, url);
     return local;
 }
 catch {
     return url;
 } }
-async function remember(url: string, user: string) { const id = mediaIdentity(url); if (!id || !user)
+async function remember(url: string, user: string) { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
     return; const key = user + ':' + id; if (pending.has(key))
     return pending.get(key); const operation = (async () => { if (await run('readonly', s => s.get(key)))
     return; const response = await fetch(url, { cache: 'force-cache' }); if (!response.ok || response.status === 206)
     return; const length = Number(response.headers.get('content-length') || 0); if (length > 256 * 1024 ** 2)
     return; const blob = await response.blob(); if (!blob.size || blob.size > 256 * 1024 ** 2)
-    return; const database=await db();await new Promise<void>((resolve,reject)=>{const tx=database.transaction([STORE,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);check.onsuccess=()=>{if(!check.result)tx.objectStore(STORE).put({key,user,category:mediaCategory(id,blob.type),size:blob.size,used:Date.now(),blob} satisfies Entry);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);}); await trimCache(); })().catch(() => { }).finally(() => pending.delete(key)); pending.set(key, operation); return operation; }
-export function installMediaCache(user: string) {
+    return; const type = contentType(id, blob.type); if (!usableType(type)) return;
+    // ArrayBuffer avoids WebKit's IndexedDB Blob-file staging failures. Old Blob
+    // records remain readable; cache errors always leave the network URL usable.
+    const bytes = await blob.arrayBuffer();
+    const database=await db();await new Promise<void>((resolve,reject)=>{const tx=database.transaction([STORE,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);check.onsuccess=()=>{if(!check.result)tx.objectStore(STORE).put({key,user,category:mediaCategory(id,type),size:blob.size,used:Date.now(),bytes,type} satisfies Entry);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error || Error('Cache write aborted'));}); await trimCache(); })().catch(() => { }).finally(() => pending.delete(key)); pending.set(key, operation); return operation; }
+export function installMediaCache(user: string, refreshUrl?: (source: string) => Promise<string | undefined>) {
     owner = user;
     let alive = true;
-    const seen = new WeakMap<Element, string>();
     const visible = new IntersectionObserver(items => { for (const item of items)
         if (item.isIntersecting) {
             const el = item.target as HTMLImageElement;
-            if (el.complete)
-                void remember(el.currentSrc || el.src, user);
+            if (el.complete && el.naturalWidth)
+                void remember(originals.get(el.src) || el.currentSrc || el.src, user);
             visible.unobserve(el);
         } }, { rootMargin: '0px' });
-    const scan = () => { document.querySelectorAll<HTMLImageElement | HTMLMediaElement>('img[src],audio[src],video[src]').forEach(el => { const url = el.getAttribute('src') || ''; if (!mediaIdentity(url) || seen.get(el) === url)
-        return; seen.set(el, url); void resolveCachedMedia(url, user).then(local => { if (alive && local !== url && el.getAttribute('src') === url) {
-        seen.set(el, local);
-        el.src = local;
-    } }); if (el instanceof HTMLImageElement)
-        visible.observe(el); }); };
+    const scan = () => {
+        for (const el of bindings.keys()) if (!el.isConnected) bindings.delete(el);
+        document.querySelectorAll<MediaElement>('img[src],audio[src],video[src]').forEach(el => {
+            const current = el.getAttribute('src') || '', source = originals.get(current) || current;
+            if (!mediaIdentity(source) || bindings.get(el)?.current === current) return;
+            const binding: Binding = { source, current, retried: false };
+            bindings.set(el, binding);
+            // Never change the source under an already playing audio/video.
+            if (!(el instanceof HTMLMediaElement) || el.paused && !el.currentTime) {
+                void resolveCachedMedia(source, user).then(local => {
+                    if (alive && bindings.get(el) === binding && local !== current && el.getAttribute('src') === current) {
+                        binding.current = local;
+                        el.src = local;
+                    }
+                    if (alive && bindings.get(el) === binding && el instanceof HTMLImageElement && el.complete && !el.naturalWidth) {
+                        el.dispatchEvent(new Event('error'));
+                    }
+                });
+            }
+            if (el instanceof HTMLImageElement) visible.observe(el);
+        });
+    };
+    const failed = (event: Event) => {
+        const el = event.target;
+        if (!(el instanceof HTMLImageElement || el instanceof HTMLMediaElement)) return;
+        const binding = bindings.get(el);
+        if (!binding || binding.retried) return;
+        binding.retried = true;
+        void (async () => {
+            const id = mediaIdentity(binding.source);
+            if (!id) return;
+            if (originals.has(el.src)) await clearCachedMedia('temporary', id).catch(() => {});
+            const refreshed = await refreshUrl?.(binding.source).catch(() => undefined);
+            if (!alive || bindings.get(el) !== binding || !el.isConnected) return;
+            const source = refreshed || binding.source;
+            // No retries for a failed, unchanged public URL. Storage links may
+            // have expired; obtain a new signed URL using the current session.
+            if (source !== el.src) {
+                binding.source = source;
+                binding.current = source;
+                el.src = source;
+                if (el instanceof HTMLMediaElement) el.load();
+            }
+        })();
+    };
     const loaded = (event: Event) => { const el = event.target; if (el instanceof HTMLImageElement && el.getBoundingClientRect().bottom >= 0 && el.getBoundingClientRect().top <= innerHeight)
-        void remember(el.currentSrc || el.src, user); if (el instanceof HTMLMediaElement && event.type === 'play')
-        void remember(el.currentSrc || el.src, user); };
+        void remember(originals.get(el.src) || el.currentSrc || el.src, user); if (el instanceof HTMLMediaElement && event.type === 'play')
+        void remember(originals.get(el.src) || el.currentSrc || el.src, user); };
     const observer = new MutationObserver(scan);
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
     document.addEventListener('load', loaded, true);
     document.addEventListener('play', loaded, true);
+    document.addEventListener('error', failed, true);
     scan();
     void trimCache().catch(() => { });
     void navigator.storage?.persist?.().catch(() => { });
-    return () => { alive = false; observer.disconnect(); visible.disconnect(); document.removeEventListener('load', loaded, true); document.removeEventListener('play', loaded, true); if (owner === user)
+    return () => { alive = false; observer.disconnect(); visible.disconnect(); document.removeEventListener('load', loaded, true); document.removeEventListener('play', loaded, true); document.removeEventListener('error', failed, true); if (owner === user)
         owner = ''; for (const url of objectUrls.values())
-        URL.revokeObjectURL(url); objectUrls.clear(); };
+        restoreUrl(url); objectUrls.clear(); bindings.clear(); };
 }
 
 /** Local content index contains only message IDs and stable storage identities. */
