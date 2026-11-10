@@ -1865,3 +1865,490 @@
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
 }
+
+/* Android/PWA shared surfaces: keep text accessible at larger font scales. */
+.connect-app .sticker-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.25em), 1fr)); }
+.connect-app .connect-theme-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5em), 1fr)); }
+.connect-app .sticker-picker-tabs {
+  align-items: stretch;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-padding-inline: 8px;
+  touch-action: pan-x;
+}
+.connect-app .sticker-picker-tabs button {
+  flex: 0 0 auto;
+  max-width: 75vw;
+  min-height: 38px;
+  padding: 8px 12px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+.connect-app .sticker-choice {
+  display: grid;
+  align-content: start;
+  min-width: 0;
+}
+.connect-app .sticker-choice > button:first-child,
+.connect-app button.sticker-choice {
+  min-width: 0;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+}
+.connect-app .sticker-choice img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  max-height: 105px;
+  object-fit: contain;
+}
+.connect-app .sticker-choice-name {
+  display: block;
+  min-height: 2.7em;
+  padding: 5px 28px 0 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.connect-app .sticker-choice .sticker-fav {
+  top: auto;
+  bottom: 3px;
+  right: 1px;
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  font-size: 21px;
+  line-height: 1;
+}
+.connect-app .sticker-pack-setting strong,
+.connect-app .sticker-pack-setting small,
+.connect-app .connect-custom-grid button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.connect-app .sticker-pack-setting input { flex-shrink: 0; }
+
+/* Profile fields use the same individual glass rows as the media library. */
+.connect-app .profile-edit.connect-profile-edit-inline {
+  margin: 0 0 14px;
+  padding: 0;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.connect-app .connect-profile-edit-section {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  min-width: 0;
+  padding: 11px 16px;
+  border: 1px solid var(--v4-border, var(--border));
+  border-radius: 20px;
+  color: var(--text);
+  background: var(--v4-card, var(--panel));
+  box-shadow: var(--v4-highlight, none);
+}
+.connect-app .connect-profile-edit-fields {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+.connect-app .connect-profile-edit-fields label {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.connect-app .profile-edit.connect-profile-edit-inline .connect-profile-edit-fields input,
+.connect-app .profile-edit.connect-profile-edit-inline .connect-profile-edit-fields textarea {
+  margin: 0;
+  padding: 7px 0;
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  border-radius: 0;
+  border-bottom: 1px solid var(--v4-border, var(--border));
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.45;
+}
+.connect-app .profile-edit.connect-profile-edit-inline .connect-profile-edit-fields textarea {
+  min-height: 82px;
+  resize: vertical;
+}
+.connect-app .profile-edit.connect-profile-edit-inline .connect-profile-edit-fields input:focus,
+.connect-app .profile-edit.connect-profile-edit-inline .connect-profile-edit-fields textarea:focus {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+.connect-app .connect-profile-edit-inline > small { margin-inline: 16px; }
+.connect-app .connect-profile-edit-inline > .primary-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: auto;
+  min-height: 46px;
+  padding: 11px 16px;
+  border-radius: 20px;
+  white-space: normal;
+}
+
+/* Voice message is one player surface. There is no surrounding message bubble. */
+.connect-app .bubble.sent.voice-note-bubble,
+.connect-app .bubble.received.voice-note-bubble {
+  width: min(280px, 80vw) !important;
+  max-width: 80vw !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  gap: 4px !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+.connect-app .voice-note-bubble .voice-player {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  gap: 9px;
+  padding: 10px 11px 8px;
+  border: 1px solid var(--v4-border, var(--border));
+  border-radius: 19px;
+  background: var(--v4-card, var(--panel));
+  box-shadow: var(--v4-highlight, none);
+  color: var(--text);
+}
+.connect-app .bubble.sent.voice-note-bubble .voice-player {
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 87%, #fff 13%), var(--accent));
+  color: white;
+}
+.connect-app .voice-note-bubble .voice-bottom { flex-wrap: wrap; gap: 4px 7px; }
+.connect-app .voice-message-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  font-size: 9.5px;
+  line-height: 1.2;
+  opacity: .8;
+}
+.connect-app .voice-message-meta svg { width: 15px; height: 12px; }
+.connect-app .voice-note-bubble .quote-box { margin-bottom: 2px; }
+
+/* Miniatures show real scene resources beneath a static conversation layout.
+   No animated masks or backdrop blur is needed for seven tiny previews. */
+.connect-app .connect-theme-thumbnail {
+  height: auto;
+  min-height: 176px;
+  aspect-ratio: 1.1;
+  isolation: isolate;
+  color: var(--text);
+}
+.connect-app .connect-theme-thumbnail-wave { opacity: .8; }
+.connect-app .connect-theme-thumbnail-header,
+.connect-app .connect-theme-thumbnail-composer,
+.connect-app .connect-theme-thumbnail-nav {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--glass-stroke-hi, var(--border));
+  background: var(--glass-surface-strong, var(--panel));
+  box-shadow: var(--v4-highlight, inset 0 1px 0 var(--glass-sheen));
+  z-index: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.connect-app .connect-theme-thumbnail-header {
+  inset: 6px 6px auto;
+  min-height: 26px;
+  padding: 5px 7px;
+  gap: 5px;
+  border-radius: 9px;
+  font-size: 10px;
+  line-height: 1.2;
+  font-weight: 650;
+}
+.connect-app .connect-theme-thumbnail-header svg { color: var(--accent); flex-shrink: 0; }
+.connect-app .connect-theme-thumbnail-header svg:last-child { margin-left: auto; }
+.connect-app .connect-theme-thumbnail-bubble,
+.connect-app .connect-theme-thumbnail-bubble.two {
+  display: block;
+  width: auto;
+  max-width: 78%;
+  height: auto;
+  min-height: 25px;
+  padding: 6px 8px;
+  font-size: 10px;
+  line-height: 1.35;
+  top: 43px;
+  left: auto;
+  right: 8px;
+  border: 1px solid var(--glass-stroke, var(--border));
+  border-radius: 10px 10px 3px 10px;
+  background: var(--accent);
+  color: white;
+  box-shadow: var(--v4-highlight, none);
+  z-index: 1;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.connect-app .connect-theme-thumbnail-bubble.two {
+  top: 85px;
+  left: 8px;
+  right: auto;
+  border-radius: 10px 10px 10px 3px;
+  background: var(--glass-surface-strong, var(--chat-in));
+  color: var(--text);
+}
+.connect-app .connect-theme-thumbnail-composer {
+  inset: auto 6px 27px;
+  height: 23px;
+  padding: 3px 5px;
+  gap: 4px;
+  border-radius: 10px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.connect-app .connect-theme-thumbnail-composer > span {
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.connect-app .connect-theme-thumbnail-composer > svg:last-child {
+  color: var(--accent);
+  margin-left: auto;
+}
+.connect-app .connect-theme-thumbnail-nav {
+  inset: auto 6px 5px;
+  height: 18px;
+  justify-content: space-around;
+  padding: 2px 7px;
+  border-radius: 9px;
+  color: var(--muted);
+}
+.connect-app .connect-theme-thumbnail-nav > svg:first-child { color: var(--accent); }
+.connect-app .connect-theme-thumbnail svg { width: 12px; height: 12px; }
+.connect-app .connect-theme-selected-mark { top: auto; bottom: 8px; right: 8px; width: 18px; height: 18px; font-size: 11px; }
+.connect-app .connect-theme-choice-label { padding-right: 23px; }
+.connect-app .connect-theme-thumbnail-bubble > span { display: block; margin-top: 2px; text-align: right; font-size: 8px; line-height: 1.2; opacity: .75; }
+.connect-app.light .connect-theme-thumbnail-header,
+.connect-app.light .connect-theme-thumbnail-composer,
+.connect-app.light .connect-theme-thumbnail-nav,
+.connect-app.light .connect-theme-thumbnail-bubble.two {
+  background: var(--glass-surface-strong, var(--panel));
+}
+.connect-app.light .connect-theme-thumbnail[data-preview-scene="minimal"] {
+  background: color-mix(in srgb, var(--wave-primary) 3%, #f3f6fa);
+}
+.connect-app .connect-theme-thumbnail[data-preview-scene="minimal"] .connect-theme-thumbnail-bubble:not(.two) {
+  background: var(--accent);
+}
+.connect-app .connect-theme-choice-label strong,
+.connect-app .connect-theme-choice-label small { overflow-wrap: anywhere; }
+@media (max-width: 360px) {
+  .connect-app .connect-profile-edit-section { gap: 10px; padding: 11px 12px; }
+  .connect-app .connect-profile-edit-section .connect-profile-library-link-icon { width: 34px; height: 34px; }
+  .connect-app .connect-theme-thumbnail { min-height: 176px; }
+}
+
+/* A quoted message keeps the PWA surface when it is an accessible jump button. */
+.connect-app button.quote-box {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  border-left: 3px solid #fff9;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.connect-app .received button.quote-box { border-left-color: var(--accent2); }
+
+/* Progressive fallback for older Android System WebView. These branches do not
+   change capable Chromium builds. Palette variables and original SVG masks remain. */
+@supports not (color: color-mix(in srgb, white, black)) {
+  .connect-app,
+  .connect-app[data-visual-scene] {
+    --v4-border: rgba(210, 232, 255, .20);
+    --glass-background: #08111c;
+    background: var(--glass-background);
+  }
+  .connect-app.light,
+  .connect-app.light[data-visual-scene] {
+    --v4-border: rgba(67, 102, 148, .22);
+    --glass-background: #f3f7fc;
+  }
+  .connect-app::before,
+  .connect-app[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"])::before {
+    background: radial-gradient(ellipse at 8% 80%, var(--wave-primary), transparent 65%),
+                radial-gradient(ellipse at 92% 88%, var(--wave-secondary), transparent 70%);
+    opacity: .16;
+  }
+  .connect-app.light::before { opacity: .08; }
+  .connect-app::after,
+  .connect-app[data-visual-scene]:not([data-visual-scene="waves"]):not([data-visual-scene="minimal"])::after {
+    background: linear-gradient(111deg, var(--wave-primary), var(--wave-secondary) 74%, var(--wave-tertiary));
+  }
+  .connect-app .bottom-nav,
+  .connect-app .chat-header,
+  .connect-app .chat-composer,
+  .connect-app .chat-search-bar,
+  .connect-app .selection-toolbar,
+  .connect-app .search-field,
+  .connect-app .settings-group,
+  .connect-app .settings-profile,
+  .connect-app .connect-theme-choice,
+  .connect-app .connect-call-modal {
+    background: var(--glass-surface-strong) !important;
+    border-color: var(--glass-stroke-hi);
+  }
+  .connect-app .nav-tab.selected,
+  .connect-app .sticker-picker-tabs button.active,
+  .connect-app .send-button,
+  .connect-app .bubble.sent.voice-note-bubble .voice-player {
+    background: var(--accent) !important;
+    border-color: var(--accent);
+    color: white;
+  }
+  .connect-app .connect-theme-thumbnail[data-preview-scene] {
+    background: var(--glass-background);
+  }
+  .connect-app .connect-theme-thumbnail-bubble.two {
+    background: var(--glass-surface-strong);
+    color: var(--text);
+  }
+  .connect-app .connect-profile-library-link-icon {
+    background: var(--glass-surface);
+    color: var(--accent);
+  }
+}
+
+@supports not (height: 100dvh) {
+  .connect-app { height: 100vh; }
+  .connect-app .sticker-picker { height: 43vh; max-height: 340px; }
+  .connect-app .list-chat-popover { max-height: 45vh; }
+  .connect-app .connect-vnote-panel { max-height: calc(100vh - 52px); }
+  .connect-app .connect-vnote-preview { width: min(264px, 67vw, 33vh); }
+  @media (max-height: 650px) {
+    .connect-app .sticker-picker { height: 36vh; max-height: 220px; }
+    .connect-app .connect-vnote-preview { width: min(210px, 30vh); }
+  }
+}
+
+@supports not selector(:has(*)) {
+  /* Explicit message classes keep media geometry independent of :has(). */
+  .connect-app .bubble.sent.media-only:not(.sticker-bubble):not(.video-note-bubble),
+  .connect-app .bubble.received.media-only:not(.sticker-bubble):not(.video-note-bubble) {
+    width: min(290px, calc(100vw - 80px));
+    max-width: calc(100vw - 80px);
+    min-width: 0;
+    padding: 3px;
+    background: var(--glass-surface);
+    color: var(--text);
+    border: 1px solid var(--glass-stroke-hi);
+  }
+  .connect-app .bubble.media-only > .bubble-body,
+  .connect-app .bubble.media-only .attachment-preview { width: 100%; max-width: 100%; }
+  .connect-app .bubble.voice-note-bubble,
+  .connect-app .bubble.video-note-bubble {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+  .connect-app .bubble.voice-note-bubble .voice-player { width: 100%; min-width: 0; }
+  .connect-app .connect-album-grid .connect-media-thumb { width: 100%; }
+}
+
+@supports not (aspect-ratio: 1 / 1) {
+  .connect-app .connect-video-note { height: 0; padding-bottom: 100%; }
+  .connect-app .connect-video-note-screen,
+  .connect-app .connect-video-note-screen video {
+    top: 0; right: 0; bottom: 0; left: 0;
+  }
+  .connect-app .attachment-preview.connect-adaptive-photo,
+  .connect-app .attachment-preview.connect-adaptive-video {
+    position: relative;
+    height: calc((100vw - 90px) * .75);
+    max-height: 210px;
+    overflow: hidden;
+  }
+  .connect-app .connect-adaptive-photo > .connect-adaptive-image,
+  .connect-app .connect-adaptive-video > .connect-adaptive-video-thumb,
+  .connect-app .connect-adaptive-image > img,
+  .connect-app .connect-adaptive-video-thumb video {
+    position: absolute;
+    top: 0; right: 0; bottom: 0; left: 0;
+    width: 100%; height: 100%;
+    padding: 0;
+    object-fit: contain;
+  }
+  .connect-app .connect-vnote-preview { height: min(264px, 67vw, 33vh); }
+}
+
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  /* Dense PWA glass remains readable when blur is unavailable. */
+  .connect-app .chat-header,
+  .connect-app .chat-composer,
+  .connect-app .bottom-nav,
+  .connect-app .settings-group,
+  .connect-app .settings-profile,
+  .connect-app .profile-hero,
+  .connect-app .connect-profile-library-link,
+  .connect-app .connect-profile-edit-section,
+  .connect-app .voice-note-bubble .voice-player,
+  .connect-app .sticker-picker {
+    background: var(--glass-surface-strong);
+    border-color: var(--glass-stroke-hi);
+    box-shadow: var(--v4-highlight), var(--glass-shadow);
+  }
+  .connect-app .bubble.sent.voice-note-bubble .voice-player {
+    background: var(--accent);
+    color: white;
+  }
+}
+
+@supports not (inset: 0) {
+  .connect-app::before,
+  .connect-app::after,
+  .connect-app .connect-theme-thumbnail-wave,
+  .connect-app .context-overlay,
+  .connect-app .context-backdrop,
+  .connect-app .connect-call-backdrop,
+  .connect-app .connect-vnote-backdrop {
+    top: 0; right: 0; bottom: 0; left: 0;
+  }
+  .connect-app .connect-theme-thumbnail-header { top: 6px; right: 6px; bottom: auto; left: 6px; }
+  .connect-app .connect-theme-thumbnail-composer { top: auto; right: 6px; bottom: 27px; left: 6px; }
+  .connect-app .connect-theme-thumbnail-nav { top: auto; right: 6px; bottom: 5px; left: 6px; }
+}
+/* Unified mobile controls: leave inputs and message content editable/copyable. */
+.connect-app :is(button,[role="button"],[role="tab"],nav,header,.settings-group>strong,.settings-hint,.bubble-meta,.context-menu,.message-menu){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.connect-app :is(input,textarea,[contenteditable="true"]){-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+.connect-app .bubble{-webkit-touch-callout:none}
+.connect-recording-bar{display:flex;align-items:center;gap:9px;min-height:42px;padding:7px 10px;border:1px solid var(--glass-border,rgba(255,255,255,.18));border-radius:22px;background:rgba(160,170,190,.08);backdrop-filter:blur(14px)}
+.connect-recording-wave{display:flex;align-items:center;gap:2px;flex:1;min-width:30px;height:26px;overflow:hidden}.connect-recording-wave span{width:3px;flex:0 0 3px;height:24px;background:currentColor;border-radius:2px;transform:scaleY(.07);transition:transform 60ms linear}.connect-recording-bar time{font:13px ui-monospace,monospace;min-width:35px}.connect-recording-bar button{padding:7px 6px;border:0;border-radius:16px;background:transparent;color:inherit;font:inherit;font-size:12px}.connect-recording-bar .connect-recording-send{background:rgba(210,225,245,.15)}
+.connect-app .voice-file-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;font-size:12px;margin-bottom:3px}.connect-app .voice-bottom{flex-wrap:wrap;row-gap:3px}.connect-app .sticker-choice{padding-bottom:0;min-height:0;aspect-ratio:1}.connect-app .sticker-choice>button:not(.sticker-fav){height:100%;padding:5px}.connect-app .sticker-choice-name{display:none}
+.connect-app .bubble.video-note-bubble .connect-video-note{margin-right:42px;overflow:visible}.connect-app .bubble.video-note-bubble .connect-video-note>button.connect-video-note-sound{right:-39px;left:auto;top:auto;bottom:3px;width:32px;height:32px;z-index:1}.connect-app .connect-video-note-screen{overflow:hidden;border-radius:50%}.connect-app .connect-video-note{max-width:calc(100vw - 110px)}
+.connect-cache-row{display:flex;gap:12px;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(200,215,235,.1)}.connect-cache-row span{min-width:0}.connect-cache-row small{display:block;opacity:.65;margin-top:4px}.connect-cache-row button,.connect-cache-settings select{background:rgba(150,170,200,.12);border:1px solid rgba(220,230,245,.15);border-radius:14px;padding:8px;color:inherit}.connect-cache-settings label{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:18px 0}
+@media(max-width:340px){.connect-recording-bar{gap:5px;padding:5px}.connect-recording-bar button{font-size:11px}.connect-app .voice-player{min-width:0}}

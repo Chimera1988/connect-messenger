@@ -1,0 +1,9 @@
+Apply the checked additive migration with an administrative Postgres connection. The workflow accepts an optional protected CONNECT_DATABASE_URL secret and refuses missing schema. It records future deletions performed under the existing application rules, adds bounded activity TTL and a read-only deletion cursor, and blocks UUID resurrection. It does NOT add a content-purging trigger or rewrite any existing message content. The project already has a deletion validator; its established rules are retained, including reply identity.
+
+Automatic approval review rejected the earlier broader cleanup trigger because E2EE history migration is incomplete. That trigger was not applied and is not installed by this package. This safer migration only observes existing delete events, keeps RLS, queues Storage references without deleting objects, and gives the owner an idempotent wrapper around the existing explicit delete action. Do not bypass the rejected cleanup with an indirect job.
+
+Rollback: remove connect_observe_deleted_message, connect_guard_deleted_uuid and connect_bound_activity triggers and new RPCs; keep tombstones/columns to preserve sync. Existing user deletion is governed by the original validator. There is no mass cleanup or plaintext history migration. Backups and external copies remain outside this change.
+
+E2EE capability is deliberately 0. The adapter is groundwork. Missing blockers: signed device enrollment/roster/revocation, confirmed linking and history transfer, delivery/migration quorum, message/media transport integration, authenticated native/PWA call signaling and downgrade enforcement. Do not enable E2EE by changing the constant.
+
+Physical removal of unreferenced attachments still requires a transactionally leased GC worker checking every forward/album/media reference and preventing new references during removal. It is not enabled here.

@@ -26,7 +26,7 @@ export async function POST(req:NextRequest) {
   if (prefs?.enabled===false || !devices?.length) return NextResponse.json({ok:true,sent:0});
   const title=sender?.display_name || 'Connect';
   // Avoid exposing private message text in server logs and push payload.
-  const payload=JSON.stringify({title,body:'Новое сообщение',conversationId:record.conversation_id,messageId:record.id});
+  const payload=JSON.stringify({title,body:'Новое сообщение',conversationId:record.conversation_id,messageId:record.id,createdAt:record.created_at,userId:recipient});
   let sent=0;
   for (const device of devices) {
     try {

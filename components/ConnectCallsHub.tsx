@@ -270,6 +270,7 @@ export default function ConnectCallsHub() {
   }
 
   const sendCallPush = useCallback(async (call: Call) => {
+    if(window.ConnectAndroid)return; // Native WebRTC controller sends the one authoritative push.
     if (!client || !userId || call.caller_id !== userId || call.status !== 'ringing') return;
     if (Date.now() - Date.parse(call.created_at) > 85000 || pushedRef.current.has(call.id)) return;
     pushedRef.current.add(call.id);

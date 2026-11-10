@@ -23,7 +23,7 @@ declare global {
       setSilent: (kind: string, muted: boolean) => void;
       setSpeakerphone: (enabled: boolean) => void;
       getSoundSettings: () => string;
-      dismissConversationNotifications: (id: string) => void;
+      dismissConversationNotifications: (id: string, readAt?:string) => void;
       setActiveConversation: (id: string) => void;
       setCallState: (id: string, state: string) => void;
       openCallNotificationSettings: () => void;
