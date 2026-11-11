@@ -1,0 +1,176 @@
+name: Connect 2.2.6 — guarded technical call failure
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/connect-226-call-failure.yml']
+permissions:
+  contents: write
+concurrency:
+  group: connect-226-pwa-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  update:
+    if: github.repository == 'Chimera1988/connect-messenger'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: 'https://tpwkmoxxzjfdsqsomhhr.supabase.co'
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_tAg8rPwuBNcA2iPF7voc2Q_vsKUpyZa'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply guarded final source package
+        run: |
+          python3 - <<'CONNECT_PACKAGE'
+          import base64,gzip,hashlib,json,os,pathlib,urllib.request,time
+          root=pathlib.Path.cwd().resolve()
+          workflow_ref=os.environ['GITHUB_WORKFLOW_REF']
+          relative='.github/workflows/'+workflow_ref.split('/.github/workflows/',1)[1].rsplit('@',1)[0]
+          source=(root/relative).read_text()
+          block=source.split('# CONNECT_SOURCE_BUNDLE_BEGIN\n',1)[1].split('# CONNECT_SOURCE_BUNDLE_END',1)[0]
+          encoded=''.join(line.removeprefix('# ')for line in block.splitlines())
+          packed=base64.b64decode(encoded)
+          assert hashlib.sha256(packed).hexdigest()=="60cff1a243f2331ae50efdf626a0996e0510089238ae4825b0a562b990422e71", 'Embedded package checksum mismatch'
+          payload=json.loads(gzip.decompress(packed))
+          def target(name):
+           path=root/name
+           if any(p.is_symlink() for p in [path,*path.parents] if p.is_relative_to(root)):raise SystemExit('Symlink source path: '+name)
+           path=path.resolve()
+           if not path.is_relative_to(root):raise SystemExit('Unsafe package path')
+           if path.exists() and not path.is_file():raise SystemExit('Expected source file: '+name)
+           return path
+          def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+          def decode(value):return base64.b64decode(value['binary'])if isinstance(value,dict)else value.encode('utf-8')
+          # Validate the COMPLETE affected source state before writing anything.
+          for name,digest in payload['unchanged'].items():
+           if sha(target(name))!=digest:raise SystemExit('Incompatible prerequisite: '+name)
+          for name,value in payload['files'].items():
+           path=target(name);old=sha(path);new=hashlib.sha256(decode(value)).hexdigest()
+           if old is not None and old!=new and old not in payload['before'].get(name,[]):raise SystemExit('Source drift: '+name)
+          for name,allowed in payload['delete'].items():
+           old=sha(target(name))
+           if old is not None and old not in allowed:raise SystemExit('Deletion source drift: '+name)
+          for item in payload['downloads']:
+           old=sha(target(item['path']))
+           if old is not None and old!=item['sha256']:raise SystemExit('Asset source drift: '+item['path'])
+          # Stage and verify every external immutable asset before committing changes.
+          staged={}
+          for item in payload['downloads']:
+           if sha(target(item['path']))==item['sha256']:continue
+           for attempt in range(3):
+            try:
+             with urllib.request.urlopen(item['url'],timeout=30) as response:content=response.read()
+             assert hashlib.sha256(content).hexdigest()==item['sha256'], 'Pinned asset checksum mismatch'
+             staged[item['path']]=content;break
+            except Exception:
+             if attempt==2:raise
+             time.sleep(attempt+1)
+          for name,value in payload['files'].items():staged[name]=decode(value)
+          for name,content in staged.items():
+           path=target(name);path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(content)
+          for name in payload['delete']:target(name).unlink(missing_ok=True)
+          print('Verified source package: '+str(len(payload['files']))+' changes, '+str(len(payload['downloads']))+' pinned assets')
+          CONNECT_PACKAGE
+      - name: Install locked PWA dependencies and isolated SQL test engine
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm install --prefix "$RUNNER_TEMP/connect-call-sql" --ignore-scripts --no-audit --no-fund @electric-sql/pglite@0.3.14
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+      - name: Verify SQL permissions, device ownership and repeat application
+        run: CONNECT_SQL_TEST_MODULE="$RUNNER_TEMP/connect-call-sql/node_modules/@electric-sql/pglite" node scripts/verify-call-failure-sql.cjs
+      - name: Verify current PWA including Turnix
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Apply server RPC only with an explicitly configured administrator connection
+        env:
+          CONNECT_SUPABASE_DB_URL: ${{ secrets.CONNECT_SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "$CONNECT_SUPABASE_DB_URL" ]; then
+            echo '::warning::Server RPC NOT applied. Configure CONNECT_SUPABASE_DB_URL for the intended project or run the bundled checked SQL in Supabase SQL editor. Native audio fixes do not depend on this step; guarded technical-failure history does.'
+            exit 0
+          fi
+          python -m pip install --disable-pip-version-check 'psycopg[binary]==3.2.13'
+          python - <<'PYSQL'
+          import os,pathlib,psycopg
+          sql=pathlib.Path('supabase/migrations/20261111000100_connect_fail_audio_call.sql').read_text()
+          body=sql.split('as $$',1)[1].split('end $$;',1)[0]+'end '
+          try:
+            with psycopg.connect(os.environ['CONNECT_SUPABASE_DB_URL'],sslmode='verify-full',sslrootcert='/etc/ssl/certs/ca-certificates.crt',autocommit=True) as connection:
+              with connection.cursor() as cursor:
+                cursor.execute("select to_regprocedure('public.connect_finish_audio_call(uuid,text)') is not null, to_regclass('public.connect_calls') is not null")
+                if cursor.fetchone()!=(True,True): raise RuntimeError('Incompatible Connect server')
+                cursor.execute("select prosrc from pg_proc where oid=to_regprocedure('public.connect_finish_owned_audio_call(uuid,text,text)')")
+                old=cursor.fetchone()
+                if old and old[0].strip()!=body.strip(): raise RuntimeError('Unknown newer failure RPC; refusing replacement')
+                cursor.execute(sql,prepare=False)
+                cursor.execute("select has_function_privilege('anon','public.connect_finish_owned_audio_call(uuid,text,text)','EXECUTE'),has_function_privilege('authenticated','public.connect_finish_owned_audio_call(uuid,text,text)','EXECUTE')")
+                if cursor.fetchone()!=(False,True): raise RuntimeError('RPC privileges differ')
+            print('Server RPC applied and verified; existing call rows and schema retained.')
+          except Exception as error:
+            print('::error::Server migration failed: '+type(error).__name__+'. Connection strings and credentials are never logged.')
+            raise SystemExit(1)
+          PYSQL
+      - name: Save checked server source
+        run: |
+          set -euo pipefail
+          git add supabase/migrations/20261111000100_connect_fail_audio_call.sql scripts/verify-call-failure-sql.cjs
+          git diff --cached --binary > connect-226-server.patch
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Guard technical call failures by the answering device'
+            if ! git push origin "HEAD:$GITHUB_REF_NAME"; then echo '::error::Source push failed; repository main was NOT updated.' >&2; exit 1; fi
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Connect-226-server-source
+          path: |
+            connect-226-server.patch
+            supabase/migrations/20261111000100_connect_fail_audio_call.sql
+            scripts/verify-call-failure-sql.cjs
+
+# CONNECT_SOURCE_BUNDLE_BEGIN
+# H4sIAAAAAAACA81ZC2/bRhL+K1shAKmCpiVbb1XBBT73cIc27TUp7oC6UJfcpcSEItndpR2d4/9+3z5IUZbsJK57uACOxN3lzM7MN0/ddpI047Izu+3IqqQR
+# lfx0k64EVWmRy9Oz3tmoj3+9Xg9/y7jIcx6rZULTbEkrlhbLmGZZKH/POrPOyQl5xViq0mtOfvrxYkYoUTxe5ynOEP1KJThJJcn5NRfYrCQ+GI+zNOcheV0Q
+# RhUlDffwKtcUc1LlcUbTDWdEM+Mc71ynMSebSiqSF4okaZ7KNaH4vjYk9bYnCY3NXcwVr/KIr9J8fpXHglPFSSGI4GVGQSgBB82RlFWUpXHYiGnoLoubnLOW
+# uH5pPpYpI1WVsoCUS5CUeF/xD0o/0lzecLGUa3o2HJlVXCqhVYb7VlnWvcoFV5XI5X2Omq4kGc1XFV1xUmblCrolkseVSNVWU4GyBBYU/qiI18uSqjVZEM8j
+# VJIXL65yrVEKTV8bakc5zJ02rnJC0oTQSq1DSOJ3jXlwQwJF5kTQVHLCP8S8NOrxXkPZ+jDPFYyqOPPmhOcMNOaOVKMKbZc0J76nDY+DgbfWUpVeV2u+OfY4
+# v7/n1zSDmp2B7Tv7PCXPIBb5GsxUUcuciGJzXLU3AAhAyBY7Gya4T1UCe7wWwmCqqMAEWy3l1DJZLqFBowCJoL3AsdA18mhq5FCoC33DKqfXUAyNMu4Ztvtq
+# dASloqqSO12KNIfVVlCmhbbXdYozaHJvzR+jtajfhLewlmyL+yLofSuAfx/Ptc2gHPeW3T95+dKTrPRaByyFA4/45iUpV3hV0axYhTyPC8b91oo91l6BFRE0
+# 1FIV/lGegffz228nXrcLnPEP+GxbYE8795RtLX8cLMbLrNpiBEYNnryB7qJGtjVB88QznPTAwTzkLDBfl1Qt8uIGIDqCQHtBGHYfxuZ+9y+vr/7ixVxHkOvi
+# PScaTEDVl4YwE7hMuNL/ddseE+hAqgMl4nCugFwEHx0v/zgTSLYXPcDDxPjLD1zE2kuwB35AKNQAxQOKjEQF2xK6onrFZJRNWQgqtrBMIXjgsonJJaK4kQj0
+# rCAvFJeqFQtN3EzN3fVV5jaTCBO/Z4sVz5eQlRWbZWW8YV5nmgf3i0rJlD1KwaWHo5srePTRwExK2DUtKrmUVWTuOlsg9gvobAk4KoAEYYD/XkG+8N2NCk1q
+# DHHYC5SoeLcd2l2m26lM6XhD2lkcKXmpdeUQ72fp+wecIUUWhmkBUpfKZFdjIi42mxTpTRSlwetO07MF/HfFwcfBBlu+9zToeLOZ4KtSFDFnuHL3gJVL5f5u
+# LfhcVl5APNxUayk8phrf+zx2DyYdr957hIk7+XmcHolZ3m73c7nVDr7jYDNHDpdSNh59mpYPc9kYLU3xprPiLj82WSWw4TQokoSLwIbwro3SyPQAtQ+3CQ4c
+# xpFydIJWHry96qhtya86s6uOIXrVCa46yAhmRW5zhBREm6vOnReY0svIVnKBrL/RAV7XtEn6sFN5O78ixHhW8/ajoNFyNLWP5XxYCuhAu93A21Gq6kVdUFlt
+# 7A6ZpGMKW2kzDVI6akIuxOabl0cqslYp1VQC+vNLBa8j3Gxm3fBPU0ITSp+qg4OC6rlUYOF2oAAEbxPbvkxuKo0/4eWmFKtPEO94n1Souj3y9mqVT3pju3Kp
+# Cz7nbYs9l7Frx33mpN6883ZFCyR7Xh3UtyPers1z/Z0pnNpNnPcU1t6NKBAqPsW93To+E2dX17pitlXBevd1fFi+fgIvOomJBisaKLQss7T2nT8BoW1e8FZU
+# FAox5xlweYitL/VQ8b/wUFcwxjRvTRzsdgshT9OEc3L2Z/pZw8NEG7FJcwSbdaqL6C0pgMwbkSqY9P/Cok+OuW7G8FnxJtMSwp4xz2qH3x8gPYXxs/u8bSQD
+# XSvot4j1fAdDbHpPysl1WnkwKadu8uLGNE9NzccHOM+WnwuacYniuN00oWLrtoCjG5NW4/qYZu71HHWzbVpJ06pC5WmyBREhFSwieFZQRmS85huqNWN7obnp
+# aX8qsiyi8XtCE6UNhuCcK6mb1hLNqm6jFLzPzEnN+Xv3fFKXNHfdNLxaM3DRqXZycBNcUR0E5q5rFlx7PbfdcxMMYBp3eTTTnaAjY5GWSp7iDYh/ojmfOMWd
+# wNRh/E52Zh3cFQ16IhfaWKngvpfDE2aJbjPs3u2Pf8vA7a45Yfo5KUOeX4cXP7x+fXnxdvnmn98t316+ebv8/oe//vzd5ceP3l/MhE/AccDstFxpGqZ18Sl8
+# Kva7i5e3lgGLFjm/IZYN2mwltrfAAL2hukONQt3p+L+5rhgycjvp2FvYm0+4HWths6cx5VYbY7UmhPVYVxtmN8Y1I1zbe5sZrZtZat9LE/+L2nuN7tlMkzdD
+# oKbFN8SPNYS+G0OQUqQbPQN4z7f3OzV7QAcUfaVd33ZsnR+uuymlGXPXiwQqi9/7buv48DKog1srOXlRJbf42KQIhfrZZTZESdPekXcIIJGrZd2D1YEesRGF
+# +hE8N6X6z+4qzehdz9/cqwfHmzFde7E7/81EEQsvmHGRyBDc2Le41BsNvn2w61m81w3fFWnuL5csFTndoF0Nw9M/9uMKIppXqWRiO/Z9PGO7Oz+y1FxbcAnp
+# F80RgEts/d8cCNdUNgOaJTByDclWkEd7hhc8dVwTeJf/vrz4+e2l1zU+FjzIZq93fR5+bZKB7+SMiypX/tdwnjRXD/9A0NX5RyISgp8eJwYH3ul+kwkNwJc2
+# Y0vN1n6zgIFbW7WHmsgvvV9DrYWPH7+6v9q+68eP93b3r/LVYtE7OOK4Ys+DvbpqjQ1yKUQhfO/VxXen5ie1VBaZwRypvalGB0JemBUr/x9vfniNksO4aLL1
+# b7l2VT7zfiykWgmOoEz+9erN96c2tJJeeB72B6h29Kz2+xrRl3aQxGY6UgW7JsE+KwHPowYANHvze3YBb5Cz/llgFCln+4IFyA2sMqctfZBNaCZ5UK63UnfK
+# uuu3S3emignOukasu0SXttn2tgF8nBUS6eDurut3Q2g6Xvvc5QwtPzfaQrnQpKMPqbqAOy/6d5pi5y7oRBw1CX+OX0l/+fUzE+ovv4IvPEZXlpxp1mjxTmmZ
+# nhqgnqJCPRUF9B0qnX6TAR1GEz4d988GLOIDdp6Mprj2cErPk4SNxqNRf4K9aBQPWTxh/TM6isbD4SSZDPuT4TnyPMqXssh1mXJ6YUV4pS+vFS3B5AO49ONJ
+# P54OhuycJnwwmY6nI5aMe9PJOOqPJlFvxCbTYcLH8TDqT8/6PJkO+lonUz6I+PCcgUuJugJJMdSxW5cNyWBEaZRMGOVT3HMyGbBBL4mGfXbG+pNzeoYLj/t0
+# OKK98fhsxKJkSqMBH0bjURRP6I7iSVagYnFkx5Pzs/5wGidR0htOcZ6Pe/GU0SFjvMdGg7gX8/M+ZJkOhyOo4DwZT4eDCR0P+HQCCbXRGcKOrvCktRpDIFEa
+# A3d3/wV5JqwYNh8AAA==
+# CONNECT_SOURCE_BUNDLE_END
