@@ -3,6 +3,7 @@
  * Actual authenticated media bytes use existing connect-media-v1 cache.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { prefetchProfileFile, retireCachedProfileFile } from './media-cache';
 export type ProfileLibraryKind = 'photos' | 'videos' | 'music';
 export type ProfileLibraryRow = { path: string; createdAt: string };
 type Catalog = { key: string; viewer: string; owner: string; kind: ProfileLibraryKind; savedAt: number; items: ProfileLibraryRow[] };
@@ -62,4 +63,68 @@ export async function warmOwnProfileLibraries(client:SupabaseClient,viewer:strin
       })));
     }catch{/* Offline: preserve the last catalog. */}
   }));
+}
+
+
+// CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111
+/** Warm a conversation partner's gallery, video and music catalogs while a
+ * chat is open. Only signed URLs granted by Supabase may be fetched; they are
+ * never persisted. This is deliberately modest to avoid saturating mobile data.
+ */
+const peerWarmups = new Map<string,{at:number;task:Promise<void>}>();
+export async function warmPeerProfileLibraries(
+  client:SupabaseClient,viewer:string,peer:string,proxyUrl:(url:string)=>string=(url)=>url
+):Promise<void> {
+  if(!viewer||!peer||viewer===peer)return;
+  const namespace=viewer+':'+peer;
+  const current=peerWarmups.get(namespace);
+  if(current&&Date.now()-current.at<120000)return current.task;
+  const task=(async()=>{
+    const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+    const allowBytes=!connection?.saveData&&connection?.effectiveType!=='2g'&&document.visibilityState==='visible';
+    const budget:Record<ProfileLibraryKind,{count:number;bytes:number}>={
+      photos:{count:3,bytes:2*1024**2},
+      videos:{count:1,bytes:4*1024**2},
+      music:{count:1,bytes:4*1024**2},
+    };
+    await Promise.all(kinds.map(async kind=>{
+      try{
+        const {data,error}=await client.storage.from('connect-profile-media').list(peer+'/'+kind,{
+          limit:100,sortBy:{column:'created_at',order:'desc'}
+        });
+        if(error)return; // Permissions and RLS always take precedence over local cache.
+        const rows=(data||[]).filter(x=>x.id&&x.name).map(x=>({
+          path:peer+'/'+kind+'/'+x.name, createdAt:x.created_at||'',
+          size:Number(x.metadata?.size||0)
+        }));
+        const before=await readProfileLibrary(viewer,peer,kind).catch(()=>null);
+        await writeProfileLibrary(viewer,peer,kind,rows);
+        // A full 100-item response may have a second page: do not infer deletes.
+        if(before&&rows.length<100){
+          const listed=new Set(rows.map(x=>x.path));
+          for(const removed of before.filter(x=>!listed.has(x.path)))
+            void retireCachedProfileFile(viewer,removed.path).catch(()=>{});
+        }
+        if(!allowBytes)return;
+        const cap=budget[kind];
+        const selected=rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);
+        if(!selected.length)return;
+        const result=await client.storage.from('connect-profile-media').createSignedUrls(selected.map(x=>x.path),3600);
+        if(result.error)return;
+        const signed=new Map((result.data||[]).filter(x=>x.path&&x.signedUrl).map(x=>[x.path,x.signedUrl] as const));
+        for(const item of selected){
+          const url=signed.get(item.path);
+          if(url)void prefetchProfileFile(proxyUrl(url),viewer,kind,cap.bytes).catch(()=>{});
+        }
+      }catch{/* Network errors never interrupt chat or profile navigation. */}
+    }));
+  })().catch(()=>{});
+  peerWarmups.set(namespace,{at:Date.now(),task});
+  try{await task;}finally{
+    // Entries expire after two minutes. Limit retained user IDs in long sessions.
+    if(peerWarmups.size>24){
+      const first=peerWarmups.keys().next().value;
+      if(first)peerWarmups.delete(first);
+    }
+  }
 }

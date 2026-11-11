@@ -301,13 +301,16 @@ export async function cacheUploadedProfileFile(viewer:string,path:string,file:Fi
 /** Load only small photos, audio and short videos in background; full-size media
  * not cached yet can always stream over the existing signed URL.
  */
-export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'|'videos'|'music'):Promise<void>{
+// CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111
+export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'|'videos'|'music',limitBytes?:number):Promise<void>{
   const id=mediaIdentity(url);
   if(!id?.startsWith('connect-profile-media/')||!viewer)return;
   const category=mediaCategory(id);
   if((kind==='photos'&&category!=='photos')||(kind==='music'&&category!=='audio')||(kind==='videos'&&category!=='videos'))return;
   const connection=(navigator as Navigator&{connection?:{saveData?:boolean;effectiveType?:string}}).connection;
   if(connection?.saveData||connection?.effectiveType==='2g')return;
-  const max=kind==='photos'?8*1024**2:kind==='music'?24*1024**2:16*1024**2;
+  const defaultMax=kind==='photos'?8*1024**2:kind==='music'?24*1024**2:16*1024**2;
+  const max=typeof limitBytes==='number'&&Number.isFinite(limitBytes)?Math.max(0,Math.min(defaultMax,limitBytes)):defaultMax;
+  if(!max)return;
   try{await remember(url,viewer,max,true);}catch{/* Network streaming remains available. */}
 }

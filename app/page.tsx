@@ -11,7 +11,7 @@ import ConnectNotificationSettings from '../components/ConnectNotificationSettin
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
 import ConnectSplashScreen from '../components/ConnectSplashScreen';
 import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
-import { warmOwnProfileLibraries } from '../lib/profile-media-index';
+import { warmOwnProfileLibraries, warmPeerProfileLibraries } from '../lib/profile-media-index';
 import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
 import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
@@ -2085,7 +2085,23 @@ export default function Home() {
     other: profiles.find(p => p.id === (c.user_a === user?.id ? c.user_b : c.user_a)),
     last: latest[c.id], count: unread[c.id] || 0,
   })).find(c => c.id === activeChat);
-  const currentName = selected?.other?.display_name || 'Собеседник';
+
+// CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111
+// Warm the open conversation partner, or the profile currently being viewed.
+// Never fetch other contacts in bulk or run during a call.
+useEffect(()=>{
+  if(!supabase||!user?.id)return;
+  const peer=profileView&&profileView!==user.id?profileView:selected?.other?.id;
+  if(!peer||peer===user.id||document.visibilityState!=='visible')return;
+  if(selected?.other?.id===peer&&selected.other.is_blocked)return;
+  let cancelled=false;
+  const timer=window.setTimeout(()=>{
+    if(cancelled||document.visibilityState!=='visible')return;
+    void warmPeerProfileLibraries(supabase,user.id,peer,mediaUrl);
+  },1150);
+  return()=>{cancelled=true;window.clearTimeout(timer);};
+},[user?.id,activeChat,profileView,selected?.other?.id]);
+const currentName = selected?.other?.display_name || 'Собеседник';
   const peerPresence = selected?.other ? presence[selected.other.id] : undefined;
   const activityText:Record<string,string>={typing:'Печатает…',voice:'Записывает голосовое…',video:'Записывает видео…',sticker:'Выбирает стикер…',file:'Выбирает файл…'};
   const peerStatus = peerActivity&&peerActivity.until>Date.now()?activityText[peerActivity.kind]||formatPresence(peerPresence,clock):peerRecording?'Записывает голосовое…':typing?'Печатает…':formatPresence(peerPresence,clock);
