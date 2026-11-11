@@ -109,21 +109,45 @@ jobs:
           assert 'setLastViewed(0)' in hub
           print('Cross-layer missed call invariants verified')
           CONNECT_UNANSWERED_FIX
+      - name: Ensure browser cache test releases its server on launch failure
+        shell: bash
+        run: |
+          python3 - <<'CONNECT_BROWSER_CLEANUP'
+          from pathlib import Path
+          path = Path('tests/cache-browser.test.cjs')
+          source = path.read_text(encoding='utf-8')
+          old_start = "const browser=await chromium.launch({executablePath:process.env.CONNECT_CHROMIUM_PATH||undefined,args:['--no-sandbox']});\n try{const page=await browser.newPage();"
+          new_start = "let browser;\n try{\n  browser=await chromium.launch({executablePath:process.env.CONNECT_CHROMIUM_PATH||undefined,args:['--no-sandbox']});\n  const page=await browser.newPage();"
+          old_finally = " }finally{await browser.close();await new Promise(r=>server.close(r));}"
+          new_finally = " }finally{try{if(browser)await browser.close();}finally{await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));}}"
+          for old, new in ((old_start, new_start), (old_finally, new_finally)):
+              if source.count(old) != 1:
+                  raise RuntimeError(f'{path}: expected one cleanup anchor, found {source.count(old)}; not changing the test')
+              source = source.replace(old, new, 1)
+          path.write_text(source, encoding='utf-8')
+          print('Browser regression test will close its HTTP server even when Chromium fails to launch')
+          CONNECT_BROWSER_CLEANUP
+          node --check tests/cache-browser.test.cjs
       - name: Install dependencies and run regression tests
         shell: bash
         run: |
           set -euo pipefail
           npm ci --no-audit --no-fund
+          # playwright-core is pinned in package-lock; download its matching Chromium build.
+          npx --no-install playwright-core install --with-deps chromium
+          # Fail quickly and clearly if Chromium cannot launch on this runner.
+          timeout -k 10s 60s node -e "const {chromium}=require('playwright-core');chromium.launch({args:['--no-sandbox']}).then(async b=>{await b.close();console.log('Chromium smoke test passed')}).catch(e=>{console.error(e);process.exitCode=1})"
           npm install --prefix "$RUNNER_TEMP/connect-call-sql" --ignore-scripts --no-audit --no-fund @electric-sql/pglite@0.3.14
           npm run typecheck
-          CONNECT_SQL_TEST_MODULE="$RUNNER_TEMP/connect-call-sql/node_modules/@electric-sql/pglite" npm test
-          npm run build
+          # The timeout terminates runaway browser/native WebRTC tests, preserving failure status.
+          timeout --signal=TERM --kill-after=20s 12m env CONNECT_SQL_TEST_MODULE="$RUNNER_TEMP/connect-call-sql/node_modules/@electric-sql/pglite" npm test
+          timeout --signal=TERM --kill-after=20s 12m npm run build
           node --check public/sw.js
       - name: Publish verified PWA fix and remove one-shot installer
         shell: bash
         run: |
           set -euo pipefail
-          git add components/ConnectCallsHub.tsx components/ConnectAudioCalls.tsx lib/call-missed.ts tests/missed-call-status.test.cjs tests/call-history-status.test.cjs
+          git add components/ConnectCallsHub.tsx components/ConnectAudioCalls.tsx lib/call-missed.ts tests/missed-call-status.test.cjs tests/call-history-status.test.cjs tests/cache-browser.test.cjs
           git rm -f --ignore-unmatch .github/workflows/connect-pwa-unanswered-fix.yml
           if ! git diff --cached --quiet; then
             git config user.name 'github-actions[bot]'
