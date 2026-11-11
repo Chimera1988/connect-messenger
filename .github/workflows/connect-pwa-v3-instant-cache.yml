@@ -1,0 +1,347 @@
+name: Connect PWA 3.0 - instant chats and media
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-v3-instant-cache.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-v3-instant-cache
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    if: github.repository == 'Chimera1988/connect-messenger'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout current PWA
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply Connect PWA 3.0 upgrade
+        shell: bash
+        run: |
+          python3 - <<'CONNECT_PWA_V3_PATCH'
+          from pathlib import Path
+          import json
+          import re
+          
+          ROOT = Path.cwd()
+          MARK = 'CONNECT_PWA_INSTANT_CACHE_V3_20261111'
+          
+          def read(path): return (ROOT / path).read_text(encoding='utf-8')
+          def write(path, value):
+              dest = ROOT / path
+              dest.parent.mkdir(parents=True, exist_ok=True)
+              dest.write_text(value, encoding='utf-8')
+          
+          def one(source, needle, replacement, label):
+              count = source.count(needle)
+              if count != 1: raise RuntimeError(f'{label}: expected 1 anchor, found {count}')
+              return source.replace(needle, replacement, 1)
+          
+          page=read('app/page.tsx')
+          if MARK in page:
+              print('Connect PWA 3.0 already applied; no changes required.')
+              raise SystemExit(0)
+          
+          # Read any local message window before the click happens; invalidation is per user/chat.
+          history=read('lib/chat-history-cache.ts')
+          history=one(history,
+           'export function readChatHistory<T extends Row>(user:string,chat:string){return read<T>(user,chat);}',
+           '''/** Short-lived in-memory hot windows; IndexedDB and the server remain authoritative. */
+          const hotWindows = new Map<string,{expires:number;promise:Promise<Snapshot<Row>|null>}>();
+          function invalidateHot(user:string,chat?:string){
+           const prefix=user+':';for(const key of hotWindows.keys())if(key.startsWith(prefix)&&(!chat||key===keyOf(user,chat)))hotWindows.delete(key);
+          }
+          export async function prewarmChatHistory(user:string,chat:string):Promise<void>{
+           if(!user||!chat)return;
+           const key=keyOf(user,chat),item=hotWindows.get(key);
+           if(item&&item.expires>Date.now()){await item.promise;return;}
+           const promise=read<Row>(user,chat).catch(()=>null);
+           hotWindows.set(key,{expires:Date.now()+20000,promise});
+           if(hotWindows.size>12)hotWindows.delete(hotWindows.keys().next().value!);
+           await promise;
+          }
+          export function readChatHistory<T extends Row>(user:string,chat:string):Promise<Snapshot<T>|null>{
+           const key=keyOf(user,chat),hot=hotWindows.get(key);
+           if(hot&&hot.expires>Date.now()){hotWindows.delete(key);return hot.promise as Promise<Snapshot<T>|null>;}
+           hotWindows.delete(key);return read<T>(user,chat);
+          }''', 'history hot windows')
+          history=one(history,
+           ' if(!user||!chat)return Promise.resolve();\n const lease=',
+           ' if(!user||!chat)return Promise.resolve();\n invalidateHot(user,chat);\n const lease=', 'history write invalidation')
+          history=one(history,
+           'export async function dropCachedMessageById(user:string,id:string){\n if(!user||!id)return;',
+           'export async function dropCachedMessageById(user:string,id:string){\n if(!user||!id)return;\n invalidateHot(user);', 'history delete invalidation')
+          history=one(history,
+           'async function wipe(user:string,chat?:string){\n if(!user)return;',
+           'async function wipe(user:string,chat?:string){\n if(!user)return;\n invalidateHot(user,chat);', 'history wipe invalidation')
+          
+          media=read('lib/media-cache.ts')
+          media=one(media,
+           'async function remember(url: string, user: string) {',
+           'async function remember(url: string, user: string, maxBytes = 256 * 1024 ** 2, needLength = false) {',
+           'bounded warm fetch signature')
+          media=one(media,
+           'if (length > 256 * 1024 ** 2)\n    return;',
+           'if (length > maxBytes || (needLength && !length))\n    return;',
+           'bounded network preflight')
+          media=one(media,
+           'if (!blob.size || blob.size > 256 * 1024 ** 2)\n    return;',
+           'if (!blob.size || blob.size > maxBytes)\n    return;',
+           'bounded buffered download')
+          media=one(media,
+           '''export async function prefetchCachedMedia(url:string,user:string):Promise<void>{
+            const id=mediaIdentity(url);if(!url||!user||!id||mediaCategory(id)!=='system'&&!/__(thumb\\.webp|poster\\.jpg)$/.test(id))return;
+            try{await remember(url,user);}catch{/* Network fallback remains usable. */}
+          }''',
+           '''export async function prefetchCachedMedia(url:string,user:string,smallOriginal=false):Promise<void>{
+            const id=mediaIdentity(url);if(!url||!user||!id)return;
+            const lightweight=mediaCategory(id)==='system'||/__(thumb\\.webp|poster\\.jpg)$/.test(id);
+            const smallPhoto=smallOriginal&&mediaCategory(id)==='photos';
+            if(!lightweight&&!smallPhoto)return;
+            try{await remember(url,user,smallPhoto?6*1024**2:256*1024**2,smallPhoto);}catch{/* Network fallback remains usable. */}
+          }''', 'bounded original photo warmup')
+          
+          page=one(page,
+           'import {mediaIdentity, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from \'../lib/media-cache\';',
+           'import {mediaIdentity, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from \'../lib/media-cache\';',
+           'import local first media')
+          page=one(page,
+           'readChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory,',
+           'readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory,',
+           'import history prewarm')
+          page=one(page,
+           '// CONNECT_PWA_WEBP_HISTORY_THUMBS_AUDIO_HOLD_V1',
+           '// CONNECT_PWA_WEBP_HISTORY_THUMBS_AUDIO_HOLD_V1\n// '+MARK,
+           'v3 marker')
+          page=one(page,
+           "const recentMessagesRef=useRef<Message[]>([]);",
+           "const recentMessagesRef=useRef<Message[]>([]);\n  const historyWarmStamps=useRef<Record<string,string>>({});\n  const avatarCacheEpoch=useRef(0);\n  const inboxMediaWarm=useRef<Map<string,number>>(new Map());\n  useEffect(()=>{historyWarmStamps.current={};inboxMediaWarm.current.clear();avatarCacheEpoch.current++;},[user?.id]);",
+           'warmup refs')
+          
+          old_avatar='''      const urls: Record<string,string> = {};
+                await Promise.all(directory.filter(x=>x.avatar_path).map(async x => {
+                  const { data } = await supabase.storage.from('connect-avatars').createSignedUrl(x.avatar_path!, 3600);
+                  if (data?.signedUrl) urls[x.id] = mediaUrl(data.signedUrl);
+                }));
+                setAvatarUrls(urls);'''
+          new_avatar='''      // Local avatars first. Sign only missing files; never block the chat list.
+                const epoch=++avatarCacheEpoch.current, owner=user.id;
+                const candidates=directory.filter(x=>x.avatar_path);
+                void Promise.all(candidates.map(async x=>{
+                  const identity='/storage/v1/object/sign/connect-avatars/'+x.avatar_path!;
+                  const local=await resolveCachedMedia(identity,owner).catch(()=>identity);
+                  return {id:x.id,path:x.avatar_path!,local:local.startsWith('blob:')?local:''};
+                })).then(items=>{
+                  if(avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+                  setAvatarUrls(Object.fromEntries(items.filter(x=>x.local).map(x=>[x.id,x.local])));
+                  // Signed URLs are short-lived; paths in IndexedDB are stable.
+                  void Promise.all(items.filter(x=>!x.local).map(async x=>{
+                    const {data}=await supabase.storage.from('connect-avatars').createSignedUrl(x.path,3600);
+                    if(!data?.signedUrl||avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+                    const url=mediaUrl(data.signedUrl);
+                    setAvatarUrls(prev=>({...prev,[x.id]:url}));
+                    void prefetchCachedMedia(url,owner);
+                  })).catch(()=>{});
+                }).catch(()=>{});'''
+          page=one(page,old_avatar,new_avatar,'avatars local first and async signing')
+          
+          # Existing list refresh remains untouched: supplemental low-priority history sync.
+          anchor='''  useEffect(() => {
+              if (!supabase || !activeChat || !user) return;'''
+          addition='''  // Seed the latest chat windows from the already fetched inbox feed. No extra
+            // Supabase queries, no bulk media reads, and no changes to call/push handling.
+            useEffect(()=>{
+              if(!user?.id||!conversations.length)return;
+              const owner=user.id;
+              const timer=window.setTimeout(()=>{
+                const rows=recentMessagesRef.current;
+                const ordered=[...conversations].sort((a,b)=>(latest[b.id]?.created_at||b.created_at).localeCompare(latest[a.id]?.created_at||a.created_at)).slice(0,7);
+                void (async()=>{
+                  for(const chat of ordered){
+                    if(activePreviewUser.current!==owner)return;
+                    const visible=rows.filter(m=>m.conversation_id===chat.id&&!m.deleted_at&&!serverDeleted.current.has(m.id)).sort(compareChatMessages).slice(-90);
+                    const signature=visible.map(m=>m.id+':'+(m.edited_at||'')).join('|');
+                    const key=owner+':'+chat.id;
+                    if(visible.length&&historyWarmStamps.current[key]!==signature){
+                      await writeChatHistory(owner,chat.id,visible,readCache.current[chat.id]||'').catch(()=>{});
+                      historyWarmStamps.current[key]=signature;
+                    }
+                    await prewarmChatHistory(owner,chat.id).catch(()=>{});
+                  }
+                })();
+              },320);
+              return()=>window.clearTimeout(timer);
+            },[user?.id,conversations,latest]);
+          
+            // Give nearby chats a head start: a few lightweight thumbnails plus at
+            // most three bounded photos are signed and cached before the next tap.
+            useEffect(()=>{
+              if(!supabase||!user?.id||!conversations.length)return;
+              const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+              if(connection?.saveData||connection?.effectiveType==='2g')return;
+              const owner=user.id;
+              const timer=window.setTimeout(()=>{void(async()=>{
+                const hotChats=new Set([...conversations].sort((a,b)=>(latest[b.id]?.created_at||b.created_at).localeCompare(latest[a.id]?.created_at||a.created_at)).slice(0,3).map(c=>c.id));
+                const rows=recentMessagesRef.current.filter(m=>hotChats.has(m.conversation_id)&&!m.deleted_at&&!serverDeleted.current.has(m.id)).sort(compareChatMessages).slice(-50).reverse();
+                const candidates=rows.flatMap(m=>[
+                  ...(m.attachment_kind==='image'&&m.attachment_path&&supportsPhotoPreview(m.attachment_path)?[{path:photoPreviewPath(m.attachment_path),original:false}]:[]),
+                  ...parseAlbum(m.body).filter(x=>x.kind==='image'&&supportsPhotoPreview(x.path)).map(x=>({path:photoPreviewPath(x.path),original:false})),
+                  ...(connection?.effectiveType!=='3g'&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2?[{path:m.attachment_path,original:true}]:[])
+                ]);
+                let thumbs=0,originals=0;
+                for(const candidate of candidates){
+                  if(activePreviewUser.current!==owner)return;
+                  if(candidate.original?originals>=3:thumbs>=10)continue;
+                  const key=owner+':'+candidate.path,until=inboxMediaWarm.current.get(key)||0;
+                  if(until>Date.now())continue;
+                  inboxMediaWarm.current.set(key,Date.now()+60000);
+                  if(candidate.original)originals++;else thumbs++;
+                  try{
+                    const identity='/storage/v1/object/sign/connect-attachments/'+candidate.path;
+                    if((await resolveCachedMedia(identity,owner)).startsWith('blob:'))continue;
+                    const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(candidate.path,3600);
+                    if(!error&&data?.signedUrl)await prefetchCachedMedia(mediaUrl(data.signedUrl),owner,candidate.original);
+                  }catch{/* Preloading never blocks chat navigation. */}
+                }
+              })();},900);
+              return()=>window.clearTimeout(timer);
+            },[user?.id,conversations,latest]);
+          
+          '''
+          page=one(page,anchor,addition+anchor,'prewarm recent chats')
+          
+          old_attachment='''    void Promise.all(missing.map(async path => {
+                const {data} = await supabase.storage.from('connect-attachments').createSignedUrl(path, 3600);
+                return {path, url:data?.signedUrl ? mediaUrl(data.signedUrl) : undefined};
+              })).then(rows => {'''
+          new_attachment='''    void Promise.all(missing.map(async path => {
+                // Do not materialize large videos/audio just to render the chat screen.
+                const meta=messages.find(m=>m.attachment_path===path);
+                if(meta?.attachment_kind==='image'||!meta&&supportsPhotoPreview(path)){
+                  const identity='/storage/v1/object/sign/connect-attachments/'+path;
+                  const local=await resolveCachedMedia(identity,user.id).catch(()=>identity);
+                  if(local.startsWith('blob:'))return {path,url:local};
+                }
+                const {data} = await supabase.storage.from('connect-attachments').createSignedUrl(path, 3600);
+                return {path, url:data?.signedUrl ? mediaUrl(data.signedUrl) : undefined};
+              })).then(rows => {'''
+          page=one(page,old_attachment,new_attachment,'local attachment URLs')
+          
+          old_preview='''      try{const {data,error}=await supabase!.storage.from('connect-attachments').createSignedUrl(photoPreviewPath(path),3600);
+                  return {path,url:!error&&data?.signedUrl?mediaUrl(data.signedUrl):null};
+                }catch{return {path,url:null};}'''
+          new_preview='''      try{
+                  const previewPath=photoPreviewPath(path),identity='/storage/v1/object/sign/connect-attachments/'+previewPath;
+                  const local=await resolveCachedMedia(identity,owner);
+                  if(local.startsWith('blob:'))return {path,url:local};
+                  const {data,error}=await supabase!.storage.from('connect-attachments').createSignedUrl(previewPath,3600);
+                  return {path,url:!error&&data?.signedUrl?mediaUrl(data.signedUrl):null};
+                }catch{return {path,url:null};}'''
+          page=one(page,old_preview,new_preview,'local preview URLs')
+          
+          old_prefetch='''  // Prefetch only small preview images and avatars. Never bulk-download
+            // large original videos or audio on slow/mobile connections.
+            useEffect(()=>{
+              if(!user?.id||!activeChat)return;
+              const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+              if(connection?.saveData||connection?.effectiveType==='2g')return;
+              const paths=messages.filter(m=>m.conversation_id===activeChat).slice(-35).flatMap(m=>[
+                ...(m.attachment_kind==='image'&&m.attachment_path?[m.attachment_path]:[]),
+                ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
+              ]);
+              const urls=[...new Set([...Object.values(avatarUrls), ...paths.map(p=>photoPreviews[p]).filter((v):v is string=>typeof v==='string')])].filter(Boolean).slice(-22);
+              let stopped=false;
+              const timer=window.setTimeout(()=>{void(async()=>{for(const src of urls){if(stopped)break;await prefetchCachedMedia(src,user.id);}})();},650);
+              return()=>{stopped=true;window.clearTimeout(timer);};
+            },[user?.id,activeChat,photoPreviews,avatarUrls,messages]);'''
+          new_prefetch='''  // Warm avatars and small thumbnails even while viewing the chat list.
+            // Small original photos are prefetched only on unconstrained connections.
+            useEffect(()=>{
+              if(!user?.id)return;
+              const owner=user.id;
+              const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+              if(connection?.saveData||connection?.effectiveType==='2g')return;
+              const previews=activeChat?messages.filter(m=>m.conversation_id===activeChat).slice(-35).flatMap(m=>[
+                ...(m.attachment_kind==='image'&&m.attachment_path?[m.attachment_path]:[]),
+                ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
+              ]):[];
+              const urls=[...new Set([...Object.values(avatarUrls),...previews.map(p=>photoPreviews[p]).filter((v):v is string=>typeof v==='string')])].filter(Boolean).slice(0,56);
+              const small=activeChat?messages.filter(m=>m.conversation_id===activeChat&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2).slice(-6).map(m=>attachmentUrls[m.attachment_path!]).filter((v):v is string=>!!v):[];
+              let stopped=false;
+              const timer=window.setTimeout(()=>{void(async()=>{
+                for(const src of urls){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner);}
+                if(connection?.effectiveType==='3g')return;
+                for(const src of small){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner,true);}
+              })();},200);
+              return()=>{stopped=true;window.clearTimeout(timer);};
+            },[user?.id,activeChat,photoPreviews,avatarUrls,messages,attachmentUrls]);'''
+          page=one(page,old_prefetch,new_prefetch,'list avatar and thumbnail prefetch')
+          page=one(page,
+           'if(user?.id)await wipeUserHistory(user.id).catch(()=>{}); await supabase?.auth.signOut();',
+           'if(user?.id)await wipeUserHistory(user.id).catch(()=>{}); historyWarmStamps.current={};inboxMediaWarm.current.clear();avatarCacheEpoch.current++;setAvatarUrls({});await supabase?.auth.signOut();',
+           'logout local indexes cleanup')
+          page=one(page,'<p>Версия 2.2.3</p>','<p>Версия 3.0</p>','about page version')
+          
+          for p in ('package.json','package-lock.json'):
+              d=json.loads(read(p))
+              d['version']='3.0.0'
+              if p=='package-lock.json':d['packages']['']['version']='3.0.0'
+              write(p,json.dumps(d,ensure_ascii=False,indent=2)+'\n')
+          
+          sw=read('public/sw.js')
+          sw=one(sw,"const CORE='connect-core-v4';","const CORE='connect-core-v5';",'core static assets version')
+          assert sw.split('function markers(){',1)[1]==read('public/sw.js').split('function markers(){',1)[1], 'Push/call handler must remain byte-identical'
+          
+          write('lib/chat-history-cache.ts',history)
+          write('lib/media-cache.ts',media)
+          write('app/page.tsx',page)
+          write('public/sw.js',sw)
+          
+          # Guard against accidentally modifying push/call files or weakening retention.
+          assert 'purgeDeletedMedia' in page and 'dropCachedMessageById' in page
+          assert 'connect-chat-history-v1' in history
+          assert 'connect-media-v1' in media
+          print('Connect PWA 3.0: fast chat windows, local avatars/photos, bounded prefetch, static core update; push/calls unchanged.')
+          CONNECT_PWA_V3_PATCH
+      - name: Install dependencies and Chromium for browser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+      - name: Check types, regression tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Commit and deploy validated PWA 3.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/page.tsx lib/chat-history-cache.ts lib/media-cache.ts public/sw.js package.json package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Connect PWA 3.0: instant chat and media cache'
+            git push origin HEAD:main
+          else
+            echo 'Connect PWA 3.0 is already installed.'
+          fi
