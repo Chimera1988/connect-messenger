@@ -1,0 +1,133 @@
+name: 'Connect PWA — fix unanswered call counter and notifications'
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-unanswered-fix.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: connect-pwa-unanswered-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  repair:
+    if: github.repository == 'Chimera1988/connect-messenger'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CI: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: 'https://tpwkmoxxzjfdsqsomhhr.supabase.co'
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_tAg8rPwuBNcA2iPF7voc2Q_vsKUpyZa'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Fix classification, initial badge and lifecycle refresh
+        shell: bash
+        run: |
+          python3 - <<'CONNECT_UNANSWERED_FIX'
+          from pathlib import Path
+
+
+          def patch(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              source = p.read_text(encoding='utf-8')
+              count = source.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{path}: expected one occurrence of patch anchor, found {count}; source left untouched')
+              p.write_text(source.replace(old, new, 1), encoding='utf-8')
+              print('Updated', path)
+
+          # The database stores a cancelled, never-answered ringing call as 'ended'.
+          # For the RECEIVER this is missed; for the CALLER it remains cancelled.
+          patch('lib/call-missed.ts',
+              '''/** The same strict missed-call criteria as ConnectCallsHub.missed().
+           * Caller-cancelled (ended), explicitly declined, busy, failed, and answered
+           * calls must never produce a missed badge or notification.
+           */''',
+              '''/** Match ConnectCallsHub.missed(): an unanswered caller cancellation is
+           * missed for the callee, but never for the caller. Declined, busy, failed,
+           * and answered calls are not missed.
+           */''')
+          patch('lib/call-missed.ts',
+              "  if (call.status === 'missed') return true;\n  const started = Date.parse(call.created_at);",
+              "  if (call.status === 'missed') return true;\n  if (call.status === 'ended') return !!call.ended_at;\n  const started = Date.parse(call.created_at);")
+
+          patch('components/ConnectCallsHub.tsx',
+              "  return call.callee_id === self && !call.answered_at && (call.status === 'missed' ||\n    (call.status === 'ringing' && Date.now() - Date.parse(call.created_at) > 60000));",
+              "  return call.callee_id === self && !call.answered_at && (call.status === 'missed' ||\n    (call.status === 'ended' && !!call.ended_at) ||\n    (call.status === 'ringing' && Date.now() - Date.parse(call.created_at) > 60000));")
+
+          # A first-time visitor must not have ALL previous missed calls marked read.
+          # Explicitly opening the Calls tab still acknowledges them, as before.
+          patch('components/ConnectCallsHub.tsx',
+              "      else { const now = Date.now(); localStorage.setItem(key, String(now)); setLastViewed(now); }\n    } catch { setLastViewed(Date.now()); }",
+              "      else setLastViewed(0);\n    } catch { setLastViewed(0); }")
+
+          # Supabase Realtime may miss events on long-lived PWA/iOS tabs.
+          patch('components/ConnectCallsHub.tsx',
+              "    document.addEventListener('visibilitychange', onVisible);\n    const onServiceWorker = (event: MessageEvent) => {",
+              "    document.addEventListener('visibilitychange', onVisible);\n    window.addEventListener('focus', onVisible);\n    const polling = window.setInterval(onVisible, 20000);\n    const onServiceWorker = (event: MessageEvent) => {")
+          patch('components/ConnectCallsHub.tsx',
+              "      document.removeEventListener('visibilitychange', onVisible);\n      navigator.serviceWorker?.removeEventListener('message', onServiceWorker);",
+              "      document.removeEventListener('visibilitychange', onVisible);\n      window.removeEventListener('focus', onVisible);\n      window.clearInterval(polling);\n      navigator.serviceWorker?.removeEventListener('message', onServiceWorker);")
+
+          # The transient in-app toast needs the same semantics as the history badge.
+          patch('components/ConnectAudioCalls.tsx',
+              "      if (next.status === 'missed' && next.callee_id === userId) setToast(`Пропущенный звонок: ${shownName || 'собеседник'}`);",
+              "      if (next.callee_id === userId && !next.answered_at &&\n          (next.status === 'missed' || (next.status === 'ended' && !!next.ended_at)))\n        setToast(`Пропущенный звонок: ${shownName || 'собеседник'}`);")
+
+          # Modify the existing deterministic tests: do not bypass or silence them.
+          patch('tests/missed-call-status.test.cjs',
+              "no({status:'ended',ended_at:'2026-11-11T12:00:02.500Z'});",
+              "yes({status:'ended',ended_at:'2026-11-11T12:00:02.500Z'});")
+          patch('tests/missed-call-status.test.cjs',
+              "no({status:'ended',ended_at:'2026-11-11T12:00:01.500Z'});",
+              "yes({status:'ended',ended_at:'2026-11-11T12:00:01.500Z'});")
+          patch('tests/missed-call-status.test.cjs',
+              "console.log('missed-call classification: 11 deterministic cases passed (caller cancellations excluded)');",
+              "console.log('missed-call classification: 11 deterministic cases passed (receiver sees unanswered cancellations)');")
+          patch('tests/call-history-status.test.cjs',
+              "test('local caller cancellation is not a missed incoming call on either device',()=>{\n const c={...sample,status:'ended'};assert.equal(ctx.missed(c,'callee'),false);assert.equal(ctx.missed(c,'caller'),false);assert.match(ctx.statusText(c,'caller'),/отменён/);assert.match(ctx.statusText(c,'callee'),/отменён/);",
+              "test('caller cancellation without answer is missed only by the receiver',()=>{\n const c={...sample,status:'ended'};assert.equal(ctx.missed(c,'callee'),true);assert.equal(ctx.missed(c,'caller'),false);assert.match(ctx.statusText(c,'caller'),/отменён/);assert.equal(ctx.statusText(c,'callee'),'Пропущенный');")
+
+          # Check all three consumers stay aligned: badge, push endpoint, in-app toast.
+          hub=Path('components/ConnectCallsHub.tsx').read_text()
+          helper=Path('lib/call-missed.ts').read_text()
+          route=Path('app/api/push/call/end/route.ts').read_text()
+          sw=Path('public/sw.js').read_text()
+          assert "(call.status === 'ended' && !!call.ended_at)" in hub
+          assert "if (call.status === 'ended') return !!call.ended_at" in helper
+          assert 'isMissedIncomingCall(call, call.callee_id)' in route
+          assert "d.kind==='missed-call'" in sw
+          assert 'setLastViewed(0)' in hub
+          print('Cross-layer missed call invariants verified')
+          CONNECT_UNANSWERED_FIX
+      - name: Install dependencies and run regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm install --prefix "$RUNNER_TEMP/connect-call-sql" --ignore-scripts --no-audit --no-fund @electric-sql/pglite@0.3.14
+          npm run typecheck
+          CONNECT_SQL_TEST_MODULE="$RUNNER_TEMP/connect-call-sql/node_modules/@electric-sql/pglite" npm test
+          npm run build
+          node --check public/sw.js
+      - name: Publish verified PWA fix and remove one-shot installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add components/ConnectCallsHub.tsx components/ConnectAudioCalls.tsx lib/call-missed.ts tests/missed-call-status.test.cjs tests/call-history-status.test.cjs
+          git rm -f --ignore-unmatch .github/workflows/connect-pwa-unanswered-fix.yml
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Count unanswered caller cancellations as missed for recipient'
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
