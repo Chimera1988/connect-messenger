@@ -86,6 +86,45 @@ jobs:
           echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
       - name: Verify SQL permissions, device ownership and repeat application
         run: CONNECT_SQL_TEST_MODULE="$RUNNER_TEMP/connect-call-sql/node_modules/@electric-sql/pglite" node scripts/verify-call-failure-sql.cjs
+      - name: Repair corrupted PNG fixture in existing media cache browser test
+        run: |
+          set -euo pipefail
+          python3 - <<'FIX_CACHE_FIXTURE'
+          import base64, hashlib, pathlib, struct, zlib
+          path = pathlib.Path('tests/cache-browser.test.cjs')
+          original = path.read_bytes()
+          old = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII='
+          new = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP4DwQACfsD/Wj6HMwAAAAASUVORK5CYII='
+          original_git_sha = hashlib.sha1(b'blob ' + str(len(original)).encode() + b'\0' + original).hexdigest()
+          text = original.decode('utf-8')
+          if old in text:
+              if original_git_sha != 'd2d3f050dde8b79041800499143346278558011a':
+                  raise SystemExit('Unknown browser-cache test revision: refusing unsafe rewrite')
+              if text.count(old) != 1:
+                  raise SystemExit('Corrupt PNG occurs an unexpected number of times')
+              path.write_text(text.replace(old, new, 1), encoding='utf-8')
+              print('Replaced invalid 1x1 PNG used by browser-cache test; source cache logic unchanged')
+          elif new in text:
+              print('Valid browser-cache PNG fixture already installed')
+          else:
+              raise SystemExit('Unknown browser-cache test fixture: refusing unsafe rewrite')
+          # Verify PNG chunk checksums and actual decompressed pixel bytes.
+          png = base64.b64decode(new, validate=True)
+          assert png.startswith(b'\x89PNG\r\n\x1a\n')
+          pos = 8
+          pixel = None
+          while pos < len(png):
+              size = struct.unpack('>I', png[pos:pos + 4])[0]
+              kind = png[pos + 4:pos + 8]
+              data = png[pos + 8:pos + 8 + size]
+              crc = struct.unpack('>I', png[pos + 8 + size:pos + 12 + size])[0]
+              assert crc == zlib.crc32(kind + data) & 0xffffffff
+              if kind == b'IDAT':
+                  pixel = zlib.decompress(data)
+              pos += 12 + size
+          assert pixel == b'\x00\xff\xff\xff\xff', 'Invalid 1x1 RGBA sample'
+          print('Browser-cache sample verified: CRC and compressed RGBA bytes valid')
+          FIX_CACHE_FIXTURE
       - name: Verify current PWA including Turnix
         run: |
           set -euo pipefail
@@ -125,7 +164,7 @@ jobs:
       - name: Save checked server source
         run: |
           set -euo pipefail
-          git add supabase/migrations/20261111000100_connect_fail_audio_call.sql scripts/verify-call-failure-sql.cjs
+          git add supabase/migrations/20261111000100_connect_fail_audio_call.sql scripts/verify-call-failure-sql.cjs tests/cache-browser.test.cjs
           git diff --cached --binary > connect-226-server.patch
           if ! git diff --cached --quiet; then
             git config user.name 'github-actions[bot]'
