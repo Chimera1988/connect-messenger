@@ -1,0 +1,189 @@
+name: Connect PWA — missed calls badge and notifications
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/connect-missed-calls.yml']
+permissions:
+  contents: write
+concurrency:
+  group: connect-missed-pwa-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  update:
+    if: github.repository == 'Chimera1988/connect-messenger'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    env:
+      CI: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: 'https://tpwkmoxxzjfdsqsomhhr.supabase.co'
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_tAg8rPwuBNcA2iPF7voc2Q_vsKUpyZa'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Apply verified missed-call fixes to PWA
+        run: |
+          python3 - <<'CONNECT_MISSED_INSTALL'
+          import base64,gzip,hashlib,json,os,pathlib,re,subprocess,sys,tempfile
+          root=pathlib.Path.cwd()
+          workflow=root/'.github/workflows/connect-missed-calls.yml'
+          source=workflow.read_text()
+          data=source.split('# CONNECT_MISSED_PATCH_BEGIN\n',1)[1].split('# CONNECT_MISSED_PATCH_END',1)[0]
+          packed=base64.b64decode(''.join(line[2:] for line in data.splitlines() if line.startswith('# ')),validate=True)
+          assert hashlib.sha256(packed).hexdigest()=="8def2788859a246246c57404c83be1bc856dd6b08ad0698c8f5ac74c32e9a540",'Installer checksum mismatch'
+          files=json.loads(gzip.decompress(packed))
+          expected={'apply.py','call-missed.ts','missed-call-test.cjs','push-call-ended-route.ts'}
+          assert set(files)==expected and all(isinstance(value,str) for value in files.values())
+          with tempfile.TemporaryDirectory(prefix='connect-missed-') as dirname:
+            work=pathlib.Path(dirname)
+            for name,content in files.items():(work/name).write_text(content,encoding='utf-8')
+            if "pwa"=='android':
+              config=root/'native/app.json'
+              version=json.loads(config.read_text())['expo']['version']
+              if version=='2.2.8':
+                assert (root/'native/web/lib/call-missed.ts').is_file(),'Incomplete Android 2.2.8 source'
+                print('Connect Android 2.2.8 already published: rebuilding verified source')
+                sys.exit(0)
+              if version=='2.2.6':
+                src=(root/'.github/workflows/connect-android-final-build.yml').read_text()
+                assert src.startswith('name: Connect 2.2.7'), '2.2.7 bootstrap workflow absent'
+                m=re.search(r"^\s+python3 - <<'CONNECT_PACKAGE'\r?\n(.*?)^\s+CONNECT_PACKAGE\s*$",src,re.M|re.S)
+                assert m, 'Previous 2.2.7 source installer absent'
+                import textwrap
+                bootstrap_env=dict(os.environ)
+                bootstrap_env['GITHUB_WORKFLOW_REF']='Chimera1988/connect-android/.github/workflows/connect-android-final-build.yml@refs/heads/main'
+                subprocess.run([sys.executable,'-c',textwrap.dedent(m.group(1))],env=bootstrap_env,check=True)
+                assert json.loads(config.read_text())['expo']['version']=='2.2.7', '2.2.7 bootstrap incomplete'
+              else:
+                assert version=='2.2.7','Unexpected Android prerequisite: '+version
+            subprocess.run([sys.executable,str(work/'apply.py'),"pwa"],check=True)
+          CONNECT_MISSED_INSTALL
+      - name: Install and prepare browser regression tests
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm install --prefix "$RUNNER_TEMP/connect-call-sql" --ignore-scripts --no-audit --no-fund @electric-sql/pglite@0.3.14
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+      - name: Verify PWA types, calls, tests and production build
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          CONNECT_SQL_TEST_MODULE="$RUNNER_TEMP/connect-call-sql/node_modules/@electric-sql/pglite" npm test
+          npm run build
+          node --check public/sw.js
+      - name: Publish checked PWA source
+        run: |
+          set -euo pipefail
+          git add components/ConnectCallsHub.tsx lib/call-missed.ts tests/missed-call-status.test.cjs app/api/push/call/end/route.ts public/sw.js package.json
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Fix missed call badge and persistent Web Push alerts'
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          fi
+
+# CONNECT_MISSED_PATCH_BEGIN
+# H4sIAAAAAAAC/9U87XLjyHGvMlq7BOAEQiQlShRlrqzT6nyyd7UqUbpzIsk0CAxFnEiABkBpZS6rEvtHKuV/+Z9K5Q0cl6/8kbJT
+# lSfQvlG6e2aAAUhqtXfrXLK3txIHMz09/d09DU6fuePx8N4Z3z9rPevH0YiN3XQwDHosGI2jOGUn8PEylB8GboLP7OQ+sb9KotBO
+# BpM0GNpRchlehq9evzhkbQYPHTe+vr2oXbGgz4Y8NNWQ9bzG+DDhzDAAZp/RijBKWRAy0xjfuYZtuKEfR4FvWK3LkMGf2A1gQec+
+# Sfno8E2QmsZ54l7zFhvfp4MoZAp/NoX1b+XqmWFdhqevX5+1EX/TcAzLiXkSDW+5aSGuPu+zFFDiqRm6I642G7dx0ToOiQFA0g3v
+# zTdOkHST+9EwCG9Mi/WjmL0hpMf2J2Nn7MY8TBMLZ9PMmA/dNLjl3TQyEaCl4C8+UEcAJtKzmH/FvZT7LWasEWoZIkiocX6MhRu1
+# FpArTNw+J+AlmDFPJ3HIxoog3A8EOWxv4IbXPLH5mzEh0+0No177OApzSgG4tk7BIprwFPHrB0PAdAFSr4IkCcJrNo55zH8xCZIg
+# 5SXsoqHfJjgxd/1uyt+kJg+9yIdlbWOS9itNQ84k5KRsOsnArZl9A8fYFIUP4Di0EDCxZpeXVSP7uFZ45gz4Gz+AY6dmfpoCBUAW
+# fNpNCe380yhxgCQ8vDWNg9fHx4cHZ92T/bODz7ufHf307Pz00LDYSpsZNUOTiO+xUx5PwhAJkg448GXIXSBYMogmQ9iQs8DnoIEA
+# NnXyZSibw6EZ8jtEBY5Cctm15YDkoS56xLg4CIEB+0Mk6z1yyhtw37CJ8rtCJB4R1j7Ikzo16wGWILmcNp4ihFmLTZEWMyOTsWQy
+# TNuAnfiMM0PO/SG3Yz4euh4fwak0fDV0w7ZY7XjRBHAWy6wCAcKVdq21AMkTPBYwxBtomGV419gIn9uAzQR4Ng0RbQH+olWrVq8y
+# 9LUjSFwk1ub8IeyaleuGcxeDSAuxFSvtJdIrGXI+9t00Y4RSSdf3hUa6ScLT9yhfr22SueuS3nW7lrRM62KxUKTefcoTTcAJWf4m
+# SFIYJRHOlU7OXWn3FqjwKe9PSIfTiEW3PKYDl3SYQAkknNGNH8SmtJXts3jCbdq2G93Qp3niie17RTrt+36BStKNtNvkPySBBpNe
+# 2/Ai0JkQd1s/iMIQWH8A+pJ8Puk5afLG2GVgLtoG/LPuwXhlBCaJ+/AInsC+gKNBP9bFgwpNSlI3nSQOPnC8rxJwY+jP9F1DMsjr
+# dxzAPgkBbcFjuMhpT0HpMkSxQUdtlKBZ4hEBsQ0dSrYcpoCydsWz9uUz/K8/Cb00AGcrRk1c0WJ4GJuBBei3WJICd64tNkVKSL+C
+# sxz8h/Nu4LN2u02T2eoqIwiOwJweSFwM9vatoOX8DNwA/hq4/gWoihNGdyCxFfEB5CrhYpEHsos22U0t9pxtVeGPZe1ehjNxmMsQ
+# +NSV1qZ9Ibe7fCZjHI1T+7cuKJnNpmwYuX4+ch4PEzZjFC4ZzvrcCmP38pkt7cdHhpuFYlMWJK+IZkdgVkZAGJyXr3bKwoRIWRIr
+# M+ew/WHc1di7aH9aK1ZZiOxM2xMo0Wcmv0VbAKbO3XPS+zEXvFWu8uj44PWro+MfdQ/2X74EV3kLsRzs1wcLOjCtIlm/NTBl4d8P
+# 6fXJ4TFB6QCYKYvGPCRNBihw1vSzYJjy2FQyDIPFczPmRWGSslsIc3pDTkvbk4S/4qPINK32c6Ra4vQFGPzQfq4flTGYfNjvgzDA
+# dNZ+LhkhUF+Bh/GRD5rDVkL3ln6OXHCo8AseJYIYPPJc4jCdaoKeBbw2YCp5qWgh0JzEQwjjMYo4P31pqrXOAEiXUQ03hnlOwt3Y
+# G5y4sTuiwMcki5NQlJNrdXkfnYCL6CenzW3gQ2CU8mwPNW8AXiSK75Vr7oDR4KYaRBPCbcg4bIKH7gV9B1vTwMsPGEJKoDObXQi6
+# 2gyIajOk6BU9pOffhKEoEVfLHZYySQ5kNDz0TakwAguLpfE9GQyA1oGDQQoEyKdH4I6BHsJSVIZuklZuA34nrXrSMvBo8hwd0mIT
+# zKaFIgr2GWOk6SwXNaVXas9ppiN/w93VFkDm4NoF4AA5vg08/mUU3/B4D6K/MI0jcCPw+zhK0lc8wQzQnKJ0tzIlJf3sfnF0+OXh
+# C8OW2wp09tMWijM6CkLASaOjzmuJkTXLBAnV1iq79IwvEMohXy4yYn0nHPouWUQW9C4I/ejOkd7pmMKSPQezOMychG62xB6QdRMM
+# ZbWKlLZ1Qi7lPsQrh2icX4I+85DMhOA/KHQUdvTJuoMgQn0koLpxjEJxYuH7wE7Koz3FKShIkoLzSEg2tRCW4A/ho+9o7T6ZcjFY
+# o1v+8Yn3wXAVVHnuhes/8OhXqKZYrgAFtTUltS+MWo03q5vbtc2qX21U/b63Wd32Nhpbvr/Z93tb9cZWc2Ort7lpXC3PHzAjJ18C
+# KEAezr0JJCT3lZgLuWZIER4zMAfjCLISh51B2g4JCiSbMJ6gq43C4b0C5geJEAO2L+pT7Aw8GYRNlG+FHGFdIx0wbmVjhIB0SWVE
+# Bmk+j9NEpv5RHFyr5M8AX7HujoP18SQZULS3Djitx9EEQmIR70vRRXBtXFrI7HYfL53IdeWqiRqeL5ho2fCyXNRAVEXOAaiCHcqR
+# XZygIjorbaO+XWts7mzy7cb2RoN71WqNb3t+r7bpNzYbDXeDe95mrcf7BtFUorjS1osM37Q+M5/7Hkj0Mwlgfhz0U8x+EV0r51Qh
+# ldWQWZj8M68MV3GQZB1I1xsG3npy50CiZueOCM0AxtyP2TWKcNvPp0F/LtiFqDAjxunh/gvDEjPu3CA9D9MAwvohxEmnwB1tLfiI
+# WclosO8GjffAKgQGczBNN7kPPQzapsLC++0c2K6LE9kdMCceufGN6TvSWRrfk0bKd1SMYe32o9gUQEhjGYTeAgBRJebXQI9YRNMg
+# hMdRGvQDEV2DwFtwDFomj3ED1hKPoWXpxuqqPkOgAnMUVpZ46g0jyIWRPaZikuYyKCMRWAYJCjIsV3sFMpcTuyFhV8Sc1VW1B/4m
+# M2w48rTMf9BY01+IuzVVQTOSq/1eyhJfsTzr406rq1qan41aP2hrwwLy27dGbWe7WqnW4K9hWTL1WMaIZBDd6ZwwjYd/e/cPD399
+# +K93v373zw9fP/zl4S/vfvPwJ/bwh4ffwfBf4P8/s//+g0roDXvai/z7lu/gD9j84V9h0V/f/Qpmf/3un3QAv33364ffP/wRAGig
+# DDsAurSMdfxRqe3UnXF4bdg917/mc6Ope93KgjlJXGPNpyoLkA7FojVF4rcKpJfRcCujsZjfyhYCSPRbRAAxXhiwJblbGeFnM1Ur
+# 3qXw8CPKU0lUYY1KRb1hgIoJqZrloG0NQtiDOJolqWLYmgpuywX9yJugs5Mf9RzC56kbQKq2GOG9UopRrChkVJQwxMdZq7RIFA8+
+# 3z8z5sisFhaGNcrqp0gcDI2+pBDKXLxyz1jf00faxprw2eenRweqFrlkrQWyZsyb8/9/1C/D1PVgbyFrqK7zv8q2hbgh86iQIDOG
+# 1t+QyVkYDfFyv7m91exziJf7O96GX61uNBrNXr+/1atVt/n2Vg1irs2NzSrFyyKe3fd9Kktj6T+MwH4PWTgeiaHEi4MxGPYgHUBg
+# BzMm3oBu+lzvBnheAWG5cQpBjXjg4IUyBDWY0cBpRNlbFDBlKadc6b68xHKu/eT5WDjWpj5SQxeQLaROvbnVqHlVXm1u8iZ3d/r9
+# Rm1zq9po7FQbNX+nueH3elW8kbgqFg7E2WTRPom99UK+fAIxMIa8pRiOv6HaLhUg84kvAKsgFMyWxh2yndTYLcmlqNLO3qo5ZHKl
+# lohni1e8DSfD4WxO9b9LZN4WnFhp4WxBPINhR+zeLbEkyHlZChWQcIoARs/Oz49eEPNN8diy5sKa8ga66n4D8IUL+OJhpWGT1YKP
+# fq45ygnXPY55P5FBWaiFQyc4rqrl6L9pIoQBbm8IKbmq65bIhf/RdIxIlkSy9EjgtbqaY6oNW9ZUZYHmCo2LkOHt25XSfBn+Zuho
+# BZtCuNnBTJ5jeYxjBI7FsX0K/7OgSmjsfKEMwyxtp8IWFBPpgSjNlJESRISGmg7nEDBXV48nox6PnSD5LAghQTRptrW6Sj8XRLUL
+# z4a84JBVe/xR1mU01ObPcVADi7UUsGVHimpAKWm9OnhffiAeZ0kdmLFpAkl+mLb0DRKcSwJJzwz7NuhhgaMwSY7ZKbit+dUzhbx2
+# OM4dP0ggj74vRO3ToBjztiS/ZICbFUmDdAhOflmIvzBCLwT7CpCI+XEHFfb/y7vfMFjwNcuC/18BpP98+COO/nZp9K8ALo3dVZyj
+# nUaF87lAzsUoNLswhoKYB/IlCZ1leMgOqtY0kwLAIOXX4FBbsnp1ID87GDrZ4kLSBa6p50fZiPP50Y8+10wDXZgEwyDNYH2RjTgn
+# p0df7J8d2iAGSbJPV5ItYqvP++5kmAKS7iSNDhDwsJXGE66wzuREE+ZZfk3zXtv2uGmjWEALmDbq21v+jl/re43mds13643mzqa3
+# zXe2Nja8HkRSjc1tf5vXs4BpLhbYH4+pA6Dk/tFeYgSi7CU5VivBSwfxu02PSzFdXl+l1jqq0cM/Hj/lfQfMHTVfeAPu3aibWrGL
+# tLGLQv5vj0UZiKqCCzB6kbeIy7c9ypx3E388bKcyyKYkLTBnRkuVA0KfbBrVQiELvVniynQwhRuO1lRvr0Ipiu5CchHpII7u2GEc
+# R7EJ1gG0/U+o/2AVwET8LrMoSnSl9s25qeRD3ZTc385uvErXXcUNZc1LWNTMTypLC6R6oR6VylXZzU77+cXVokOcxMChhDvYFpDB
+# V3ei4PJG7ef4r6Nr5N6jta+VlQULAt8qNrg5I3cs4atjeGQyCv5iDtIKQFqxStSRIpGNzPJfP0ikyiakVq02eG+Hu5BK9OpebWPL
+# q/Z26n6vXt3Y3tnuuX6db/BadbEJwVahwX0vDvz1eBKmwYgvyCVIGFUpVOjwVF7AdLtSjKQNPgGUsYEDJrWp6innIdeQyVTLpTqA
+# +C27rJG+oiL0mfawdmcLY+fvBhNp2dXmmt2xngpZX1NOnXnf9zfrvVqzUQcX4G4A2+rbfn2n59aavOH13Y1as1ffaSzxBJQpJ+tg
+# RoP+fcUd3zjj+zIbsXUPsjDMSOXN0gGksG2jtm3gGDZOYqkQM2y83tDmHbsjmFd36s7cVOAQK7Bo6S7Np+/SnN+lZI0NucZoMYmX
+# zQxtPxivbdvYNRJ2/Bv4VN+xy8JUhtFcAKM5B6PAtO3qRm0LWNSr9ZoN7tc3+1u17Wpto9HcgM+97XofAo7mTsY0alnFlhHqUpfM
+# c8GFi4qFGinUMfSu27luzV1sbcZpDvZ/JWapy9kqtbjCEgzVEiyp0I3f/BZyKsCF80HeblxdZIS6WlFSwOAghSmq1z6fTSSEFbXt
+# BR2f6vJSnpQFCfVBE3DqBTZKpngxPkpcdp+ES7vWzIFqBZbyseePu+AEoo7xgQeYQ7zIWr3Tl5jqT0bjBFvsINpOwI933cQLgvZn
+# LiBvg9XBC7C6tQbqEur7yavAT2E197GyRpu1slZX+VzGDUxzjQy8UOxx0ctNL0QEBMGw8WYblj6znxUbQZ+1nq1/8gl7HXJGvWAB
+# dYehoGP/ObUxkBZzWzVXMeG4Sf3lrTRe5GIl7xO2z4SHhbCZYZBBl9+MurYT5vZxnehr93iAd90D12cufHSBXBhsU8YJB4BDJxzY
+# kgqwh2/gJB74VJ972GZus94kubdZ3w1wJ0TFDZM7SBnFzSnsFXN5nS5xFI1YCG39MtQrWqKlAE/6MrjhrC06V7NuVdXzSL5fVAcL
+# Q3mPaWFYoQPje+oBe8uwpkXPKeNa/HC2myEoYrJXR53O4Yvuq6Pj7ilWvV91AMt6tVrNJ2adm0t7MVulg9rIhGCMlemj7JA2aMEd
+# AM+7aq0WJLjRkLuhoAt2HJXaebG/T4NFbYcrNEcjgmr8A5aB8O8WQC3o/s2mY3K3mydwMDVOqdvmkV7fDPpKubYil1tPxYa4ZMhm
+# ZoUDakkyWIiE4irSIC/2yL3KyCg4FhboMqDP29kh1xZwPs9o9d7qZd3RyM1KBg9boLtCbGZkCha1fYNBMCb4ygkIBCQlMFfeY1Ng
+# 0KZ3dGIO3g9scksMrsu5VjYZkuzixH6iPb0dlZ7ejrSnqbYWFVQERzpw0Pn2OI48nsj3y+pXb9+amLDTywsdyo+WdNFbe8uetBa9
+# AJDv+lXSThMnjUGmx4DAq8ifDDluiu76MxihbRE3G9/qaBqWPcW2fxiIX48pVWpNhe9vAaAOneqMPjuHnXq1XrdHBBOfCug/ARfh
+# HESjURT+uDObWU40SceT9Az8S4ZWAravF705JDOQtKez3duRA7nAUXjM7w6w94WckT0VhiJpFRfYKMGz/JSy2b84yVlkVHIM+LDf
+# NjIDkEsMiR14ymp9q1Krwd+zWr1VrcJfB4Tw7/OJ6G/b09ziIkQqdvEYPxriV8OW1jeTcFuzvbSZrRmcFlpTWylkS95syB3vedI2
+# ISmHlFWIsAMS5w5N2fc+dRwHkbLhJ8ya2YSRpuy0m7W2TW8U2Gij7B93Xh87wopCDE/Ac7KG0cfYrka7kclath0czJwqOqlrhIwI
+# 87yoNQQvZnOLhel7bG217jQWr1UMoidh9EFAaxrQx5YSQ8uTZHjwnjNXtTPrq0U08c3WYjzyzVa6HkaiSw+si/QCcm0IqI+StLlk
+# 5ydwQy61c+U0kmjEo5BXMAI3MtMBIQLkMNemXqhh3hDEPaurQD5WgwAO23zQ2aWBR6WTBKJV1e2PTmlZVyA4puyNl2Owaqeiz9iW
+# H5IxYMGz114gMAK/RM2ZaGiylcJkHNCNfDb5h8lk7KIGrqtfKl8lxWWgtDZef+yPx4nNKE52h8EvOXzOwPTBZ9Fi14cTYmJYgAGr
+# RbsDRntL1ozUBG0l+CukiVwAnyr4sQD6fW8A6X/n3wYKS/GmLCVBfEPuWZCiMMO/h1QE+AczIFXweEUO5DZ9MsEXvdj6zy6qlR23
+# 0r+aNmeV7PfNJ/xeq8++vx7kYQGJjateSOlACn2hJJhpip+FkPCbUEqmFJuKk5ch5jsvZLGHSTmNMD3DrAM/+hyblhORVjB/ElNm
+# onfg4kzMY4RaiBzlmLIN8AUYLIVsElI1B/Mv0f9ByQMXDcJY0UKuZ+oAu4GYA/MksDMFPMbUFLeiRGqMk9OU+o7h6DH1FRYxMzGP
+# dSVmKl+yBNQXdLBKEvi8cP3Bjl6IjAlQxKPCNoIwcEwvGg7dMaI6wRwMjsBkh385m6L2yTwTOXndOTNhakvXVhlK668XqUiOh7fO
+# 8eFPz7on55++PDrods5P9j/d7xx2z09fahmA6Hz9Cb9/ylL63Pl8/9OXh92fHP6dnkiIzvR5ONnazuHpF0cHh93T19pi8ZoV4I1J
+# To4KfsohZtmFbpmoVGNOGcdrgBYzjiNSpn5wDZLnG/ie0TTLLxvVDXGVlSPc48CgmGGq9QtnADEnj+V7Vu4kHURx8EtiJQS4Dr3S
+# bK7/7FNacnmZrJnOmgXKBM8ualf5QQTMJ6F7Hqpt5pDdrNbUvZtMFWAmIKqbWnxFzM55h8txVgt+yib3DjCAnISIb/BxdCpe0TuL
+# brh6AFatsNdUXJfCT7z+RMQkxgierlxgRVteROCYQ/8A4c5hvikpkJEkX4UsRZAfjToaKyP/PsMJ2UnQim/IYHijn1NcbMEqXLwn
+# 77kytAutH+KFO9X8QecAY1zq/igkpo+c7Ci8BT8nyidgJuYOVy0fzu8tZH2uHR+f957wdoqifs9Bx5cV7ruyZi/O7CT4wgWoTeDn
+# OUYe3xSuz/GzOKqWaugRWRY7ZdD5LxAyOB1JaVDG+x7vACvw+y9y1SOckTcXeTWFMCm9LH3lBKE3nPgQXqM04iUXLVPuEF9V1OsW
+# WRkRJn3Au9G1KrgHUR3Iqh2PSEdwHUYxfjMJpj6KKTNdDDLeaORcwqPsOb74obiDh+261N/Q7S2mrlNi1XJa6zgImmsjjtyKzQ/2
+# NOoX2aST+VuC4yVwxY2oprNw8oexJ+fMSL2vJuWptANturr62EvdJXQ0jbxQbJchVGaNxWdpj+1MOqjPQh+QMc/sKpMU/fJYXohl
+# woNxcFdupclOIPpiUJvGQzeFCHVkq9do7GTSExUlcpaK7sAYKXMkXu9TSnWLlGGiR1NdrXtJw0p2k8AISnG+V4maRSGW+0ie7WlH
+# jyOsNekbyKv1Lt4SyF1KG8TzGygCtDJCq68VUixBTwQyRJhc5VqlcfRJLlLEnmwYRTeTsSzcvz/qUelRKUj77Oj0sBCk7R8cvD4/
+# PutiWUSTx1t3TGmIvvaL/ZOjFypShLgOhX3Bc9GCtHxC5/zTHx8enGX0yDCF2SsyUQSfPuThdTqwihmjSXkoXv/AUIuSS5MKOsI+
+# K1CWpUwrbkBnsVQ2iN0gX+DIC9HfbS7FcMV+9PiLH+enX9H1m5rmMOv7xm1zpZCGx3htDBC1CAbfLNVlWZS1tWZWMakwx4GnIyXN
+# e4/McBKIQLlZtVmtDq4OBPPh3wHH/3j4+t0/wkF+Dxj/8eHPOpoirWorr0h9eazYmCedfUu9N00aB8wqOoHyhLL7krouW/qKUzPz
+# YDPVuFeYoF88lN27hEu8s0W7Ivv58neTSoz7/jTn0+znBGtG1Bly2e/aweS2zarZqKBNYXh9nR3BXPw6Axz2+RCv/wKOd2nD6I59
+# yXsMm8rZaELlUmrVw/aL7D1ZCpjk67MQ9mgySTX0BF/AVok7EOHiClgNWalpgivuUUgt7l/MnqOcghCs7GvmIEiSU9xlU6zsjN4k
+# BvDZ+WTsK46FvotyYYlQS0m3RPUipG2u5Bd4aFdLd26YJtkL5dLqk/kBP7mnGhIpwBcRMTwTezjSoSyIF3bzL+qQcxefTgOWvcxK
+# N1PSGrFp4QsG8vvqrDc4K2+hnmF/35SlIn4vwdU7ObIETmpWXvpbrlhsVoCgOlUxo8BXr7GrlBmD4HoAINIUTOwOhbZ5AiGbCJT4
+# rq1lo+rLDkxg2yS8gfA5tPTDStuFb4+AxHHgNJvip+wid2bhF1X4fLfQu2GKFXTFqai0rr9+WCFKVUD0K2KYx+JbkNiilYFIyyrz
+# EIwCtqwcb5dCJvk9Klq0IDmFcR0rdISXu95k0ffOjcO8FyF7bRn3aSEDEXm8DZW01LocZ/rX7miSXzhASdS+kbBJCSNDbhfbOt4v
+# Oc2tLmS5i6SHaYZOE6BlIrSEYqWvA1B0e0yySvTMCSl/manO2yUKDyGErux6RIzDMtB4XNvzMCQs9IOaC4DarHRbNX1M1aWOz6wC
+# q6bs7Owl6jF+ec81xNY6n4IRjybgEbeqqh7x7TVcXakrTojPB4IfwoAjP/Lhkr5rV/Kb1U1kmT5Sq/7fUFPld1HkJH4fX1m/layQ
+# 1loltZXS0NwC1fwwgfioSqtT76li8l7lzSOs+QR4P47deyEiU5FZtNgr7DyDDN3ctFWAobIOyK5kIKKHGncDyL3AIYkI5gflRUoU
+# RSxjqphFTF9bkyngTMZCj2R+0Y0oQNi5Ftp6bKh8+JTJcjZaYePA9Qa8ciC+6Ql7O8Oogn1n3FD2F3tXZv8DrgWeZa9YAAA=
+# CONNECT_MISSED_PATCH_END
