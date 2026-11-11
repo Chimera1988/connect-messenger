@@ -11,6 +11,7 @@ import ConnectNotificationSettings from '../components/ConnectNotificationSettin
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
 import ConnectSplashScreen from '../components/ConnectSplashScreen';
 import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
+import { warmOwnProfileLibraries } from '../lib/profile-media-index';
 import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
 import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
@@ -990,6 +991,16 @@ export default function Home() {
   const [videoNoteOpen,setVideoNoteOpen]=useState(false);
   const [recording, setRecording] = useState(false);
   useEffect(()=>{if(!user?.id)return;return installMediaCache(user.id, refreshMediaUrl);},[user?.id]);
+  // CONNECT_PROFILE_MEDIA_INSTANT_CACHE_V3_20261111
+  // Prefetch only library metadata after login, without bulk downloading media.
+  useEffect(()=>{
+    if(!supabase||!user?.id)return;
+    let cancelled=false;
+    const timer=window.setTimeout(()=>{
+      if(!cancelled&&document.visibilityState==='visible')void warmOwnProfileLibraries(supabase,user.id);
+    },1800);
+    return()=>{cancelled=true;window.clearTimeout(timer);};
+  },[user?.id]);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const attachmentInput = useRef<HTMLInputElement | null>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
@@ -2728,7 +2739,7 @@ export default function Home() {
           {!setup && <button type="button" className="connect-invite-register" onClick={() => window.dispatchEvent(new Event('connect:open-registration-invite'))}>У меня есть код приглашения</button>}
         </div>
           : profileView && viewedProfile ? <div className="profile-view">
-            {profileMediaOpen ? <ConnectProfileMedia key={`${profileView}:${profileMediaOpen}`} client={supabase!} userId={profileView} isOwner={profileView===user.id} kind={profileMediaOpen} onBack={()=>setProfileMediaOpen(null)} onAvatar={selectAvatar}/> : <>
+            {profileMediaOpen ? <ConnectProfileMedia key={`${profileView}:${profileMediaOpen}`} client={supabase!} userId={profileView} viewerId={user.id} isOwner={profileView===user.id} kind={profileMediaOpen} onBack={()=>setProfileMediaOpen(null)} onAvatar={selectAvatar}/> : <>
             <header className="profile-top"><button className="icon-btn" type="button" onClick={()=>setProfileView(null)} aria-label="Назад"><Icon name="back" size={25}/></button><strong>{profileView===user.id?'Мой профиль':'Профиль'}</strong></header>
             <div className="profile-content">
               <div className="profile-hero">

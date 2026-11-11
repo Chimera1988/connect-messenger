@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
 import { ConnectMusicLibrary } from './ConnectMusicSystem';
+import { readProfileLibrary, writeProfileLibrary, removeProfileLibraryItem, type ProfileLibraryRow } from '../lib/profile-media-index';
+import { resolveCachedProfileFile, prefetchProfileFile, cacheUploadedProfileFile, retireCachedProfileFile } from '../lib/media-cache';
+// CONNECT_PROFILE_MEDIA_INSTANT_CACHE_V3_20261111
 
 export type ProfileMediaKind = 'photos' | 'videos' | 'music';
 
@@ -11,6 +14,7 @@ type MediaItem = { path: string; name: string; mime: string; url: string; create
 type Props = {
   client: SupabaseClient;
   userId: string;
+  viewerId: string;
   kind: ProfileMediaKind;
   onBack: () => void;
   onAvatar: (file: File) => void;
@@ -78,8 +82,10 @@ function decodeName(name: string) {
 }
 function bytesLabel(size: number) { return `${(size / 1024 / 1024).toFixed(1)} МБ`; }
 
-export default function ConnectProfileMedia({ client, userId, kind, onBack, onAvatar, isOwner }: Props) {
+export default function ConnectProfileMedia({ client, userId, viewerId, kind, onBack, onAvatar, isOwner }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const fetchGeneration=useRef(0);
+  const hasDisplayed=useRef(false);
   const [items, setItems] = useState<MediaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -108,31 +114,86 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
   const directory = `${userId}/${kind}`;
   const heading = isOwner ? TITLES[kind] : ({ photos: 'Фото', videos: 'Видео', music: 'Музыка' } as const)[kind];
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    const { data, error: listError } = await client.storage.from(BUCKET).list(`${userId}/${kind}`, {
-      limit: 100, sortBy: { column: 'created_at', order: 'desc' },
-    });
-    if (listError) {
-      setError('Не удалось открыть медиатеку: ' + listError.message);
-      setLoading(false);
-      return;
+  // Display metadata and any downloaded media from IndexedDB first, then
+  // reconcile with Supabase. Never store signed URLs in the persistent index.
+  const load = useCallback(async (forceServer=false) => {
+    const generation=++fetchGeneration.current;
+    setError('');
+    const makeItem=(entry:ProfileLibraryRow,url:string):MediaItem=>{
+      const filename=entry.path.split('/').pop()||'';
+      const name=decodeName(filename);
+      return {path:entry.path,name,mime:MIME[extension(name)]||'application/octet-stream',url,createdAt:entry.createdAt};
+    };
+    let previous:ProfileLibraryRow[]|null=null;
+    if(!forceServer){
+      previous=await readProfileLibrary(viewerId,userId,kind).catch(()=>null);
+      if(generation!==fetchGeneration.current)return;
+      if(previous){
+        const cached=await Promise.all(previous.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||'')));
+        if(generation!==fetchGeneration.current)return;
+        setItems(cached);setLoading(false);hasDisplayed.current=true;
+      }
     }
-    const files = (data || []).filter(row => row.id && row.name);
-    const resolved = await Promise.all(files.map(async row => {
-      const path = `${userId}/${kind}/${row.name}`;
-      const signed = await client.storage.from(BUCKET).createSignedUrl(path, 3600);
-      if (!signed.data?.signedUrl) return null;
-      const name = decodeName(row.name);
-      const ext = extension(name);
-      return { path, name, mime: MIME[ext] || 'application/octet-stream', url: playbackUrl(signed.data.signedUrl),
-        createdAt: row.created_at || '' } as MediaItem;
-    }));
-    setItems(resolved.filter((item): item is MediaItem => item !== null));
-    setLoading(false);
-  }, [client, userId, kind]);
+    try {
+      const {data,error:listError}=await client.storage.from(BUCKET).list(`${userId}/${kind}`,{
+        limit:100,sortBy:{column:'created_at',order:'desc'}
+      });
+      if(generation!==fetchGeneration.current)return;
+      if(listError)throw listError;
+      const rows:ProfileLibraryRow[]=(data||[]).filter(row=>row.id&&row.name).map(row=>({
+        path:`${userId}/${kind}/${row.name}`,createdAt:row.created_at||''
+      }));
+      // One signed-URL batch instead of an individual request per file.
+      const signed=new Map<string,string>();
+      if(rows.length){
+        const batch=await client.storage.from(BUCKET).createSignedUrls(rows.map(x=>x.path),3600);
+        if(generation!==fetchGeneration.current)return;
+        for(const entry of batch.data||[])if(entry.path&&entry.signedUrl)signed.set(entry.path,playbackUrl(entry.signedUrl));
+        // Best-effort compatibility fallback for storage gateways without bulk signing.
+        if(batch.error||signed.size===0){
+          await Promise.all(rows.map(async entry=>{
+            try{const {data}=await client.storage.from(BUCKET).createSignedUrl(entry.path,3600);
+              if(data?.signedUrl)signed.set(entry.path,playbackUrl(data.signedUrl));
+            }catch{/* Cached file is still available. */}
+          }));
+        }
+      }
+      if(generation!==fetchGeneration.current)return;
+      const fresh=await Promise.all(rows.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||signed.get(entry.path)||'')));
+      if(generation!==fetchGeneration.current)return;
+      setItems(fresh);setLoading(false);hasDisplayed.current=true;
+      await writeProfileLibrary(viewerId,userId,kind,rows).catch(()=>{});
+      // Do not treat the 100-item page limit as proof that older items were deleted.
+      if(previous&&rows.length<100){
+        const current=new Set(rows.map(x=>x.path));
+        for(const deleted of previous.filter(x=>!current.has(x.path))){
+          void retireCachedProfileFile(viewerId,deleted.path);
+        }
+      }
+      // Limited background warmup, low priority. The global cache already has
+      // a three-request worker pool and enforces the user's storage limit.
+      const connection=(navigator as Navigator&{connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+      if(!connection?.saveData&&connection?.effectiveType!=='2g'){
+        const count=kind==='photos'?12:kind==='music'?3:2;
+        for(const entry of rows.slice(0,count)){
+          const url=signed.get(entry.path);
+          if(url)void prefetchProfileFile(url,viewerId,kind);
+        }
+      }
+    }catch(err){
+      if(generation===fetchGeneration.current){
+        setLoading(false);
+        setError((hasDisplayed.current?'Не удалось обновить медиатеку, показана локальная копия: ':'Не удалось открыть медиатеку: ')+(err instanceof Error?err.message:String(err)));
+      }
+    }
+  },[client,userId,viewerId,kind]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(()=>{
+    void load();
+    const visible=()=>{if(document.visibilityState==='visible')void load(true);};
+    document.addEventListener('visibilitychange',visible);
+    return()=>{fetchGeneration.current++;document.removeEventListener('visibilitychange',visible);};
+  },[load]);
 
   async function upload(files: File[]) {
     if (!isOwner || busy || !files.length) return;
@@ -174,13 +235,14 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
             request.start();
           });
         }
+        await cacheUploadedProfileFile(viewerId,path,file);
         completed++;
       }
       setNotice(completed === 1 ? 'Файл добавлен.' : `Загружено файлов: ${completed}.`);
     } catch (e) {
       setError((e instanceof Error ? e.message : String(e)) + (completed ? ` · Успешно загружено: ${completed}` : ''));
     } finally {
-      setBusy(false); setUploadProgress(null); await load();
+      setBusy(false); setUploadProgress(null); await load(true);
     }
   }
 
@@ -191,9 +253,13 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
       const { error: removeError } = await client.storage.from(BUCKET).remove([item.path]);
       if (removeError) throw removeError;
       if (preview?.path === item.path) setPreview(null);
+      fetchGeneration.current++;
+      setItems(prev=>prev.filter(row=>row.path!==item.path));
+      await removeProfileLibraryItem(viewerId,userId,kind,item.path).catch(()=>{});
+      await retireCachedProfileFile(viewerId,item.path);
       setNotice('Файл удалён.');
     } catch (e) { setError('Не удалось удалить: ' + (e instanceof Error ? e.message : String(e))); }
-    finally { setBusy(false); await load(); }
+    finally { setBusy(false); await load(true); }
   }
 
   async function makeAvatar(item: MediaItem) {
@@ -222,14 +288,14 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
       {busy && <div className="connect-profile-media-info" role="status">Загрузка или обработка файла…{uploadProgress !== null ? ` ${uploadProgress}%` : ''}</div>}
       {error && <div className="connect-profile-media-error" role="alert">{error}</div>}
       {notice && <div className="connect-profile-media-info" role="status">{notice}</div>}
-      {loading ? <div className="connect-profile-media-empty">Загружаем медиатеку…</div> : items.length === 0 ? <div className="connect-profile-media-empty">{isOwner ? <>Здесь пока пусто. Нажми «Добавить», чтобы загрузить {kind === 'photos' ? 'фотографии' : kind === 'videos' ? 'видео' : 'музыку'}.</> : 'Пользователь ещё ничего не добавил.'}</div> : <>
+      {loading && items.length===0 ? <div className="connect-profile-media-empty">Загружаем медиатеку…</div> : items.length === 0 ? <div className="connect-profile-media-empty">{isOwner ? <>Здесь пока пусто. Нажми «Добавить», чтобы загрузить {kind === 'photos' ? 'фотографии' : kind === 'videos' ? 'видео' : 'музыку'}.</> : 'Пользователь ещё ничего не добавил.'}</div> : <>
         {kind === 'photos' && <div className="connect-profile-photo-grid">{items.map(item => <article key={item.path} className="connect-profile-media-item">
-          <button type="button" className="connect-profile-photo-thumb" onClick={() => setPreview(item)} aria-label={`Открыть ${item.name}`}><img loading="lazy" src={item.url} alt={item.name}/></button>
+          <button type="button" className="connect-profile-photo-thumb" onClick={() => setPreview(item)} aria-label={`Открыть ${item.name}`}>{item.url ? <img loading="lazy" src={item.url} alt={item.name}/> : <span aria-hidden="true" style={{fontSize:26}}>▧</span>}</button>
           <div className="connect-profile-media-item-caption" title={item.name}>{item.name}</div>
           {isOwner && <div className="connect-profile-media-item-actions"><button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(item.mime)} onClick={() => void makeAvatar(item)}>На аватар</button><button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button></div>}
         </article>)}</div>}
         {kind === 'videos' && <div className="connect-profile-video-list">{items.map(item => <article key={item.path} className="connect-profile-media-item">
-          <button type="button" className="connect-profile-video-thumb" onClick={()=>setPreview(item)} aria-label={`Просмотреть ${item.name}`}><video src={item.url} preload="metadata" playsInline muted tabIndex={-1}/><span aria-hidden="true">▶</span></button>
+          <button type="button" className="connect-profile-video-thumb" onClick={()=>setPreview(item)} aria-label={`Просмотреть ${item.name}`}>{item.url && <video src={item.url} preload="none" playsInline muted tabIndex={-1}/>}<span aria-hidden="true">▶</span></button>
           <div className="connect-profile-media-item-info"><strong title={item.name}>{item.name}</strong>{isOwner && <button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button>}</div>
         </article>)}</div>}
         {kind === 'music' && <ConnectMusicLibrary client={client} ownerId={userId} items={items} isOwner={isOwner} busy={busy} onRemove={song => { const item=items.find(x=>x.path===song.path); if(item) void remove(item); }}/>}
@@ -248,7 +314,7 @@ export default function ConnectProfileMedia({ client, userId, kind, onBack, onAv
       <span className="connect-gallery-count">{items.findIndex(item=>item.path===preview.path)+1} / {items.length}</span>
       {items.length>1 && <><button type="button" className="connect-gallery-nav connect-gallery-prev" onClick={e=>{e.stopPropagation();navigatePreview(-1);}} aria-label="Предыдущий файл">‹</button>
         <button type="button" className="connect-gallery-nav connect-gallery-next" onClick={e=>{e.stopPropagation();navigatePreview(1);}} aria-label="Следующий файл">›</button></>}
-      {kind==='videos' ? <video key={preview.path} src={preview.url} playsInline controls preload="metadata" onClick={e=>e.stopPropagation()} aria-label={preview.name}/>
+      {kind==='videos' ? <video key={preview.path} src={preview.url||undefined} playsInline controls preload="metadata" onClick={e=>e.stopPropagation()} aria-label={preview.name}/>
         : <img key={preview.path} src={preview.url} alt={preview.name} onClick={e=>e.stopPropagation()}/>}
       <span className="connect-gallery-name">{preview.name}</span>
       {isOwner && kind==='photos' && <button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(preview.mime)} onClick={e=>{e.stopPropagation();void makeAvatar(preview);setPreview(null);}}>Сделать аватаром</button>}

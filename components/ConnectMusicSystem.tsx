@@ -118,14 +118,23 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
     const old=selectedRef.current;
     if(!sameOwner || !old || !list.some(s=>s.path===old)){
       const saved=lastRef.current;
-      const chosen=(saved?.ownerId===id && list.some(s=>s.path===saved.path)) ? saved.path : (list[0]?.path||null);
+      const chosen=(saved?.ownerId===id && list.some(s=>s.path===saved.path && !!s.url)) ? saved.path : (list.find(s=>!!s.url)?.path||null);
       selectedRef.current=chosen;setSelected(chosen);
       setPlaying(false);setDuration(0);
       const wanted=saved?.ownerId===id && chosen===saved.path ? saved.position : 0;
       setPosition(wanted);
       restoreRef.current=chosen?{path:chosen,position:wanted}:null;
       const audio=audioRef.current;
-      if(audio){ audio.pause();audio.src=list.find(s=>s.path===chosen)?.url||'';audio.load(); }
+      if(audio){
+        audio.pause();
+        const url=list.find(s=>s.path===chosen)?.url;
+        if(url)audio.src=url;else audio.removeAttribute('src');
+        audio.load();
+      }
+    }else{
+      const next=list.find(s=>s.path===old)?.url;
+      const audio=audioRef.current;
+      if(audio?.paused && next && audio.src!==next){audio.src=next;audio.load();}
     }
   },[]);
   const registerClient=useCallback((client:SupabaseClient)=>{
@@ -292,9 +301,9 @@ export function ConnectMusicLibrary({client, ownerId, items, isOwner, busy, onRe
     </div>}
     <div className="connect-minimal-track-list">
       {items.map((song,i)=><div key={song.path} className={'connect-minimal-track'+(active?.path===song.path?' active':'')}>
-        <button type="button" className="connect-minimal-track-main" onClick={()=>music.select(song)}>
+        <button type="button" className="connect-minimal-track-main" disabled={!song.url} onClick={()=>music.select(song)}>
           <span className="connect-minimal-track-symbol">{icon(active?.path===song.path && music.playing?'music':'play',19)}</span>
-          <span className="connect-minimal-track-names"><strong title={song.name}>{song.name}</strong><small>Трек {i+1}</small></span>
+          <span className="connect-minimal-track-names"><strong title={song.name}>{song.name}</strong><small>{song.url?`Трек ${i+1}`:'Файл пока не доступен локально'}</small></span>
         </button>
         {isOwner && <div className="connect-minimal-track-menu-holder"><button type="button" className="connect-minimal-track-more" aria-label="Действия с треком" onClick={()=>setMore(more===song.path?null:song.path)}>{icon('more')}</button>
           {more===song.path && <button type="button" className="connect-minimal-track-delete" disabled={busy} onClick={()=>{setMore(null);onRemove(song);}}>Удалить</button>}</div>}

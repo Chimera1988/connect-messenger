@@ -246,3 +246,68 @@ export async function prefetchCachedMedia(url:string,user:string,smallOriginal=f
   if(!lightweight&&!smallPhoto)return;
   try{await remember(url,user,smallPhoto?6*1024**2:256*1024**2,smallPhoto);}catch{/* Network fallback remains usable. */}
 }
+
+
+/** Look up private profile media bytes using stable storage identity.
+ * The catalog never needs an expired signed URL to show locally cached files.
+ */
+export async function resolveCachedProfileFile(viewer:string,path:string):Promise<string|null>{
+  if(!viewer||!/^[-a-zA-Z0-9_]+\/(?:photos|videos|music)\/[^?#]+$/.test(path))return null;
+  const id='connect-profile-media/'+path, key=viewer+':'+id;
+  try{
+    const row=await run<Entry|undefined>('readonly',store=>store.get(key));
+    if(!row||row.user!==viewer)return null;
+    const type=contentType(id,row.type||row.blob?.type);
+    const blob=row.blob||(row.bytes instanceof ArrayBuffer?new Blob([row.bytes],{type}):undefined);
+    if(!blob?.size||!usableType(type))return null;
+    let url=objectUrls.get(key);
+    if(!url){url=URL.createObjectURL(blob.type===type?blob:blob.slice(0,blob.size,type));objectUrls.set(key,url);}
+    return url;
+  }catch{return null;}
+}
+
+/** Stop inflight fills from restoring an item deleted remotely. */
+export async function retireCachedProfileFile(viewer:string,path:string):Promise<void>{
+  if(!viewer||owner!==viewer||!/^[-a-zA-Z0-9_]+\/(?:photos|videos|music)\/[^?#]+$/.test(path))return;
+  const key=viewer+':connect-profile-media/'+path;
+  try{
+    const database=await db();
+    await new Promise<void>((resolve,reject)=>{
+      const tx=database.transaction([STORE,'retired'],'readwrite');
+      tx.objectStore('retired').put(true,key);
+      tx.objectStore(STORE).delete(key);
+      tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+    });
+    const local=objectUrls.get(key);
+    if(local){restoreUrl(local);objectUrls.delete(key);}
+  }catch{/* A failed local purge must not affect remote deletion. */}
+}
+
+/** On successful owner upload, keep a small original without a second download. */
+export async function cacheUploadedProfileFile(viewer:string,path:string,file:File):Promise<void>{
+  if(!viewer||owner!==viewer||!/^[-a-zA-Z0-9_]+\/(?:photos|videos|music)\/[^?#]+$/.test(path))return;
+  const id='connect-profile-media/'+path;
+  const category=mediaCategory(id,file.type);
+  const max=category==='photos'?8*1024**2:category==='audio'?24*1024**2:20*1024**2;
+  if(!file.size||file.size>max)return;
+  try{
+    const bytes=await file.arrayBuffer();
+    if(owner!==viewer)return;
+    await run('readwrite',s=>s.put({key:viewer+':'+id,user:viewer,category,size:file.size,used:Date.now(),bytes,type:file.type||contentType(id)} satisfies Entry));
+    void trimCache().catch(()=>{});
+  }catch{/* Storage quota failure is not an upload failure. */}
+}
+
+/** Load only small photos, audio and short videos in background; full-size media
+ * not cached yet can always stream over the existing signed URL.
+ */
+export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'|'videos'|'music'):Promise<void>{
+  const id=mediaIdentity(url);
+  if(!id?.startsWith('connect-profile-media/')||!viewer)return;
+  const category=mediaCategory(id);
+  if((kind==='photos'&&category!=='photos')||(kind==='music'&&category!=='audio')||(kind==='videos'&&category!=='videos'))return;
+  const connection=(navigator as Navigator&{connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+  if(connection?.saveData||connection?.effectiveType==='2g')return;
+  const max=kind==='photos'?8*1024**2:kind==='music'?24*1024**2:16*1024**2;
+  try{await remember(url,viewer,max,true);}catch{/* Network streaming remains available. */}
+}
