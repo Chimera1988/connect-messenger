@@ -39,11 +39,30 @@ async function read<T extends Row>(user:string,chat:string,direction?:'before'|'
   return{messages:all.slice(start,end)as T[],readAt:row.readAt||'',savedAt:row.savedAt,hasMore:start>0,hasNewer:end<all.length};
  }));
 }
-export function readChatHistory<T extends Row>(user:string,chat:string){return read<T>(user,chat);}
+/** Short-lived in-memory hot windows; IndexedDB and the server remain authoritative. */
+const hotWindows = new Map<string,{expires:number;promise:Promise<Snapshot<Row>|null>}>();
+function invalidateHot(user:string,chat?:string){
+ const prefix=user+':';for(const key of hotWindows.keys())if(key.startsWith(prefix)&&(!chat||key===keyOf(user,chat)))hotWindows.delete(key);
+}
+export async function prewarmChatHistory(user:string,chat:string):Promise<void>{
+ if(!user||!chat)return;
+ const key=keyOf(user,chat),item=hotWindows.get(key);
+ if(item&&item.expires>Date.now()){await item.promise;return;}
+ const promise=read<Row>(user,chat).catch(()=>null);
+ hotWindows.set(key,{expires:Date.now()+20000,promise});
+ if(hotWindows.size>12)hotWindows.delete(hotWindows.keys().next().value!);
+ await promise;
+}
+export function readChatHistory<T extends Row>(user:string,chat:string):Promise<Snapshot<T>|null>{
+ const key=keyOf(user,chat),hot=hotWindows.get(key);
+ if(hot&&hot.expires>Date.now()){hotWindows.delete(key);return hot.promise as Promise<Snapshot<T>|null>;}
+ hotWindows.delete(key);return read<T>(user,chat);
+}
 export function readOlderChatHistory<T extends Row>(user:string,chat:string,time:string,id:string){return read<T>(user,chat,'before',time,id);}
 export function readNewerChatHistory<T extends Row>(user:string,chat:string,time:string,id:string){return read<T>(user,chat,'after',time,id);}
 export function writeChatHistory<T extends Row>(user:string,chat:string,messages:T[],readAt='',replace=false):Promise<void>{
  if(!user||!chat)return Promise.resolve();
+ invalidateHot(user,chat);
  const lease=epochs.has(user)?Promise.resolve(epochs.get(user)!):transaction('readonly',tx=>epoch(tx,user)).then(value=>{if(!epochs.has(user))epochs.set(user,value);return value;});
  const frozen=JSON.parse(JSON.stringify(messages))as T[];
  return serial(user,async()=>{const expected=await lease;await transaction('readwrite',async tx=>{
@@ -61,6 +80,7 @@ export function writeChatHistory<T extends Row>(user:string,chat:string,messages
 }
 export async function dropCachedMessageById(user:string,id:string){
  if(!user||!id)return;
+ invalidateHot(user);
  await serial(user,()=>transaction('readwrite',async tx=>{
   tx.objectStore(RETIRED).put({key:user+':'+id,user,id});
   const chats=tx.objectStore(CHATS),rows=await get<Stored[]>(chats.getAll());
@@ -70,6 +90,7 @@ export async function dropCachedMessageById(user:string,id:string){
 export async function dropCachedMessage(user:string,_chat:string,id:string){await dropCachedMessageById(user,id);}
 async function wipe(user:string,chat?:string){
  if(!user)return;
+ invalidateHot(user,chat);
  await serial(user,()=>transaction('readwrite',async tx=>{
   tx.objectStore(OWNERS).put({user,epoch:await epoch(tx,user)+1});
   const chats=tx.objectStore(CHATS),rows=await get<Stored[]>(chats.getAll());

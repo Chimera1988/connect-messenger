@@ -2,9 +2,9 @@
 
 import RecordingBar from '../components/ConnectRecordingBar';
 import CacheSettings from '../components/ConnectCacheSettings';
-import {mediaIdentity, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from '../lib/media-cache';
+import {mediaIdentity, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from '../lib/media-cache';
 import { prefetchCachedMedia } from '../lib/media-cache';
-import { readChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
+import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
 import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
 import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
@@ -81,6 +81,7 @@ function parseAlbum(body:string):AlbumItem[] {
 }
 const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
 // CONNECT_PWA_WEBP_HISTORY_THUMBS_AUDIO_HOLD_V1
+// CONNECT_PWA_INSTANT_CACHE_V3_20261111
 
 type Tab = 'chats' | 'contacts' | 'settings';
 type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'data' | 'privacy' | 'about';
@@ -956,6 +957,10 @@ export default function Home() {
   const [latest, setLatest] = useState<Record<string, Message>>({});
   const [unread, setUnread] = useState<Record<string, number>>({});
   const recentMessagesRef=useRef<Message[]>([]);
+  const historyWarmStamps=useRef<Record<string,string>>({});
+  const avatarCacheEpoch=useRef(0);
+  const inboxMediaWarm=useRef<Map<string,number>>(new Map());
+  useEffect(()=>{historyWarmStamps.current={};inboxMediaWarm.current.clear();avatarCacheEpoch.current++;},[user?.id]);
   const [typing, setTyping] = useState(false);
   const [peerRecording, setPeerRecording] = useState(false);
   const serverDeleted=useRef(new Set<string>());
@@ -1360,12 +1365,25 @@ export default function Home() {
       const directory = (p.data || []) as Profile[];
       setProfiles(directory);
       setPresence(Object.fromEntries(directory.map(p=>[p.id,{last_seen_at:p.last_seen_at,online_until:p.online_until}])));
-      const urls: Record<string,string> = {};
-      await Promise.all(directory.filter(x=>x.avatar_path).map(async x => {
-        const { data } = await supabase.storage.from('connect-avatars').createSignedUrl(x.avatar_path!, 3600);
-        if (data?.signedUrl) urls[x.id] = mediaUrl(data.signedUrl);
-      }));
-      setAvatarUrls(urls);
+      // Local avatars first. Sign only missing files; never block the chat list.
+      const epoch=++avatarCacheEpoch.current, owner=user.id;
+      const candidates=directory.filter(x=>x.avatar_path);
+      void Promise.all(candidates.map(async x=>{
+        const identity='/storage/v1/object/sign/connect-avatars/'+x.avatar_path!;
+        const local=await resolveCachedMedia(identity,owner).catch(()=>identity);
+        return {id:x.id,path:x.avatar_path!,local:local.startsWith('blob:')?local:''};
+      })).then(items=>{
+        if(avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+        setAvatarUrls(Object.fromEntries(items.filter(x=>x.local).map(x=>[x.id,x.local])));
+        // Signed URLs are short-lived; paths in IndexedDB are stable.
+        void Promise.all(items.filter(x=>!x.local).map(async x=>{
+          const {data}=await supabase.storage.from('connect-avatars').createSignedUrl(x.path,3600);
+          if(!data?.signedUrl||avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+          const url=mediaUrl(data.signedUrl);
+          setAvatarUrls(prev=>({...prev,[x.id]:url}));
+          void prefetchCachedMedia(url,owner);
+        })).catch(()=>{});
+      }).catch(()=>{});
     }
     if (c.error) setNotice(c.error.message); else setConversations((c.data || []) as Conversation[]);
     setDirectoryReady(true);
@@ -1527,6 +1545,65 @@ export default function Home() {
     document.addEventListener('visibilitychange', onVisible);
     return () => { alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisible); };
   }, [user?.id, loadDirectory, markDelivered]);
+
+  // Seed the latest chat windows from the already fetched inbox feed. No extra
+  // Supabase queries, no bulk media reads, and no changes to call/push handling.
+  useEffect(()=>{
+    if(!user?.id||!conversations.length)return;
+    const owner=user.id;
+    const timer=window.setTimeout(()=>{
+      const rows=recentMessagesRef.current;
+      const ordered=[...conversations].sort((a,b)=>(latest[b.id]?.created_at||b.created_at).localeCompare(latest[a.id]?.created_at||a.created_at)).slice(0,7);
+      void (async()=>{
+        for(const chat of ordered){
+          if(activePreviewUser.current!==owner)return;
+          const visible=rows.filter(m=>m.conversation_id===chat.id&&!m.deleted_at&&!serverDeleted.current.has(m.id)).sort(compareChatMessages).slice(-90);
+          const signature=visible.map(m=>m.id+':'+(m.edited_at||'')).join('|');
+          const key=owner+':'+chat.id;
+          if(visible.length&&historyWarmStamps.current[key]!==signature){
+            await writeChatHistory(owner,chat.id,visible,readCache.current[chat.id]||'').catch(()=>{});
+            historyWarmStamps.current[key]=signature;
+          }
+          await prewarmChatHistory(owner,chat.id).catch(()=>{});
+        }
+      })();
+    },320);
+    return()=>window.clearTimeout(timer);
+  },[user?.id,conversations,latest]);
+
+  // Give nearby chats a head start: a few lightweight thumbnails plus at
+  // most three bounded photos are signed and cached before the next tap.
+  useEffect(()=>{
+    if(!supabase||!user?.id||!conversations.length)return;
+    const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+    if(connection?.saveData||connection?.effectiveType==='2g')return;
+    const owner=user.id;
+    const timer=window.setTimeout(()=>{void(async()=>{
+      const hotChats=new Set([...conversations].sort((a,b)=>(latest[b.id]?.created_at||b.created_at).localeCompare(latest[a.id]?.created_at||a.created_at)).slice(0,3).map(c=>c.id));
+      const rows=recentMessagesRef.current.filter(m=>hotChats.has(m.conversation_id)&&!m.deleted_at&&!serverDeleted.current.has(m.id)).sort(compareChatMessages).slice(-50).reverse();
+      const candidates=rows.flatMap(m=>[
+        ...(m.attachment_kind==='image'&&m.attachment_path&&supportsPhotoPreview(m.attachment_path)?[{path:photoPreviewPath(m.attachment_path),original:false}]:[]),
+        ...parseAlbum(m.body).filter(x=>x.kind==='image'&&supportsPhotoPreview(x.path)).map(x=>({path:photoPreviewPath(x.path),original:false})),
+        ...(connection?.effectiveType!=='3g'&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2?[{path:m.attachment_path,original:true}]:[])
+      ]);
+      let thumbs=0,originals=0;
+      for(const candidate of candidates){
+        if(activePreviewUser.current!==owner)return;
+        if(candidate.original?originals>=3:thumbs>=10)continue;
+        const key=owner+':'+candidate.path,until=inboxMediaWarm.current.get(key)||0;
+        if(until>Date.now())continue;
+        inboxMediaWarm.current.set(key,Date.now()+60000);
+        if(candidate.original)originals++;else thumbs++;
+        try{
+          const identity='/storage/v1/object/sign/connect-attachments/'+candidate.path;
+          if((await resolveCachedMedia(identity,owner)).startsWith('blob:'))continue;
+          const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(candidate.path,3600);
+          if(!error&&data?.signedUrl)await prefetchCachedMedia(mediaUrl(data.signedUrl),owner,candidate.original);
+        }catch{/* Preloading never blocks chat navigation. */}
+      }
+    })();},900);
+    return()=>window.clearTimeout(timer);
+  },[user?.id,conversations,latest]);
 
   useEffect(() => {
     if (!supabase || !activeChat || !user) return;
@@ -2092,6 +2169,13 @@ export default function Home() {
     const missing = paths.filter(path => !attachmentUrls[path]);
     if (!missing.length) return;
     void Promise.all(missing.map(async path => {
+      // Do not materialize large videos/audio just to render the chat screen.
+      const meta=messages.find(m=>m.attachment_path===path);
+      if(meta?.attachment_kind==='image'||!meta&&supportsPhotoPreview(path)){
+        const identity='/storage/v1/object/sign/connect-attachments/'+path;
+        const local=await resolveCachedMedia(identity,user.id).catch(()=>identity);
+        if(local.startsWith('blob:'))return {path,url:local};
+      }
       const {data} = await supabase.storage.from('connect-attachments').createSignedUrl(path, 3600);
       return {path, url:data?.signedUrl ? mediaUrl(data.signedUrl) : undefined};
     })).then(rows => {
@@ -2115,28 +2199,38 @@ export default function Home() {
     if(!paths.length)return;
     paths.forEach(path=>photoPreviewRequests.current.add(path));
     void Promise.all(paths.map(async path=>{
-      try{const {data,error}=await supabase!.storage.from('connect-attachments').createSignedUrl(photoPreviewPath(path),3600);
+      try{
+        const previewPath=photoPreviewPath(path),identity='/storage/v1/object/sign/connect-attachments/'+previewPath;
+        const local=await resolveCachedMedia(identity,owner);
+        if(local.startsWith('blob:'))return {path,url:local};
+        const {data,error}=await supabase!.storage.from('connect-attachments').createSignedUrl(previewPath,3600);
         return {path,url:!error&&data?.signedUrl?mediaUrl(data.signedUrl):null};
       }catch{return {path,url:null};}
     })).then(items=>{if(activePreviewUser.current===owner)setPhotoPreviews(prev=>{const next={...prev};for(const item of items)next[item.path]=item.url;return next;});});
   },[messages,activeChat,user?.id]);
   useEffect(()=>{photoPreviewRequests.current.clear();setPhotoPreviews({});},[user?.id]);
 
-  // Prefetch only small preview images and avatars. Never bulk-download
-  // large original videos or audio on slow/mobile connections.
+  // Warm avatars and small thumbnails even while viewing the chat list.
+  // Small original photos are prefetched only on unconstrained connections.
   useEffect(()=>{
-    if(!user?.id||!activeChat)return;
+    if(!user?.id)return;
+    const owner=user.id;
     const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
     if(connection?.saveData||connection?.effectiveType==='2g')return;
-    const paths=messages.filter(m=>m.conversation_id===activeChat).slice(-35).flatMap(m=>[
+    const previews=activeChat?messages.filter(m=>m.conversation_id===activeChat).slice(-35).flatMap(m=>[
       ...(m.attachment_kind==='image'&&m.attachment_path?[m.attachment_path]:[]),
       ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
-    ]);
-    const urls=[...new Set([...Object.values(avatarUrls), ...paths.map(p=>photoPreviews[p]).filter((v):v is string=>typeof v==='string')])].filter(Boolean).slice(-22);
+    ]):[];
+    const urls=[...new Set([...Object.values(avatarUrls),...previews.map(p=>photoPreviews[p]).filter((v):v is string=>typeof v==='string')])].filter(Boolean).slice(0,56);
+    const small=activeChat?messages.filter(m=>m.conversation_id===activeChat&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2).slice(-6).map(m=>attachmentUrls[m.attachment_path!]).filter((v):v is string=>!!v):[];
     let stopped=false;
-    const timer=window.setTimeout(()=>{void(async()=>{for(const src of urls){if(stopped)break;await prefetchCachedMedia(src,user.id);}})();},650);
+    const timer=window.setTimeout(()=>{void(async()=>{
+      for(const src of urls){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner);}
+      if(connection?.effectiveType==='3g')return;
+      for(const src of small){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner,true);}
+    })();},200);
     return()=>{stopped=true;window.clearTimeout(timer);};
-  },[user?.id,activeChat,photoPreviews,avatarUrls,messages]);
+  },[user?.id,activeChat,photoPreviews,avatarUrls,messages,attachmentUrls]);
 
   function isKeyboardSticker(m: Message): boolean {
     return m.attachment_kind === 'image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || '');
@@ -2612,7 +2706,7 @@ export default function Home() {
     window.history.replaceState({}, '', window.location.pathname);
   }
   async function logout() {
-    if(user?.id)await wipeUserHistory(user.id).catch(()=>{}); await supabase?.auth.signOut(); exitChat(); setProfiles([]); setConversations([]); setMessages([]);
+    if(user?.id)await wipeUserHistory(user.id).catch(()=>{}); historyWarmStamps.current={};inboxMediaWarm.current.clear();avatarCacheEpoch.current++;setAvatarUrls({});await supabase?.auth.signOut(); exitChat(); setProfiles([]); setConversations([]); setMessages([]);
     setLatest({}); setUnread({}); readCache.current = {}; setPassword(''); setNotice('');
   }
 
@@ -2822,7 +2916,7 @@ export default function Home() {
                   {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Приглашения</strong><p className="settings-hint">Создавайте одноразовые коды для новых участников. Код действует 24 часа.</p><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-invitations'))}>Коды приглашений</button><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-hidden-invitations'))}>Коды для скрытых</button><div style={{marginTop:20}}><ConnectHiddenMembers request={authenticatedRequest} onChanged={()=>void loadDirectory()}/></div></div>}
                   {settingsPage==='data' && <><CacheSettings userId={user.id}/><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
                   {settingsPage==='privacy' && <><div className="settings-group data-settings"><strong>Личные переписки</strong><p className="settings-hint">Сообщения доступны участникам диалога в рамках настроенных правил доступа. Это не означает сквозное шифрование.</p></div><div className="settings-group data-settings"><strong>Удаление аккаунта</strong><p className="settings-hint">Учётная запись и личные данные будут удалены. Отправленные сообщения останутся у собеседников от имени «Удалённый пользователь».</p><button type="button" className="settings-action secondary" disabled={busy} onClick={()=>void deleteMyAccount()}>Удалить аккаунт навсегда</button></div></>}
-                  {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 2.2.3</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
+                  {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 3.0</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
                 </div>
               </>}
             </div><nav className="bottom-nav" aria-label="Основная навигация">

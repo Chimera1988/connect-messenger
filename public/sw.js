@@ -1,5 +1,5 @@
 /* Public core assets only. User media, auth and keys live in separate IDBs. */
-const CORE='connect-core-v4';
+const CORE='connect-core-v5';
 const base=['/icon-192.png','/icon-512.png','/apple-touch-icon.png','/connect-splash-bubbles-transparent.png','/connect-scenes/moon.svg','/connect-scenes/aurora.svg','/connect-scenes/lagoon.svg'];
 self.addEventListener('install',event=>event.waitUntil((async()=>{
  try {const cache=await caches.open(CORE);await Promise.all(base.map(async url=>{try{const response=await fetch(url);if(coreResponse(url,response))await cache.put(url,response);}catch{}}));}catch{}

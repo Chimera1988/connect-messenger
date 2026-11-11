@@ -144,12 +144,12 @@ let cacheWorkers=0;
 const cacheJobs:{priority:number;run:()=>Promise<void>;resolve:()=>void}[]=[];
 function cacheJob(priority:number,run:()=>Promise<void>){return new Promise<void>(resolve=>{cacheJobs.push({priority,run,resolve});cacheJobs.sort((a,b)=>a.priority-b.priority);pumpCacheJobs();});}
 function pumpCacheJobs(){while(cacheWorkers<3&&cacheJobs.length){const job=cacheJobs.shift()!;cacheWorkers++;void job.run().catch(()=>{}).finally(()=>{cacheWorkers--;job.resolve();pumpCacheJobs();});}}
-async function remember(url: string, user: string) { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
+async function remember(url: string, user: string, maxBytes = 256 * 1024 ** 2, needLength = false) { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
     return; const key = user + ':' + id; if (pending.has(key))
     return pending.get(key); const operation = cacheJob(mediaCategory(id)==='system'?0:/__(thumb\.webp|poster\.jpg)$/.test(id)?1:2,async () => { if (owner!==user || await run('readonly', s => s.get(key)))
     return; const response = await fetch(url, { cache: 'force-cache' }); if (!response.ok || response.status === 206)
-    return; const length = Number(response.headers.get('content-length') || 0); if (length > 256 * 1024 ** 2)
-    return; const blob = await response.blob(); if (!blob.size || blob.size > 256 * 1024 ** 2)
+    return; const length = Number(response.headers.get('content-length') || 0); if (length > maxBytes || (needLength && !length))
+    return; const blob = await response.blob(); if (!blob.size || blob.size > maxBytes)
     return; const type = contentType(id, blob.type); if (!usableType(type)) return;
     // ArrayBuffer avoids WebKit's IndexedDB Blob-file staging failures. Old Blob
     // records remain readable; cache errors always leave the network URL usable.
@@ -239,7 +239,10 @@ export async function purgeDeletedMedia(user:string,message:string){
 }
 
 /** Background warmup of visible, lightweight chat previews; best effort. */
-export async function prefetchCachedMedia(url:string,user:string):Promise<void>{
-  const id=mediaIdentity(url);if(!url||!user||!id||mediaCategory(id)!=='system'&&!/__(thumb\.webp|poster\.jpg)$/.test(id))return;
-  try{await remember(url,user);}catch{/* Network fallback remains usable. */}
+export async function prefetchCachedMedia(url:string,user:string,smallOriginal=false):Promise<void>{
+  const id=mediaIdentity(url);if(!url||!user||!id)return;
+  const lightweight=mediaCategory(id)==='system'||/__(thumb\.webp|poster\.jpg)$/.test(id);
+  const smallPhoto=smallOriginal&&mediaCategory(id)==='photos';
+  if(!lightweight&&!smallPhoto)return;
+  try{await remember(url,user,smallPhoto?6*1024**2:256*1024**2,smallPhoto);}catch{/* Network fallback remains usable. */}
 }
