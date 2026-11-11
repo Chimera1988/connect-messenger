@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/crypto.test.cjs && node tests/migration.test.cjs && node tests/cache-browser.test.cjs && node tests/media-recovery.test.cjs && node tests/call-device-ownership.test.cjs && node tests/call-server-ownership.test.cjs && node --expose-gc tests/call-rtc.integration.cjs && node tests/fix6-server.test.cjs && node tests/history-browser.test.cjs && node tests/call-push-delivery.test.cjs && node tests/call-health.test.cjs && node tests/call-turnix.test.cjs && node tests/call-history-status.test.cjs"
+    "test": "node tests/crypto.test.cjs && node tests/migration.test.cjs && node tests/cache-browser.test.cjs && node tests/media-recovery.test.cjs && node tests/call-device-ownership.test.cjs && node tests/call-server-ownership.test.cjs && node --expose-gc tests/call-rtc.integration.cjs && node tests/fix6-server.test.cjs && node tests/history-browser.test.cjs && node tests/call-push-delivery.test.cjs && node tests/call-health.test.cjs && node tests/call-turnix.test.cjs && node tests/call-history-status.test.cjs && node tests/missed-call-status.test.cjs"
   },
   "dependencies": {
     "next": "15.5.28",

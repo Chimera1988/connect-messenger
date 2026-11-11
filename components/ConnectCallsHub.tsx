@@ -57,7 +57,7 @@ function callDuration(call: Call) {
   return `${mins}:${String(seconds % 60).padStart(2, '0')}`;
 }
 function missed(call: Call, self: string) {
-  return call.callee_id === self && (call.status === 'missed' ||
+  return call.callee_id === self && !call.answered_at && (call.status === 'missed' ||
     (call.status === 'ringing' && Date.now() - Date.parse(call.created_at) > 60000));
 }
 function statusText(call: Call, self: string) {
@@ -328,6 +328,7 @@ export default function ConnectCallsHub() {
     document.addEventListener('visibilitychange', onVisible);
     const onServiceWorker = (event: MessageEvent) => {
       if (event.data?.type === 'CONNECT_INCOMING_CALL') void refresh();
+      if (event.data?.type === 'CONNECT_OPEN_CALLS') { openCalls(); setFilter('missed'); }
     };
     navigator.serviceWorker?.addEventListener('message', onServiceWorker);
     return () => {
@@ -356,6 +357,15 @@ export default function ConnectCallsHub() {
     return () => document.removeEventListener('pointerdown', onOtherTab, true);
   }, [open]);
 
+  useEffect(() => {
+    if (!userId || !nav || !main || typeof location === 'undefined') return;
+    const url = new URL(location.href);
+    if (url.searchParams.get('calls') !== 'missed') return;
+    openCalls();setFilter('missed');
+    url.searchParams.delete('calls');
+    history.replaceState(history.state, '', url.pathname + url.search + url.hash);
+  }, [userId, nav, main]);
+
   const visibleCalls=useMemo(()=>calls.filter(call=>
     !hiddenCallIds.includes(call.id) && (!callsClearedBefore || Date.parse(call.created_at)>Date.parse(callsClearedBefore))
   ),[calls,hiddenCallIds,callsClearedBefore]);
@@ -364,7 +374,10 @@ export default function ConnectCallsHub() {
   function openCalls() {
     const now = Date.now();
     setLastViewed(now);
-    if (userId) try { localStorage.setItem('connect-last-viewed-calls:' + userId, String(now)); } catch {}
+    if (userId) {
+      try { localStorage.setItem('connect-last-viewed-calls:' + userId, String(now)); } catch {}
+      navigator.serviceWorker?.controller?.postMessage({type:'CONNECT_CALLS_VIEWED',userId,viewedAt:new Date(now).toISOString()});
+    }
     setOpen(true); setFilter('all'); setCallMenuOpen(false); setCallSelecting(false); setMarkedCalls([]);
   }
   const list = filter === 'missed' && userId ? visibleCalls.filter(call => missed(call, userId)) : visibleCalls;
