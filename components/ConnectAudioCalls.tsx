@@ -478,7 +478,9 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     setShown(next);
     if (!isLive(next.status)) {
       void notifyCallEnded(next.id);
-      if (next.status === 'missed' && next.callee_id === userId) setToast(`Пропущенный звонок: ${shownName || 'собеседник'}`);
+      if (next.callee_id === userId && !next.answered_at &&
+          (next.status === 'missed' || (next.status === 'ended' && !!next.ended_at)))
+        setToast(`Пропущенный звонок: ${shownName || 'собеседник'}`);
       else if (next.status === 'declined') setToast('Звонок отклонён');
       else if (next.status === 'busy') setToast('Собеседник занят');
       cleanup();

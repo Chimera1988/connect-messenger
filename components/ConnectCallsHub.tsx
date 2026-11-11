@@ -58,6 +58,7 @@ function callDuration(call: Call) {
 }
 function missed(call: Call, self: string) {
   return call.callee_id === self && !call.answered_at && (call.status === 'missed' ||
+    (call.status === 'ended' && !!call.ended_at) ||
     (call.status === 'ringing' && Date.now() - Date.parse(call.created_at) > 60000));
 }
 function statusText(call: Call, self: string) {
@@ -116,8 +117,8 @@ export default function ConnectCallsHub() {
     try {
       const stored = localStorage.getItem(key);
       if (stored !== null && Number.isFinite(Number(stored))) setLastViewed(Number(stored));
-      else { const now = Date.now(); localStorage.setItem(key, String(now)); setLastViewed(now); }
-    } catch { setLastViewed(Date.now()); }
+      else setLastViewed(0);
+    } catch { setLastViewed(0); }
   }, [userId]);
 
   useEffect(() => {
@@ -326,6 +327,8 @@ export default function ConnectCallsHub() {
     window.addEventListener('connect:audio-call:start', onDial);
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    const polling = window.setInterval(onVisible, 20000);
     const onServiceWorker = (event: MessageEvent) => {
       if (event.data?.type === 'CONNECT_INCOMING_CALL') void refresh();
       if (event.data?.type === 'CONNECT_OPEN_CALLS') { openCalls(); setFilter('missed'); }
@@ -336,6 +339,8 @@ export default function ConnectCallsHub() {
       timers.forEach(clearTimeout); timers = [];
       window.removeEventListener('connect:audio-call:start', onDial);
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+      window.clearInterval(polling);
       navigator.serviceWorker?.removeEventListener('message', onServiceWorker);
       void client.removeChannel(subscription);
     };

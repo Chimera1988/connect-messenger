@@ -13,9 +13,9 @@ const base={callee_id:self,caller_id:'caller',status:'ringing',created_at:start,
 const yes=(row)=>assert.equal(missed({...base,...row},self,Date.parse(start)+70000),true,JSON.stringify(row));
 const no=(row)=>assert.equal(missed({...base,...row},self,Date.parse(start)+1000),false,JSON.stringify(row));
 yes({status:'missed',ended_at:'2026-11-11T12:00:15.000Z'});
-no({status:'ended',ended_at:'2026-11-11T12:00:02.500Z'});
+yes({status:'ended',ended_at:'2026-11-11T12:00:02.500Z'});
 yes({status:'ringing'});
-no({status:'ended',ended_at:'2026-11-11T12:00:01.500Z'});
+yes({status:'ended',ended_at:'2026-11-11T12:00:01.500Z'});
 no({status:'ended',ended_at:null});
 no({status:'declined',ended_at:'2026-11-11T12:00:10.000Z'});
 no({status:'failed',ended_at:'2026-11-11T12:00:10.000Z'});
@@ -23,4 +23,4 @@ no({status:'busy',ended_at:'2026-11-11T12:00:10.000Z'});
 no({status:'active'});
 no({status:'ended',answered_at:'2026-11-11T12:00:03.000Z',ended_at:'2026-11-11T12:00:08.000Z'});
 no({status:'ended',ended_at:'2026-11-11T12:00:08.000Z',callee_id:'someone-else'});
-console.log('missed-call classification: 11 deterministic cases passed (caller cancellations excluded)');
+console.log('missed-call classification: 11 deterministic cases passed (receiver sees unanswered cancellations)');
