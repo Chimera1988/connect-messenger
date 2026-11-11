@@ -1,0 +1,206 @@
+name: Connect PWA 3.0 - Instant media in contacts profiles
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-v3-contact-profile-cache.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-v3-contact-profile-cache
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    if: github.repository == 'Chimera1988/connect-messenger'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out current Connect PWA 3.0
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Apply single guarded PWA upgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/connect_peer_media_v3.py <<'CONNECT_PEER_PROFILE_PY'
+          from __future__ import annotations
+          from pathlib import Path
+          from textwrap import dedent
+
+          ROOT=Path.cwd()
+          INDEX=ROOT/'lib/profile-media-index.ts'
+          MEDIA=ROOT/'lib/media-cache.ts'
+          PAGE=ROOT/'app/page.tsx'
+          STAMP='CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111'
+
+          def rewrite(path:Path, old:str, new:str, tag:str) -> None:
+              body=path.read_text(encoding='utf-8')
+              count=body.count(old)
+              if count!=1:
+                  raise RuntimeError(f'{tag}: expected exactly one original anchor in {path}, found {count}; no change made')
+              path.write_text(body.replace(old,new,1),encoding='utf-8')
+              print('PATCH:',tag)
+
+          for candidate in (INDEX,MEDIA,PAGE):
+              if not candidate.is_file():
+                  raise RuntimeError(f'Missing source: {candidate}')
+          marks=[STAMP in candidate.read_text(encoding='utf-8') for candidate in (INDEX,MEDIA,PAGE)]
+          if all(marks):
+              print('Already installed: '+STAMP)
+              raise SystemExit(0)
+          if any(marks):
+              raise RuntimeError('Partial installation detected. Refusing to patch until source is reconciled.')
+          if '"version": "3.0.0"' not in (ROOT/'package.json').read_text(encoding='utf-8'):
+              raise RuntimeError('Connect PWA 3.0.0 is required; nothing changed')
+
+          rewrite(INDEX,
+                  "import type { SupabaseClient } from '@supabase/supabase-js';",
+                  "import type { SupabaseClient } from '@supabase/supabase-js';\nimport { prefetchProfileFile, retireCachedProfileFile } from './media-cache';",
+                  'reuse existing per-user profile media cache')
+
+          index_append=dedent('''
+
+          // CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111
+          /** Warm a conversation partner's gallery, video and music catalogs while a
+           * chat is open. Only signed URLs granted by Supabase may be fetched; they are
+           * never persisted. This is deliberately modest to avoid saturating mobile data.
+           */
+          const peerWarmups = new Map<string,{at:number;task:Promise<void>}>();
+          export async function warmPeerProfileLibraries(
+            client:SupabaseClient,viewer:string,peer:string,proxyUrl:(url:string)=>string=(url)=>url
+          ):Promise<void> {
+            if(!viewer||!peer||viewer===peer)return;
+            const namespace=viewer+':'+peer;
+            const current=peerWarmups.get(namespace);
+            if(current&&Date.now()-current.at<120000)return current.task;
+            const task=(async()=>{
+              const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+              const allowBytes=!connection?.saveData&&connection?.effectiveType!=='2g'&&document.visibilityState==='visible';
+              const budget:Record<ProfileLibraryKind,{count:number;bytes:number}>={
+                photos:{count:3,bytes:2*1024**2},
+                videos:{count:1,bytes:4*1024**2},
+                music:{count:1,bytes:4*1024**2},
+              };
+              await Promise.all(kinds.map(async kind=>{
+                try{
+                  const {data,error}=await client.storage.from('connect-profile-media').list(peer+'/'+kind,{
+                    limit:100,sortBy:{column:'created_at',order:'desc'}
+                  });
+                  if(error)return; // Permissions and RLS always take precedence over local cache.
+                  const rows=(data||[]).filter(x=>x.id&&x.name).map(x=>({
+                    path:peer+'/'+kind+'/'+x.name, createdAt:x.created_at||'',
+                    size:Number(x.metadata?.size||0)
+                  }));
+                  const before=await readProfileLibrary(viewer,peer,kind).catch(()=>null);
+                  await writeProfileLibrary(viewer,peer,kind,rows);
+                  // A full 100-item response may have a second page: do not infer deletes.
+                  if(before&&rows.length<100){
+                    const listed=new Set(rows.map(x=>x.path));
+                    for(const removed of before.filter(x=>!listed.has(x.path)))
+                      void retireCachedProfileFile(viewer,removed.path).catch(()=>{});
+                  }
+                  if(!allowBytes)return;
+                  const cap=budget[kind];
+                  const selected=rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);
+                  if(!selected.length)return;
+                  const result=await client.storage.from('connect-profile-media').createSignedUrls(selected.map(x=>x.path),3600);
+                  if(result.error)return;
+                  const signed=new Map((result.data||[]).filter(x=>x.path&&x.signedUrl).map(x=>[x.path,x.signedUrl] as const));
+                  for(const item of selected){
+                    const url=signed.get(item.path);
+                    if(url)void prefetchProfileFile(proxyUrl(url),viewer,kind,cap.bytes).catch(()=>{});
+                  }
+                }catch{/* Network errors never interrupt chat or profile navigation. */}
+              }));
+            })().catch(()=>{});
+            peerWarmups.set(namespace,{at:Date.now(),task});
+            try{await task;}finally{
+              // Entries expire after two minutes. Limit retained user IDs in long sessions.
+              if(peerWarmups.size>24){
+                const first=peerWarmups.keys().next().value;
+                if(first)peerWarmups.delete(first);
+              }
+            }
+          }
+          ''')
+          with INDEX.open('a',encoding='utf-8') as file:
+              file.write(index_append)
+          print('PATCH: add bounded conversation-partner warmup')
+
+          rewrite(MEDIA,
+                  "export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'|'videos'|'music'):Promise<void>{",
+                  "// CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111\nexport async function prefetchProfileFile(url:string,viewer:string,kind:'photos'|'videos'|'music',limitBytes?:number):Promise<void>{",
+                  'allow extra-small partner prefetch size cap')
+          rewrite(MEDIA,
+                  "  const max=kind==='photos'?8*1024**2:kind==='music'?24*1024**2:16*1024**2;\n  try{await remember(url,viewer,max,true);}",
+                  "  const defaultMax=kind==='photos'?8*1024**2:kind==='music'?24*1024**2:16*1024**2;\n  const max=typeof limitBytes==='number'&&Number.isFinite(limitBytes)?Math.max(0,Math.min(defaultMax,limitBytes)):defaultMax;\n  if(!max)return;\n  try{await remember(url,viewer,max,true);}",
+                  'enforce byte cap in shared media worker')
+
+          rewrite(PAGE,
+                  "import { warmOwnProfileLibraries } from '../lib/profile-media-index';",
+                  "import { warmOwnProfileLibraries, warmPeerProfileLibraries } from '../lib/profile-media-index';",
+                  'use shared warmup for partner profile')
+          rewrite(PAGE,
+                  "  const currentName = selected?.other?.display_name || 'Собеседник';",
+                  dedent('''
+                    // CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111
+                    // Warm the open conversation partner, or the profile currently being viewed.
+                    // Never fetch other contacts in bulk or run during a call.
+                    useEffect(()=>{
+                      if(!supabase||!user?.id)return;
+                      const peer=profileView&&profileView!==user.id?profileView:selected?.other?.id;
+                      if(!peer||peer===user.id||document.visibilityState!=='visible')return;
+                      if(selected?.other?.id===peer&&selected.other.is_blocked)return;
+                      let cancelled=false;
+                      const timer=window.setTimeout(()=>{
+                        if(cancelled||document.visibilityState!=='visible')return;
+                        void warmPeerProfileLibraries(supabase,user.id,peer,mediaUrl);
+                      },1150);
+                      return()=>{cancelled=true;window.clearTimeout(timer);};
+                    },[user?.id,activeChat,profileView,selected?.other?.id]);
+                    const currentName = selected?.other?.display_name || 'Собеседник';
+                  ''').rstrip(),
+                  'prefetch media for active conversation participant')
+          print('Upgrade prepared; account isolation, remote ACL, existing calls and push remain unchanged')
+          CONNECT_PEER_PROFILE_PY
+          python3 /tmp/connect_peer_media_v3.py
+          git diff --check
+      - name: Install dependencies and Chromium for browser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+      - name: Verify TypeScript and existing tests; build PWA
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Save checked Connect PWA upgrade
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add lib/profile-media-index.ts lib/media-cache.ts app/page.tsx
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Connect PWA 3.0: preload contact profile media while chatting'
+            git push origin HEAD:main
+          else
+            echo 'Contact profile caching is already installed.'
+          fi
