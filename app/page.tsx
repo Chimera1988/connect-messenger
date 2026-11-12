@@ -1,4 +1,5 @@
 'use client';
+// CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
 // CONNECT_PWA_GALLERY_CIRCLES_TRANSCRIPT_FIX_V2_20261112
 
 // CONNECT_PWA_GALLERY_VIDEO_NOTE_TRANSCRIPT_V1_20261112
@@ -225,7 +226,6 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [position, setPosition] = useState(0);
-  const [speed, setSpeed] = useState(1);
   const [bars, setBars] = useState<number[]>(Array(43).fill(0.28));
   const [error, setError] = useState(false);
   const seeking = useRef(false);
@@ -291,11 +291,6 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
     audio.currentTime = fraction * audio.duration;
     setPosition(audio.currentTime);
   }
-  function changeSpeed() {
-    const next = speed === 1 ? 1.5 : speed === 1.5 ? 2 : 1;
-    setSpeed(next);
-    if (audioRef.current) audioRef.current.playbackRate = next;
-  }
   const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
   return <div className="voice-player">
     <audio ref={audioRef} data-connect-voice src={src} preload="metadata"
@@ -317,7 +312,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
         onKeyDown={e => {const audio=audioRef.current;if(!audio)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();audio.currentTime=Math.max(0,Math.min(duration,audio.currentTime+(e.key==='ArrowRight'?5:-5)));}}}>
         {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
       </div>
-      <div className="voice-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span><button type="button" className="voice-speed" onClick={e=>{e.stopPropagation();changeSpeed();}} aria-label="Скорость воспроизведения">{speed}×</button>{onSave&&<button className="voice-speed" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<div className="connect-voice-meta-stack">{messageId && supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div></div>
+      <div className="voice-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-speed" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<div className="connect-voice-meta-stack">{messageId && supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div></div>
     </div>
   </div>;
 });
@@ -760,10 +755,10 @@ function VideoNoteBubble({src,name,path,messageId,sentAt,mine,delivered,read}:{s
           strokeDasharray={circumference} strokeDashoffset={circumference*(1-progress)}/>
       </svg>
       {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
-      {expanded && <button type="button" className="connect-video-note-close" aria-label="Уменьшить видеокружок" onClick={event=>{
-        event.stopPropagation();setExpanded(false);userPaused.current=true;ref.current?.pause();
-      }}><Icon name="close" size={24}/></button>}
     </div>
+    {expanded && <button type="button" className="connect-video-note-close" aria-label="Уменьшить видеокружок" onClick={event=>{
+      event.stopPropagation();setExpanded(false);userPaused.current=true;ref.current?.pause();
+    }}><Icon name="close" size={20}/></button>}
     <div className="connect-video-note-footer">
       <div className="connect-video-note-actions">
         <button type="button" className="connect-video-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}

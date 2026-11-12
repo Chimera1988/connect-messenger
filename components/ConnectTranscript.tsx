@@ -43,7 +43,7 @@ export default function ConnectTranscript({client,messageId,compact=false}:{clie
     <button type="button" className="connect-transcript-toggle" disabled={pending}
       aria-expanded={opened} aria-label={opened?'Скрыть расшифровку':'Расшифровать запись в текст'}
       title={opened?'Скрыть текст':'Расшифровать в текст'}
-      onClick={e=>{e.stopPropagation();void toggleTranscript();}}>↪Т</button>
+      onClick={e=>{e.stopPropagation();void toggleTranscript();}}><svg className="connect-arrow-t-icon" viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4.5 4.5v8.5a4 4 0 0 0 4 4h10"/><path d="m14.5 12.5 4.5 4.5-4.5 4.5"/></svg><span>Т</span></button>
     {opened && <div className="connect-transcript-result" role="status" onClick={e=>e.stopPropagation()}>
       {pending?'Распознавание речи…':error?<span className="connect-transcript-error">{error}</span>:text || 'В записи не обнаружена речь.'}
     </div>}

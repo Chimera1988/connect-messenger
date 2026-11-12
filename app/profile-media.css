@@ -248,3 +248,224 @@
   .connect-app .bubble.video-note-bubble{width:min(234px,73vw)!important;max-width:min(234px,73vw)!important}
   .connect-app .bubble.video-note-bubble:has(.connect-video-note.expanded){width:calc(100vw - 24px)!important;max-width:calc(100vw - 24px)!important}
 }
+
+/* CONNECT_PWA_MEDIA_UX_FIX_V3_20261112 */
+/* Voice notes: transcript button like the reference, above time, without playback-speed chip. */
+.connect-app .voice-note-bubble .voice-player{
+  overflow:visible!important;
+}
+.connect-app .voice-note-bubble .voice-content{
+  min-width:0!important;
+  flex:1 1 auto!important;
+}
+.connect-app .voice-note-bubble .voice-bottom{
+  display:flex!important;
+  align-items:flex-end!important;
+  gap:6px 8px!important;
+  flex-wrap:nowrap!important;
+}
+.connect-app .voice-note-bubble .connect-voice-meta-stack{
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-end!important;
+  justify-content:flex-end!important;
+  gap:2px!important;
+  margin-left:auto!important;
+  flex:0 0 auto!important;
+}
+.connect-app .voice-note-bubble .connect-voice-meta-stack .voice-message-meta{
+  margin-left:0!important;
+  line-height:1.1!important;
+}
+.connect-app .voice-note-bubble .connect-transcript.is-compact{
+  display:inline-flex!important;
+  align-items:center!important;
+  width:auto!important;
+}
+.connect-app .voice-note-bubble .connect-transcript.is-compact .connect-transcript-toggle{
+  appearance:none!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  min-width:42px!important;
+  height:36px!important;
+  padding:0 10px!important;
+  border-radius:12px!important;
+  border:1px solid rgba(255,255,255,.16)!important;
+  background:rgba(19,27,39,.24)!important;
+  color:#fff!important;
+  box-shadow:inset 0 0 .5px rgba(255,255,255,.18)!important;
+  -webkit-backdrop-filter:blur(16px)!important;
+  backdrop-filter:blur(16px)!important;
+  font-size:20px!important;
+  font-weight:650!important;
+  line-height:1!important;
+}
+.connect-app .voice-note-bubble .connect-transcript.is-compact .connect-transcript-toggle:focus-visible{
+  outline:2px solid var(--accent2)!important;
+  outline-offset:1px!important;
+}
+.connect-app .voice-note-bubble .connect-transcript.is-compact .connect-transcript-result{
+  right:0!important;
+  bottom:calc(100% + 10px)!important;
+}
+/* Voice speed button is removed in JSX; never hide .voice-speed because the
+   audio-file "Save" action still uses that same class. */
+
+/* Video circles: keep the current inline placement, but prevent overflow and use the same control language. */
+.connect-app .bubble.video-note-bubble,
+.connect-app .bubble.video-note-bubble .attachment-preview,
+.connect-app .bubble.video-note-bubble .bubble-body{
+  overflow:visible!important;
+}
+.connect-app .bubble.video-note-bubble{
+  width:min(260px,75vw)!important;
+  max-width:min(260px,75vw)!important;
+}
+.connect-app .bubble.video-note-bubble:has(.connect-video-note.expanded){
+  width:min(430px,calc(100vw - 38px))!important;
+  max-width:min(430px,calc(100vw - 38px))!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note{
+  position:relative!important;
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-end!important;
+  gap:5px!important;
+  width:100%!important;
+  max-width:100%!important;
+  overflow:visible!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note.expanded{
+  width:min(430px,calc(100vw - 38px))!important;
+  max-width:min(430px,calc(100vw - 38px))!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-media{
+  position:relative!important;
+  display:block!important;
+  width:100%!important;
+  max-width:100%!important;
+  aspect-ratio:1!important;
+  margin:0 auto!important;
+  border-radius:50%!important;
+  overflow:hidden!important;
+  background:#111b25!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note.expanded .connect-video-note-media{
+  width:min(430px,calc(100vw - 38px))!important;
+  max-width:min(430px,calc(100vw - 38px))!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-media > .connect-video-note-screen,
+.connect-app .bubble.video-note-bubble .connect-video-note-media > .connect-video-note-screen > video{
+  border-radius:50%!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-close{
+  position:absolute!important;
+  top:-12px!important;
+  right:0!important;
+  transform:translate(10%,-10%)!important;
+  z-index:12!important;
+  width:36px!important;
+  height:36px!important;
+  padding:0!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  border-radius:12px!important;
+  border:1px solid rgba(255,255,255,.16)!important;
+  background:rgba(19,27,39,.34)!important;
+  color:#fff!important;
+  box-shadow:inset 0 0 .5px rgba(255,255,255,.18)!important;
+  -webkit-backdrop-filter:blur(16px)!important;
+  backdrop-filter:blur(16px)!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-footer{
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-end!important;
+  width:100%!important;
+  padding:0 4px 1px!important;
+  margin:0!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-actions{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-end!important;
+  gap:8px!important;
+  margin:0!important;
+  padding:0!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-actions > .connect-video-note-sound,
+.connect-app .bubble.video-note-bubble .connect-video-note-actions .connect-transcript-toggle{
+  appearance:none!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  min-width:36px!important;
+  height:34px!important;
+  padding:0 9px!important;
+  border-radius:12px!important;
+  border:1px solid rgba(255,255,255,.16)!important;
+  background:rgba(19,27,39,.24)!important;
+  color:#fff!important;
+  box-shadow:inset 0 0 .5px rgba(255,255,255,.18)!important;
+  -webkit-backdrop-filter:blur(16px)!important;
+  backdrop-filter:blur(16px)!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-actions > .connect-video-note-sound{
+  width:36px!important;
+  padding:0!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-actions .connect-transcript-toggle{
+  font-size:20px!important;
+  font-weight:650!important;
+  line-height:1!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-time{
+  display:inline-flex!important;
+  align-items:center!important;
+  gap:4px!important;
+  margin-top:2px!important;
+  font-size:10.5px!important;
+  line-height:1.2!important;
+  white-space:nowrap!important;
+}
+.connect-app .bubble.video-note-bubble .connect-video-note-length{
+  bottom:10px!important;
+}
+
+/* Same vector arrow + Cyrillic Т on every platform; no iOS emoji variant. */
+.connect-app .connect-transcript.is-compact .connect-transcript-toggle{
+  gap:1px!important;
+  white-space:nowrap!important;
+}
+.connect-app .connect-transcript.is-compact .connect-arrow-t-icon{
+  display:block!important;
+  width:20px!important;
+  height:20px!important;
+  flex:0 0 20px!important;
+}
+.connect-app .connect-transcript.is-compact .connect-transcript-toggle>span{
+  font-family:inherit!important;
+  font-size:18px!important;
+  font-weight:650!important;
+  line-height:1!important;
+}
+/* Force the media circle itself to stay exactly square, without grey letterboxing. */
+.connect-app .bubble.video-note-bubble .connect-video-note-media>.connect-video-note-screen>video{
+  display:block!important;
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  object-fit:cover!important;
+}
+
+@media (max-width: 420px) {
+  .connect-app .bubble.video-note-bubble:has(.connect-video-note.expanded),
+  .connect-app .bubble.video-note-bubble .connect-video-note.expanded,
+  .connect-app .bubble.video-note-bubble .connect-video-note.expanded .connect-video-note-media{
+    width:calc(100vw - 34px)!important;
+    max-width:calc(100vw - 34px)!important;
+  }
+}
