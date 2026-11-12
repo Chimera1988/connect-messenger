@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
+import {createProfileThumbnail,profileThumbnailPath} from '../lib/profile-thumbnails';
 import { ConnectMusicLibrary } from './ConnectMusicSystem';
 import ConnectGalleryViewer from './ConnectGalleryViewer';
 import { readProfileLibrary, writeProfileLibrary, removeProfileLibraryItem, type ProfileLibraryRow } from '../lib/profile-media-index';
-import { resolveCachedProfileFile, prefetchProfileFile, cacheUploadedProfileFile, retireCachedProfileFile } from '../lib/media-cache';
+import { resolveCachedProfileFile, prefetchProfileFile, prefetchCachedMedia, cacheUploadedProfileFile, retireCachedProfileFile } from '../lib/media-cache';
 // CONNECT_PROFILE_MEDIA_INSTANT_CACHE_V3_20261111
 
 export type ProfileMediaKind = 'photos' | 'videos' | 'music';
 
-type MediaItem = { path: string; name: string; mime: string; url: string; createdAt: string };
+type MediaItem = { path: string; name: string; mime: string; url: string; createdAt: string; previewUrl?: string };
 type Props = {
   client: SupabaseClient;
   userId: string;
@@ -121,28 +122,28 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
   const load = useCallback(async (forceServer=false) => {
     const generation=++fetchGeneration.current;
     setError('');
-    const makeItem=(entry:ProfileLibraryRow,url:string):MediaItem=>{
+    const makeItem=(entry:ProfileLibraryRow,url:string,previewUrl=""):MediaItem=>{
       const filename=entry.path.split('/').pop()||'';
       const name=decodeName(filename);
-      return {path:entry.path,name,mime:MIME[extension(name)]||'application/octet-stream',url,createdAt:entry.createdAt};
+      return {path:entry.path,name,mime:MIME[extension(name)]||'application/octet-stream',url,createdAt:entry.createdAt,previewUrl};
     };
     let previous:ProfileLibraryRow[]|null=null;
     if(!forceServer){
       previous=await readProfileLibrary(viewerId,userId,kind).catch(()=>null);
       if(generation!==fetchGeneration.current)return;
       if(previous){
-        const cached=await Promise.all(previous.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||'')));
+        const cached=await Promise.all(previous.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||'',await resolveCachedProfileFile(viewerId,profileThumbnailPath(entry.path,kind)||entry.path)||'')));
         if(generation!==fetchGeneration.current)return;
         setItems(cached);setLoading(false);hasDisplayed.current=true;
       }
     }
     try {
       const {data,error:listError}=await client.storage.from(BUCKET).list(`${userId}/${kind}`,{
-        limit:100,sortBy:{column:'created_at',order:'desc'}
+        limit:300,sortBy:{column:'created_at',order:'desc'}
       });
       if(generation!==fetchGeneration.current)return;
       if(listError)throw listError;
-      const rows:ProfileLibraryRow[]=(data||[]).filter(row=>row.id&&row.name).map(row=>({
+      const rows:ProfileLibraryRow[]=(data||[]).filter(row=>row.id&&row.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(row.name)).slice(0,100).map(row=>({
         path:`${userId}/${kind}/${row.name}`,createdAt:row.created_at||''
       }));
       // One signed-URL batch instead of an individual request per file.
@@ -151,6 +152,12 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
         const batch=await client.storage.from(BUCKET).createSignedUrls(rows.map(x=>x.path),3600);
         if(generation!==fetchGeneration.current)return;
         for(const entry of batch.data||[])if(entry.path&&entry.signedUrl)signed.set(entry.path,playbackUrl(entry.signedUrl));
+        // Optional previews are signed separately so missing legacy sidecars cannot break originals.
+        const previewPaths=rows.map(x=>profileThumbnailPath(x.path,kind)).filter((x):x is string=>!!x);
+        if(previewPaths.length)try{
+          const previews=await client.storage.from(BUCKET).createSignedUrls(previewPaths,3600);
+          for(const entry of previews.data||[])if(entry.path&&entry.signedUrl)signed.set(entry.path,playbackUrl(entry.signedUrl));
+        }catch{/* Old media without preview stays usable. */}
         // Best-effort compatibility fallback for storage gateways without bulk signing.
         if(batch.error||signed.size===0){
           await Promise.all(rows.map(async entry=>{
@@ -161,7 +168,7 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
         }
       }
       if(generation!==fetchGeneration.current)return;
-      const fresh=await Promise.all(rows.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||signed.get(entry.path)||'')));
+      const fresh=await Promise.all(rows.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||signed.get(entry.path)||'',await resolveCachedProfileFile(viewerId,profileThumbnailPath(entry.path,kind)||entry.path)||signed.get(profileThumbnailPath(entry.path,kind)||'')||'')));
       if(generation!==fetchGeneration.current)return;
       setItems(fresh);setLoading(false);hasDisplayed.current=true;
       await writeProfileLibrary(viewerId,userId,kind,rows).catch(()=>{});
@@ -180,6 +187,8 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
         for(const entry of rows.slice(0,count)){
           const url=signed.get(entry.path);
           if(url)void prefetchProfileFile(url,viewerId,kind);
+          const thumbnail=profileThumbnailPath(entry.path,kind);
+          if(thumbnail&&signed.get(thumbnail))void prefetchCachedMedia(signed.get(thumbnail)!,viewerId);
         }
       }
     }catch(err){
@@ -238,6 +247,19 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
           });
         }
         await cacheUploadedProfileFile(viewerId,path,file);
+        if(kind!=='music'){
+          try{
+            const thumbPath=profileThumbnailPath(path,kind);
+            const blob=thumbPath?await createProfileThumbnail(file,kind):null;
+            if(thumbPath&&blob){
+              const type=kind==='photos'?'image/webp':'image/jpeg';
+              const result=await client.storage.from(BUCKET).upload(thumbPath,blob,{contentType:type,upsert:false});
+              if(!result.error){
+                await cacheUploadedProfileFile(viewerId,thumbPath,new File([blob],thumbPath.split('/').pop()||'preview',{type}));
+              }
+            }
+          }catch{/* A preview is optional: never roll back an uploaded original. */}
+        }
         completed++;
       }
       setNotice(completed === 1 ? 'Файл добавлен.' : `Загружено файлов: ${completed}.`);
@@ -252,13 +274,17 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
     if (!isOwner || busy || !window.confirm(`Удалить «${item.name}» из своей медиатеки?`)) return;
     setBusy(true); setError('');
     try {
-      const { error: removeError } = await client.storage.from(BUCKET).remove([item.path]);
+      const previewPath=profileThumbnailPath(item.path,kind);
+      const bucket=client.storage.from(BUCKET);
+      const { error: removeError } = await bucket.remove([item.path]);
+      if(!removeError&&previewPath)void bucket.remove([previewPath]).catch(()=>{});
       if (removeError) throw removeError;
       if (preview?.path === item.path) setPreview(null);
       fetchGeneration.current++;
       setItems(prev=>prev.filter(row=>row.path!==item.path));
       await removeProfileLibraryItem(viewerId,userId,kind,item.path).catch(()=>{});
       await retireCachedProfileFile(viewerId,item.path);
+       if(previewPath)await retireCachedProfileFile(viewerId,previewPath);
       setNotice('Файл удалён.');
     } catch (e) { setError('Не удалось удалить: ' + (e instanceof Error ? e.message : String(e))); }
     finally { setBusy(false); await load(true); }
@@ -307,12 +333,12 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
       {notice && <div className="connect-profile-media-info" role="status">{notice}</div>}
       {loading && items.length===0 ? <div className="connect-profile-media-empty">Загружаем медиатеку…</div> : items.length === 0 ? <div className="connect-profile-media-empty">{isOwner ? <>Здесь пока пусто. Нажми «Добавить», чтобы загрузить {kind === 'photos' ? 'фотографии' : kind === 'videos' ? 'видео' : 'музыку'}.</> : 'Пользователь ещё ничего не добавил.'}</div> : <>
         {kind === 'photos' && <div className="connect-profile-photo-grid">{items.map(item => <article key={item.path} className="connect-profile-media-item">
-          <button type="button" className="connect-profile-photo-thumb" onClick={() => setPreview(item)} aria-label={`Открыть ${item.name}`}>{item.url ? <img loading="lazy" src={item.url} alt={item.name}/> : <span aria-hidden="true" style={{fontSize:26}}>▧</span>}</button>
+          <button type="button" className="connect-profile-photo-thumb" onClick={() => setPreview(item)} aria-label={`Открыть ${item.name}`}>{item.url ? <img loading="lazy" src={item.previewUrl||item.url} alt={item.name} onError={e=>{if(item.url&&e.currentTarget.src!==item.url)e.currentTarget.src=item.url;}}/> : <span aria-hidden="true" style={{fontSize:26}}>▧</span>}</button>
           <div className="connect-profile-media-item-caption" title={item.name}>{item.name}</div>
           {isOwner && <div className="connect-profile-media-item-actions"><button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(item.mime)} onClick={() => void makeAvatar(item)}>На аватар</button><button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button></div>}
         </article>)}</div>}
         {kind === 'videos' && <div className="connect-profile-video-list">{items.map(item => <article key={item.path} className="connect-profile-media-item">
-          <button type="button" className="connect-profile-video-thumb" onClick={()=>setPreview(item)} aria-label={`Просмотреть ${item.name}`}>{item.url && <video src={item.url} preload="none" playsInline muted tabIndex={-1}/>}<span aria-hidden="true">▶</span></button>
+          <button type="button" className="connect-profile-video-thumb" onClick={()=>setPreview(item)} aria-label={`Просмотреть ${item.name}`}>{item.previewUrl&&<img loading="lazy" src={item.previewUrl} alt="" onError={e=>{e.currentTarget.style.visibility="hidden";}}/>}<span aria-hidden="true">▶</span></button>
           <div className="connect-profile-media-item-info"><strong title={item.name}>{item.name}</strong>{isOwner && <button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button>}</div>
         </article>)}</div>}
         {kind === 'music' && <ConnectMusicLibrary client={client} ownerId={userId} items={items} isOwner={isOwner} busy={busy} onRemove={song => { const item=items.find(x=>x.path===song.path); if(item) void remove(item); }}/>}

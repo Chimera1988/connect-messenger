@@ -55,10 +55,10 @@ export async function warmOwnProfileLibraries(client:SupabaseClient,viewer:strin
   await Promise.all(kinds.map(async kind=>{
     try{
       const {data,error}=await client.storage.from('connect-profile-media').list(viewer+'/'+kind,{
-        limit:100,sortBy:{column:'created_at',order:'desc'}
+        limit:300,sortBy:{column:'created_at',order:'desc'}
       });
       if(error)return;
-      await writeProfileLibrary(viewer,viewer,kind,(data||[]).filter(row=>row.id&&row.name).map(row=>({
+      await writeProfileLibrary(viewer,viewer,kind,(data||[]).filter(row=>row.id&&row.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(row.name)).slice(0,100).map(row=>({
         path:viewer+'/'+kind+'/'+row.name,createdAt:row.created_at||''
       })));
     }catch{/* Offline: preserve the last catalog. */}
@@ -90,10 +90,10 @@ export async function warmPeerProfileLibraries(
     await Promise.all(kinds.map(async kind=>{
       try{
         const {data,error}=await client.storage.from('connect-profile-media').list(peer+'/'+kind,{
-          limit:100,sortBy:{column:'created_at',order:'desc'}
+          limit:300,sortBy:{column:'created_at',order:'desc'}
         });
         if(error)return; // Permissions and RLS always take precedence over local cache.
-        const rows=(data||[]).filter(x=>x.id&&x.name).map(x=>({
+        const rows=(data||[]).filter(x=>x.id&&x.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(x.name)).slice(0,100).map(x=>({
           path:peer+'/'+kind+'/'+x.name, createdAt:x.created_at||'',
           size:Number(x.metadata?.size||0)
         }));

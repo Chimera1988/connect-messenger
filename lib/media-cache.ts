@@ -13,6 +13,8 @@ type Entry = {
 const NAME = 'connect-media-v1', STORE = 'objects';
 let opening: Promise<IDBDatabase> | undefined;
 let owner = '';
+/** IDB entries and signed URLs are scoped to the current viewer. */
+export function mediaCacheOwner(){return owner;}
 const objectUrls = new Map<string, string>(), pending = new Map<string, Promise<void>>();
 const originals = new Map<string, string>();
 type MediaElement = HTMLImageElement | HTMLMediaElement;
