@@ -1,0 +1,80 @@
+# Connect PWA: unified chat/profile gallery, video-note controls, opt-in transcription.
+# Upload to: .github/workflows/connect-pwa-gallery-video-transcript.yml
+# No E2EE enablement, no Supabase migrations, no Android changes.
+name: Connect PWA — galleries, video circles and voice transcription
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-gallery-video-transcript.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-media-ux-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'Chimera1988/connect-messenger' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply atomic PWA changes from verified source anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_CONNECT_EXTRACT'
+          import base64,gzip,io,tarfile
+          from pathlib import Path
+          archive=gzip.decompress(base64.b64decode("""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"""))
+          with tarfile.open(fileobj=io.BytesIO(archive),mode='r:') as bundle:
+              paths={'patch.py':'/tmp/connect-media-patch.py',
+                     'transcript_component.tsx':'/tmp/connect-transcript-component.tsx',
+                     'transcribe_route.ts':'/tmp/connect-transcribe-route.ts'}
+              assert set(bundle.getnames())==set(paths)
+              for member in bundle.getmembers():
+                  data=bundle.extractfile(member).read()
+                  Path(paths[member.name]).write_bytes(data)
+          PY_CONNECT_EXTRACT
+          python3 /tmp/connect-media-patch.py
+          git diff --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies and browser test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+      - name: Verify PWA changes with existing tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Publish only after all checks pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- app/page.tsx app/profile-media.css components/ConnectProfileMedia.tsx components/ConnectTranscript.tsx app/api/transcribe/route.ts
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Connect PWA: galleries, video circles and opt-in transcription [skip ci]'
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
