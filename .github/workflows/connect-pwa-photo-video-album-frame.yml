@@ -1,0 +1,105 @@
+# Connect PWA: photo/video/album border + in-media receipts
+# Upload to: .github/workflows/connect-pwa-media-frame-overlay.yml
+# Deliberately does NOT modify video notes, audio, stickers, emoji, calls or Android.
+name: Connect PWA — media border and in-image timestamps
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-media-frame-overlay.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-media-border-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'Chimera1988/connect-messenger' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply media frame patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          css = '/* CONNECT_PWA_MEDIA_FRAME_OVERLAY_V1_20261112\n   Focused update: ONLY regular photos, ordinary videos, and albums in chats.\n   Circular video notes, audio, voice messages, stickers, emoji, and calls are untouched.\n   The stroke hugs the media itself; time/read receipts overlay the lower-right edge.\n*/\n\n/* Do not create an outer frame or a separate footer under media. */\n.connect-app .message-row .bubble.sent.media-only.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble),\n.connect-app .message-row .bubble.received.media-only.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) {\n  box-sizing: border-box !important;\n  position: relative !important;\n  display: flex !important;\n  flex-direction: column !important;\n  align-items: stretch !important;\n  width: fit-content !important;\n  min-width: 0 !important;\n  max-width: min(300px, calc(100vw - 66px)) !important;\n  margin: 0 !important;\n  padding: 0 !important;\n  gap: 0 !important;\n  border: 0 !important;\n  border-radius: 0 !important;\n  background: transparent !important;\n  box-shadow: none !important;\n  overflow: visible !important;\n}\n\n/* An album keeps two columns and the previously implemented odd-tile stretch. */\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):has(.connect-album-grid) {\n  width: min(300px, calc(100vw - 66px)) !important;\n  max-width: min(300px, calc(100vw - 66px)) !important;\n}\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble) > .bubble-body {\n  box-sizing: border-box !important;\n  min-width: 0 !important;\n  max-width: 100% !important;\n  padding: 0 !important;\n  margin: 0 !important;\n  background: transparent !important;\n  border: 0 !important;\n  box-shadow: none !important;\n  overflow: visible !important;\n}\n\n/* One 1px border on the actual image/video/album, never around a blank footer. */\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) .attachment-preview.connect-adaptive-photo,\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) .attachment-preview.connect-adaptive-video,\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) .connect-album-grid {\n  box-sizing: border-box !important;\n  border: 1px solid color-mix(in srgb, var(--text, #e5edf8) 29%, transparent) !important;\n  border-radius: 16px !important;\n  margin: 0 !important;\n  padding: 0 !important;\n  background: transparent !important;\n  box-shadow: none !important;\n  overflow: hidden !important;\n}\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) .connect-album-grid {\n  width: 100% !important;\n  max-width: 100% !important;\n}\n/* Keep the original image fit, video playback, controls, album cells and aspect ratios. */\n\n/* The dark, compact receipt pill belongs INSIDE the media at bottom right. */\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) > .bubble-meta {\n  box-sizing: border-box !important;\n  position: absolute !important;\n  z-index: 20 !important;\n  inset: auto 7px 7px auto !important;\n  display: inline-flex !important;\n  flex-direction: row !important;\n  align-items: center !important;\n  justify-content: flex-end !important;\n  flex: none !important;\n  align-self: auto !important;\n  width: max-content !important;\n  max-width: calc(100% - 14px) !important;\n  min-width: 0 !important;\n  min-height: 0 !important;\n  height: auto !important;\n  margin: 0 !important;\n  padding: 4px 7px !important;\n  gap: 3px !important;\n  border: 1px solid rgba(229, 240, 255, .15) !important;\n  border-radius: 10px !important;\n  color: #f4f7fd !important;\n  background: rgba(12, 18, 29, .76) !important;\n  box-shadow: 0 1px 5px rgba(0, 0, 0, .16) !important;\n  -webkit-backdrop-filter: blur(8px);\n  backdrop-filter: blur(8px);\n  opacity: 1 !important;\n  font-size: 10.5px !important;\n  font-variant-numeric: tabular-nums !important;\n  line-height: 1.15 !important;\n  letter-spacing: 0 !important;\n  white-space: nowrap !important;\n  pointer-events: none !important;\n}\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) > .bubble-meta .delivery-checks {\n  display: inline-flex !important;\n  align-items: center !important;\n  flex: 0 0 auto !important;\n  margin-left: 2px !important;\n  color: #c8daed !important;\n  opacity: 1 !important;\n}\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) > .bubble-meta .delivery-checks.is-read {\n  color: var(--accent2, #88d8fc) !important;\n}\n.connect-app .message-row .bubble.connect-unified-media:not(.video-note-bubble):not(.sticker-bubble) > .bubble-meta svg {\n  width: 15px !important;\n  height: 12px !important;\n}\n'
+
+          from pathlib import Path
+
+          MARK = 'CONNECT_PWA_MEDIA_FRAME_OVERLAY_V1_20261112'
+          LAYOUT = Path('app/layout.tsx')
+          PAGE = Path('app/page.tsx')
+          STYLE = Path('app/connect-media-frame-overlay.css')
+          ANCHOR = "import './connect-icons.css';"
+          IMPORT = "import './connect-media-frame-overlay.css';"
+
+          layout = LAYOUT.read_text(encoding='utf-8')
+          page = PAGE.read_text(encoding='utf-8')
+          required = ['connect-unified-media', 'connect-adaptive-photo', 'connect-adaptive-video', 'connect-album-grid', 'className="bubble-meta"', 'isVideoNote(m)']
+          missing = [term for term in required if term not in page]
+          if missing:
+              raise SystemExit('Expected PWA media code not found; stopped safely: ' + ', '.join(missing))
+          if MARK not in css:
+              raise SystemExit('CSS payload marker missing; stopped safely')
+          if IMPORT not in layout:
+              if layout.count(ANCHOR) != 1:
+                  raise SystemExit('PWA layout import anchor changed; stopped safely')
+              LAYOUT.write_text(layout.replace(ANCHOR, ANCHOR+'\n'+IMPORT, 1), encoding='utf-8')
+          if STYLE.exists():
+              existing = STYLE.read_text(encoding='utf-8')
+              if existing != css:
+                  raise SystemExit('Media CSS already exists and differs; refused to overwrite')
+          else:
+              STYLE.write_text(css, encoding='utf-8')
+          print('PWA media frames: only photo/video/album CSS applied. Video circles and other messages unchanged.')
+
+          PY
+          git add app/layout.tsx app/connect-media-frame-overlay.css
+          git diff --cached --check
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies and browser
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+
+      - name: Verify TypeScript, tests and PWA build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Publish only after every verification passes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --cached --quiet; then
+            echo 'Already up to date; no changes to publish.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Connect PWA: media border and in-image receipts [skip ci]'
+          git push origin HEAD:main
