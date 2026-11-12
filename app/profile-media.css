@@ -469,3 +469,351 @@
     max-width:calc(100vw - 34px)!important;
   }
 }
+
+/* CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
+   Voice: the arrow-T is in the SAME upper row as the waveform, as in the reference.
+   Video: a single, self-contained circular frame for poster, video and progress. */
+.connect-app .bubble.sent.voice-note-bubble,
+.connect-app .bubble.received.voice-note-bubble {
+  width:min(360px,calc(100vw - 36px))!important;
+  max-width:min(360px,calc(100vw - 36px))!important;
+  min-width:0!important;
+}
+.connect-app .bubble.voice-note-bubble .voice-player {
+  box-sizing:border-box!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  min-height:70px!important;
+  padding:8px 10px!important;
+  gap:10px!important;
+  border-radius:20px!important;
+  align-items:center!important;
+}
+.connect-app .bubble.voice-note-bubble .voice-play {
+  flex:0 0 50px!important;
+  width:50px!important;
+  height:50px!important;
+  min-width:50px!important;
+  min-height:50px!important;
+  padding:0!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-content {
+  min-width:0!important;
+  flex:1 1 auto!important;
+  display:flex!important;
+  flex-direction:column!important;
+  gap:3px!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top {
+  display:flex!important;
+  align-items:center!important;
+  gap:7px!important;
+  width:100%!important;
+  min-width:0!important;
+  height:36px!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .voice-wave {
+  display:flex!important;
+  align-items:center!important;
+  flex:1 1 0!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:100%!important;
+  overflow:hidden!important;
+  height:32px!important;
+  margin:0!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript.is-compact {
+  flex:0 0 41px!important;
+  min-width:41px!important;
+  max-width:41px!important;
+  align-self:center!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript.is-compact .connect-transcript-toggle {
+  box-sizing:border-box!important;
+  appearance:none!important;
+  width:41px!important;
+  min-width:41px!important;
+  height:35px!important;
+  min-height:35px!important;
+  padding:0 5px!important;
+  gap:1px!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  border:1px solid rgba(255,255,255,.16)!important;
+  border-radius:11px!important;
+  background:rgba(21,31,48,.17)!important;
+  color:inherit!important;
+  box-shadow:none!important;
+  -webkit-backdrop-filter:blur(10px)!important;
+  backdrop-filter:blur(10px)!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-arrow-t-icon {
+  width:17px!important;
+  height:17px!important;
+  flex:0 0 17px!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript-toggle>span {
+  font-size:17px!important;
+  font-weight:600!important;
+  line-height:1!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-bottom {
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  flex-wrap:nowrap!important;
+  gap:6px!important;
+  width:100%!important;
+  min-height:16px!important;
+  padding:0!important;
+  opacity:.88;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-bottom .voice-message-meta {
+  margin-left:auto!important;
+  font-size:10.5px!important;
+  line-height:1.15!important;
+  white-space:nowrap!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript-result {
+  z-index:80!important;
+  bottom:calc(100% + 9px)!important;
+  right:0!important;
+}
+@media(max-width:360px){
+  .connect-app .bubble.voice-note-bubble .voice-player {gap:7px!important;padding:7px 8px!important;}
+  .connect-app .bubble.voice-note-bubble .voice-play {flex-basis:44px!important;width:44px!important;height:44px!important;min-height:44px!important;min-width:44px!important;}
+}
+
+/* No legacy .connect-video-note or .connect-video-note-screen classes in the FIX4 player. */
+.connect-app .bubble.sent.media-only.video-note-bubble,
+.connect-app .bubble.received.media-only.video-note-bubble {
+  box-sizing:border-box!important;
+  width:min(254px,70vw)!important;
+  max-width:min(254px,70vw)!important;
+  min-width:0!important;
+  padding:0!important;
+  border:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  overflow:visible!important;
+}
+.connect-app .bubble.sent.media-only.video-note-bubble:has(.connect-v4-video-note.is-expanded),
+.connect-app .bubble.received.media-only.video-note-bubble:has(.connect-v4-video-note.is-expanded) {
+  width:min(520px,calc(100vw - 44px))!important;
+  max-width:min(520px,calc(100vw - 44px))!important;
+}
+.connect-app .bubble.video-note-bubble .bubble-body,
+.connect-app .bubble.video-note-bubble .attachment-preview {
+  display:block!important;
+  box-sizing:border-box!important;
+  width:100%!important;
+  max-width:100%!important;
+  min-width:0!important;
+  height:auto!important;
+  padding:0!important;
+  margin:0!important;
+  overflow:visible!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+  aspect-ratio:auto!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-video-note {
+  box-sizing:border-box!important;
+  position:relative!important;
+  display:flex!important;
+  flex-direction:column!important;
+  gap:4px!important;
+  width:100%!important;
+  max-width:100%!important;
+  padding:0!important;
+  margin:0!important;
+  background:transparent!important;
+  border:0!important;
+  border-radius:0!important;
+  overflow:visible!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-header {
+  display:flex!important;
+  justify-content:flex-end!important;
+  align-items:center!important;
+  width:100%!important;
+  height:31px!important;
+  min-height:31px!important;
+  padding:0 3px 0 0!important;
+  margin:0!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-circle {
+  box-sizing:border-box!important;
+  position:relative!important;
+  display:block!important;
+  isolation:isolate!important;
+  width:100%!important;
+  max-width:100%!important;
+  height:auto!important;
+  aspect-ratio:1 / 1!important;
+  overflow:hidden!important;
+  border-radius:50%!important;
+  background:#111b25!important;
+  border:0!important;
+  padding:0!important;
+  margin:0!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-video {
+  box-sizing:border-box!important;
+  position:absolute!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  max-width:none!important;
+  max-height:none!important;
+  display:block!important;
+  padding:0!important;
+  margin:0!important;
+  object-fit:cover!important;
+  object-position:50% 50%!important;
+  border:0!important;
+  border-radius:0!important;
+  transform:none!important;
+  background:transparent!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-hit {
+  position:absolute!important;
+  z-index:2!important;
+  inset:0!important;
+  display:block!important;
+  width:100%!important;
+  height:100%!important;
+  padding:0!important;
+  margin:0!important;
+  border:0!important;
+  border-radius:50%!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  cursor:pointer!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-progress {
+  position:absolute!important;
+  z-index:3!important;
+  inset:0!important;
+  width:100%!important;
+  height:100%!important;
+  display:block!important;
+  pointer-events:none!important;
+  overflow:visible!important;
+  transform:rotate(-90deg)!important;
+  transform-origin:50% 50%!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-track {
+  stroke:rgba(255,255,255,.32)!important;
+  stroke-width:.8px!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-progress-fill {
+  stroke:var(--accent2,var(--accent))!important;
+  stroke-width:1px!important;
+  opacity:.85!important;
+  stroke-linecap:round!important;
+  transition:stroke-dashoffset .17s linear!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-length {
+  position:absolute!important;
+  z-index:4!important;
+  bottom:10px!important;
+  left:50%!important;
+  transform:translateX(-50%)!important;
+  border-radius:10px!important;
+  padding:3px 7px!important;
+  font-size:11px!important;
+  color:#fff!important;
+  background:rgba(0,0,0,.65)!important;
+  white-space:nowrap!important;
+  pointer-events:none!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-footer {
+  display:flex!important;
+  flex-direction:column!important;
+  align-items:flex-end!important;
+  justify-content:flex-end!important;
+  gap:3px!important;
+  width:100%!important;
+  margin:0!important;
+  padding:0 3px!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-actions {
+  display:flex!important;
+  flex-direction:row!important;
+  justify-content:flex-end!important;
+  align-items:center!important;
+  gap:6px!important;
+  width:auto!important;
+  margin:0!important;
+  padding:0!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-close,
+.connect-app .bubble.video-note-bubble .connect-v4-note-sound,
+.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript.is-compact .connect-transcript-toggle {
+  box-sizing:border-box!important;
+  appearance:none!important;
+  display:inline-flex!important;
+  justify-content:center!important;
+  align-items:center!important;
+  gap:1px!important;
+  width:34px!important;
+  min-width:34px!important;
+  height:31px!important;
+  min-height:31px!important;
+  margin:0!important;
+  padding:0 4px!important;
+  border:1px solid rgba(255,255,255,.14)!important;
+  border-radius:10px!important;
+  background:rgba(25,39,57,.24)!important;
+  color:var(--text,#fff)!important;
+  box-shadow:none!important;
+  -webkit-backdrop-filter:blur(12px)!important;
+  backdrop-filter:blur(12px)!important;
+  opacity:1!important;
+  transform:none!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript.is-compact {
+  flex:0 0 auto!important;
+  min-width:0!important;
+  max-width:none!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript.is-compact .connect-transcript-toggle {
+  width:42px!important;
+  min-width:42px!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-arrow-t-icon {
+  width:17px!important;
+  height:17px!important;
+  flex:0 0 17px!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript-toggle>span {
+  font-size:16px!important;
+  font-weight:600!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-sound>svg {
+  width:17px!important;
+  height:17px!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-time {
+  display:inline-flex!important;
+  align-items:center!important;
+  gap:3px!important;
+  font-size:10.5px!important;
+  line-height:1.15!important;
+  opacity:.77!important;
+  white-space:nowrap!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-time .delivery-checks svg {
+  width:15px!important;
+  height:12px!important;
+}
+.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript-result {
+  z-index:80!important;
+  bottom:calc(100% + 7px)!important;
+  right:0!important;
+}

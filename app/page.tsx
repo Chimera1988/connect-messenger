@@ -1,4 +1,5 @@
 'use client';
+// CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
 // CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
 // CONNECT_PWA_GALLERY_CIRCLES_TRANSCRIPT_FIX_V2_20261112
 
@@ -302,17 +303,20 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
     <button type="button" className="voice-play" onClick={e => {e.stopPropagation();void toggle();}} aria-label={playing ? 'Пауза' : 'Воспроизвести голосовое'}>
       {playing ? <span className="voice-pause-icon"/> : <Icon name="play" size={21}/>}
     </button>
-    <div className="voice-content">
+    <div className="voice-content connect-voice-v4-content">
       {fileName&&<div className="voice-file-name" title={fileName}>{fileName}</div>}
-      <div className="voice-wave" role="slider" tabIndex={0} aria-label="Перемотка голосового сообщения" aria-valuemin={0} aria-valuemax={Math.max(0,Math.round(duration))} aria-valuenow={Math.round(position)}
+      <div className="connect-voice-v4-top">
+        <div className="voice-wave" role="slider" tabIndex={0} aria-label="Перемотка голосового сообщения" aria-valuemin={0} aria-valuemax={Math.max(0,Math.round(duration))} aria-valuenow={Math.round(position)}
         onPointerDown={e => {e.stopPropagation();seeking.current=false;wavePointer.current={x:e.clientX,y:e.clientY,started:performance.now()};e.currentTarget.setPointerCapture(e.pointerId);}}
         onPointerMove={e => {const p=wavePointer.current;if(!p)return;if(Math.abs(e.clientY-p.y)>Math.abs(e.clientX-p.x)+8){wavePointer.current=null;seeking.current=false;return;}if(Math.abs(e.clientX-p.x)>8)seeking.current=true;if(seeking.current)seek(e);}}
         onPointerUp={e => {const p=wavePointer.current;if(p&&(seeking.current||performance.now()-p.started<480))seek(e);wavePointer.current=null;seeking.current=false;e.stopPropagation();}}
         onPointerCancel={() => {wavePointer.current=null;seeking.current=false;}}
         onKeyDown={e => {const audio=audioRef.current;if(!audio)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();audio.currentTime=Math.max(0,Math.min(duration,audio.currentTime+(e.key==='ArrowRight'?5:-5)));}}}>
         {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
+        </div>
+        {messageId && supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}
       </div>
-      <div className="voice-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-speed" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<div className="connect-voice-meta-stack">{messageId && supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div></div>
+      <div className="voice-bottom connect-voice-v4-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-speed" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div>
     </div>
   </div>;
 });
@@ -712,9 +716,10 @@ function isVideoNote(m: Message): boolean {
 
 // Connect video-note sound control v3: round progress and mute below the circle
 function VideoNoteBubble({src,name,path,messageId,sentAt,mine,delivered,read}:{src:string;name:string;path:string;messageId:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean}) {
-  const [poster,setPoster]=useState<string|undefined>();
+  const [poster,setPoster] = useState<string|undefined>();
   useEffect(()=>{
-    let alive=true;setPoster(undefined);
+    let alive=true;
+    setPoster(undefined);
     if(supabase)void supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600)
       .then(({data,error})=>{if(alive&&!error&&data?.signedUrl)setPoster(mediaUrl(data.signedUrl));}).catch(()=>{});
     return()=>{alive=false;};
@@ -729,9 +734,11 @@ function VideoNoteBubble({src,name,path,messageId,sentAt,mine,delivered,read}:{s
   const circumference=2*Math.PI*47;
   const toggleNote=(event:React.MouseEvent)=>{
     event.stopPropagation();
-    const video=ref.current;if(!video)return;
+    const video=ref.current;
+    if(!video)return;
     if(!expanded){
-      setExpanded(true);userPaused.current=false;
+      setExpanded(true);
+      userPaused.current=false;
       claimVisibleVideo(video);
       void video.play().catch(()=>{});
       return;
@@ -739,38 +746,45 @@ function VideoNoteBubble({src,name,path,messageId,sentAt,mine,delivered,read}:{s
     userPaused.current=!video.paused;
     if(!userPaused.current)claimVisibleVideo(video);else reconcileVisibleVideos();
   };
-  return <div className={'connect-video-note'+(expanded?' expanded':'')}>
-    <div className="connect-video-note-media">
-      <button type="button" className="connect-video-note-screen"
-        aria-label={expanded?'Пауза или воспроизведение видеокружка':'Увеличить и воспроизвести видеокружок'}
-        onClick={toggleNote}>
-        <video ref={ref} poster={poster} muted={muted} playsInline loop preload="none" aria-label={name}
-          onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
-          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}
-          onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
+  const closeNote=(event:React.MouseEvent)=>{
+    event.stopPropagation();
+    setExpanded(false);
+    userPaused.current=true;
+    ref.current?.pause();
+  };
+  return <div className={'connect-v4-video-note'+(expanded?' is-expanded':'')}>
+    {expanded&&<div className="connect-v4-note-header">
+      <button type="button" className="connect-v4-note-close" aria-label="Свернуть видеокружок" onClick={closeNote}>
+        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"/></svg>
       </button>
-      <svg className="connect-video-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-        <circle className="connect-video-note-progress-track" cx="50" cy="50" r="47" fill="none" strokeWidth="2.7"/>
-        <circle className="connect-video-note-progress-fill" cx="50" cy="50" r="47" fill="none" strokeWidth="2.7"
+    </div>}
+    <div className="connect-v4-note-circle">
+      <video ref={ref} className="connect-v4-note-video" poster={poster} muted={muted} playsInline loop preload="none" aria-label={name}
+        onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
+        onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}
+        onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
+      <button type="button" className="connect-v4-note-hit" aria-label={expanded?'Приостановить или воспроизвести видеокружок':'Увеличить и воспроизвести видеокружок'} onClick={toggleNote}/>
+      <svg className="connect-v4-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+        <circle className="connect-v4-note-track" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"/>
+        <circle className="connect-v4-note-progress-fill" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"
           strokeDasharray={circumference} strokeDashoffset={circumference*(1-progress)}/>
       </svg>
-      {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
+      {duration>0&&<span className="connect-v4-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
     </div>
-    {expanded && <button type="button" className="connect-video-note-close" aria-label="Уменьшить видеокружок" onClick={event=>{
-      event.stopPropagation();setExpanded(false);userPaused.current=true;ref.current?.pause();
-    }}><Icon name="close" size={20}/></button>}
-    <div className="connect-video-note-footer">
-      <div className="connect-video-note-actions">
-        <button type="button" className="connect-video-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
+    <div className="connect-v4-note-footer">
+      <div className="connect-v4-note-actions">
+        <button type="button" className="connect-v4-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
           title={muted?'Включить звук':'Выключить звук'}
           onClick={event=>{
-            event.stopPropagation();const video=ref.current;if(!video)return;
-            const next=!video.muted;mutedRef.current=next;video.muted=next;setMuted(next);
+            event.stopPropagation();
+            const video=ref.current;if(!video)return;
+            const next=!video.muted;
+            mutedRef.current=next;video.muted=next;setMuted(next);
             if(!next){userPaused.current=false;claimVisibleVideo(video);}
           }}><ConnectSoundGlyph muted={muted}/></button>
-        {supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}
+        {supabase&&<ConnectTranscript client={supabase} messageId={messageId} compact/>}
       </div>
-      <span className="connect-video-note-time">{timeLabel(sentAt)}{mine&&<MessageChecks delivered={delivered} read={read}/>}</span>
+      <span className="connect-v4-note-time">{timeLabel(sentAt)}{mine&&<MessageChecks delivered={delivered} read={read}/>}</span>
     </div>
   </div>;
 }
