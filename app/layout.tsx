@@ -11,6 +11,7 @@ import './liquid-glass.css';
 import './calls.css';
 import './call-journal-editor.css';
 import './profile-media.css';
+import './connect-unified-chat.css';
 import './music-system.css';
 import './connect-splash.css';
 import './connect-icons.css';

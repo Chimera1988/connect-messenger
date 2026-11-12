@@ -1,4 +1,5 @@
 'use client';
+// CONNECT_PWA_UNIFIED_CHAT_MEDIA_V1_20261112
 // CONNECT_PWA_COMPACT_AUDIO_NO_TRANSCRIPTION_20261112
 // CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
 // CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
@@ -749,38 +750,33 @@ function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;
     userPaused.current=true;
     ref.current?.pause();
   };
-  return <div className={'connect-v4-video-note'+(expanded?' is-expanded':'')}>
-    {expanded&&<div className="connect-v4-note-header">
-      <button type="button" className="connect-v4-note-close" aria-label="Свернуть видеокружок" onClick={closeNote}>
-        <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"/></svg>
-      </button>
-    </div>}
-    <div className="connect-v4-note-circle">
-      <video ref={ref} className="connect-v4-note-video" poster={poster} muted={muted} playsInline loop preload="none" aria-label={name}
-        onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
-        onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}
-        onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
-      <button type="button" className="connect-v4-note-hit" aria-label={expanded?'Приостановить или воспроизвести видеокружок':'Увеличить и воспроизвести видеокружок'} onClick={toggleNote}/>
-      <svg className="connect-v4-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-        <circle className="connect-v4-note-track" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"/>
-        <circle className="connect-v4-note-progress-fill" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"
-          strokeDasharray={circumference} strokeDashoffset={circumference*(1-progress)}/>
-      </svg>
-      {duration>0&&<span className="connect-v4-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
-    </div>
-    <div className="connect-v4-note-footer">
-      <div className="connect-v4-note-actions">
-        <button type="button" className="connect-v4-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
-          title={muted?'Включить звук':'Выключить звук'}
-          onClick={event=>{
-            event.stopPropagation();
-            const video=ref.current;if(!video)return;
-            const next=!video.muted;
-            mutedRef.current=next;video.muted=next;setMuted(next);
-            if(!next){userPaused.current=false;claimVisibleVideo(video);}
-          }}><ConnectSoundGlyph muted={muted}/></button>
+  return <div className={'connect-v4-video-note connect-v5-video-note'+(expanded?' is-expanded':'')}>
+    <div className="connect-v5-note-stage">
+      <div className="connect-v4-note-circle">
+        <video ref={ref} className="connect-v4-note-video" poster={poster} muted={muted} playsInline loop preload="none" aria-label={name}
+          onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
+          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}
+          onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
+        <button type="button" className="connect-v4-note-hit" aria-label={expanded?'Приостановить или воспроизвести видеокружок':'Увеличить и воспроизвести видеокружок'} onClick={toggleNote}/>
+        <svg className="connect-v4-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+          <circle className="connect-v4-note-track" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"/>
+          <circle className="connect-v4-note-progress-fill" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"
+            strokeDasharray={circumference} strokeDashoffset={circumference*(1-progress)}/>
+        </svg>
+        {duration>0&&<span className="connect-v4-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
       </div>
-      <span className="connect-v4-note-time">{timeLabel(sentAt)}{mine&&<MessageChecks delivered={delivered} read={read}/>}</span>
+      {expanded&&<button type="button" className="connect-v4-note-close connect-v5-note-close" aria-label="Свернуть видеокружок" onClick={closeNote}>
+        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"/></svg>
+      </button>}
+      <button type="button" className="connect-v4-note-sound connect-v5-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
+        title={muted?'Включить звук':'Выключить звук'} onClick={event=>{
+          event.stopPropagation();
+          const video=ref.current;if(!video)return;
+          const next=!video.muted;
+          mutedRef.current=next;video.muted=next;setMuted(next);
+          if(!next){userPaused.current=false;claimVisibleVideo(video);}
+        }}><ConnectSoundGlyph muted={muted}/></button>
+      <span className="connect-v4-note-time connect-v5-note-time">{timeLabel(sentAt)}{mine&&<MessageChecks delivered={delivered} read={read}/>}</span>
     </div>
   </div>;
 }
@@ -2843,7 +2839,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                     <div className={'message-row ' + (mine ? 'outgoing' : 'incoming') + (selectedIds.includes(m.id)?' is-selected':'')}>
                     {selectionMode&&<input className="message-select-check" type="checkbox" aria-label="Выбрать сообщение" checked={selectedIds.includes(m.id)} onChange={()=>selectOne(m.id)}/>}
                     {swipe?.id === m.id && <span className="swipe-reply-icon"><Icon name="reply" size={22}/></span>}
-                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(forwardedMessage(m.body).text) || /^\[\[connect-custom-sticker:[0-9a-f-]{36}\]\]$/.test(forwardedMessage(m.body).text) || isKeyboardSticker(m) || (!m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()))) ? ' sticker-bubble' : '') + (!m.deleted_at && !m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()) ? ' emoji-only' : '') + (!m.deleted_at && (parseAlbum(m.body).length>0 || (m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video') && !isKeyboardSticker(m))) ? ' media-only' : '') + (!m.deleted_at && isVideoNote(m) ? ' video-note-bubble' : '') + ((m.attachment_kind==='audio'||isPlayableAudioFile(m)) ? ' voice-note-bubble' : '')}
+                    <div className={'bubble ' + (mine ? 'sent' : 'received') + (m.deleted_at ? ' removed' : '') + (!m.deleted_at && (stickerFromBody(forwardedMessage(m.body).text) || /^\[\[connect-custom-sticker:[0-9a-f-]{36}\]\]$/.test(forwardedMessage(m.body).text) || isKeyboardSticker(m) || (!m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()))) ? ' sticker-bubble' : '') + (!m.deleted_at && !m.attachment_path && /^\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic})*$/u.test(forwardedMessage(m.body).text.trim()) ? ' emoji-only' : '') + (!m.deleted_at && (parseAlbum(m.body).length>0 || (m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video') && !isKeyboardSticker(m))) ? ' media-only' : '') + (!m.deleted_at && isVideoNote(m) ? ' video-note-bubble' : '') + (!m.deleted_at && !isVideoNote(m) && (parseAlbum(m.body).length>0 || (m.attachment_path && (m.attachment_kind==='image'||m.attachment_kind==='video') && !isKeyboardSticker(m))) ? ' connect-unified-media' : '') + ((m.attachment_kind==='audio'||isPlayableAudioFile(m)) ? ' voice-note-bubble' : '')}
                       style={swipe?.id===m.id ? { transform:`translate3d(${swipe.offset}px,0,0)` } : undefined}
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
@@ -2855,7 +2851,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                       role="button" aria-label="Удерживайте, чтобы открыть действия с сообщением">
                       {replied && <button type="button" className="quote-box" onClick={e=>{e.stopPropagation();document.getElementById('msg-'+replied.id)?.scrollIntoView({behavior:'smooth',block:'center'});}} onTouchStart={e=>e.stopPropagation()} aria-label="Перейти к исходному сообщению"><strong>{replied.sender_id === user.id ? 'Вы' : currentName}</strong><span>{messagePreview(replied,user.id)}</span></button>}
                       <div className="bubble-body"><>
-                        {forwardedMessage(m.body).from && <div style={{fontSize:12,opacity:0.76,marginBottom:6,fontWeight:600}}>Переслано от {forwardedMessage(m.body).from}</div>}
+                        {forwardedMessage(m.body).from && <div className="connect-forward-compact" title={`Переслано от ${forwardedMessage(m.body).from}`}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 5l6 6-6 6"/><path d="M20 11H9a6 6 0 0 0-6 6v2"/></svg><span>от {forwardedMessage(m.body).from}</span></div>}
                         {parseAlbum(m.body).length>0 && <div className="connect-album-grid">{parseAlbum(m.body).map((item,i)=><button type="button" key={item.path} className="connect-media-thumb" onClick={e=>{e.stopPropagation();if(attachmentUrls[item.path])setMediaViewer({...item,url:attachmentUrls[item.path]})}} aria-label={`Открыть файл ${i+1}`}>{attachmentUrls[item.path]?(item.kind==='image'?(imageInChat(item.path)?<img src={imageInChat(item.path)} alt={item.name} loading="lazy" onError={()=>failedPhotoPreview(item.path)}/>:<span>Миниатюра…</span>):<><VideoThumbnail src={attachmentUrls[item.path]} path={item.path}/><span className="connect-media-play">▶</span></>):<span>Загрузка…</span>}</button>)}</div>}
                         {m.attachment_path && <div className={isKeyboardSticker(m) ? "attachment-preview keyboard-sticker-preview" : m.attachment_kind==='image' ? "attachment-preview connect-adaptive-photo" : m.attachment_kind==='video' && !isVideoNote(m) ? "attachment-preview connect-adaptive-video" : "attachment-preview"} style={m.attachment_kind==='image' && !isKeyboardSticker(m) ? connectPhotoFrameStyle(m.attachment_path) : m.attachment_kind==='video' && !isVideoNote(m) ? connectVideoFrameStyle(m.attachment_path) : undefined}>
                           {!attachmentUrls[m.attachment_path] ? (isKeyboardSticker(m) ? <span className="connect-keyboard-sticker-loading" aria-label="Загрузка стикера"/> : <span>Загрузка вложения…</span>)
