@@ -1,0 +1,87 @@
+# Connect PWA — precise UX correction for voice notes and video circles.
+# Replace the current workflow file with this one:
+# .github/workflows/connect-pwa-gallery-video-transcript.yml
+# Scope: PWA only. No Android, no E2EE, no Supabase schema or calls changes.
+name: Connect PWA — voice notes and video circles polish (FIX3 corrected)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-gallery-video-transcript.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-media-ux-fix3-corrected-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'Chimera1988/connect-messenger' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Decode and run the precise PWA patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/connect-pwa-fix3.patch.py.gz.b64 <<'PATCH_B64'
+          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
+          PATCH_B64
+          python3 - <<'PY'
+          import base64, gzip, pathlib
+          raw = gzip.decompress(base64.b64decode(pathlib.Path('/tmp/connect-pwa-fix3.patch.py.gz.b64').read_text()))
+          pathlib.Path('/tmp/connect-pwa-fix3.patch.py').write_bytes(raw)
+          PY
+          python3 /tmp/connect-pwa-fix3.patch.py
+          git diff --check
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies and Chromium on supported Ubuntu
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+
+      - name: Verify PWA behavior and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Publish only if every check succeeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/page.tsx app/profile-media.css components/ConnectTranscript.tsx
+          if git diff --cached --quiet; then
+            echo 'PWA voice/video UX is already up to date.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Connect PWA: correct speed removal and polish media controls [skip ci]'
+          git push origin HEAD:main
