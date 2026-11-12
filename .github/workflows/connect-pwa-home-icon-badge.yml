@@ -1,0 +1,267 @@
+name: Connect PWA — Home Screen Event Badge
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-home-icon-badge.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-home-icon-badge-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  badge:
+    if: github.repository == 'Chimera1988/connect-messenger' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout current PWA
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Apply badge changes to current PWA only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'BADGE_SOURCE'
+          from pathlib import Path
+
+          def replace_once(path,old,new,label):
+              content=Path(path).read_text(encoding='utf-8')
+              matches=content.count(old)
+              if matches!=1: raise RuntimeError(f'{label}: expected one match, found {matches}')
+              Path(path).write_text(content.replace(old,new,1),encoding='utf-8')
+              print('Updated',path,'—',label)
+
+          def insert_once(path,anchor,new,label):
+              replace_once(path,anchor,new+anchor,label)
+
+          sw='public/sw.js'
+          insert_once(sw,"function markers(){",'''// CONNECT_PWA_HOME_ICON_BADGE_V1
+          // An authoritative foreground snapshot plus only NEW, deduplicated background pushes.
+          // This database holds counts and non-secret event IDs; no messages, tokens or media.
+          const BADGE_DB='connect-home-badge-v1';
+          let badgeWork=Promise.resolve();
+          function badgeQueue(task){const next=badgeWork.then(task,task);badgeWork=next.catch(()=>{});return next;}
+          function badgeOpen(){return new Promise((resolve,reject)=>{
+           const req=indexedDB.open(BADGE_DB,1);
+           req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains('state'))req.result.createObjectStore('state');};
+           req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+          });}
+          function badgeEmpty(){return {chats:{},missed:{count:0,lastAt:''},pending:[]};}
+          function badgeDate(iso){const ms=Date.parse(iso||'');return Number.isFinite(ms)?ms:0;}
+          function badgeCount(state){
+           const base=Object.values(state.chats||{}).reduce((sum,c)=>sum+Math.max(0,Number(c.count)||0),0);
+           return Math.min(9999,Math.max(0,base+Math.max(0,Number(state.missed?.count)||0)+(state.pending||[]).length));
+          }
+          async function badgeDisplay(count){try{
+           const n=self.navigator;
+           if(!n?.setAppBadge)return;
+           if(count>0)await n.setAppBadge(count);
+           else if(n.clearAppBadge)await n.clearAppBadge();else await n.setAppBadge(0);
+          }catch{/* Badging is not available in all browsers/permission states. */}}
+          function badgeChange(user,modify,activate=false){return badgeQueue(async()=>{
+           const db=await badgeOpen();let next=null, active='';
+           try{
+            await new Promise((resolve,reject)=>{
+             const tx=db.transaction('state','readwrite'),store=tx.objectStore('state');
+             const activeReq=store.get('active');
+             activeReq.onsuccess=()=>{active=String(activeReq.result||'');};
+             if(activate)store.put(user,'active');
+             if(user){const request=store.get('user:'+user);
+              request.onsuccess=()=>{next=request.result||badgeEmpty();modify(next);store.put(next,'user:'+user);};
+             }
+             tx.oncomplete=resolve;tx.onerror=tx.onabort=()=>reject(tx.error);
+            });
+           }finally{db.close();}
+           if(activate)active=user;
+           if(active===user)await badgeDisplay(user&&next?badgeCount(next):0);
+          });}
+          function badgeSnapshot(d){
+           const user=typeof d.userId==='string'?d.userId:'';
+           return badgeChange(user,state=>{
+            // A foreground refresh replaces the entire pending-event estimate.
+            const chats={};
+            if(d.chats&&typeof d.chats==='object')for(const [id,count] of Object.entries(d.chats)){
+             if(!/^[0-9a-f-]{36}$/i.test(id))continue;
+             const amount=Math.min(9999,Math.max(0,Math.floor(Number(count)||0)));
+             const lastAt=typeof d.latest?.[id]==='string'?d.latest[id]:'';
+             chats[id]={count:amount,lastAt};
+            }
+            state.chats=chats;
+            state.missed={count:Math.min(9999,Math.max(0,Math.floor(Number(d.missed)||0))),lastAt:typeof d.callsLatest==='string'?d.callsLatest:''};
+            state.pending=[];
+           },true);
+          }
+          function badgeEvent(d,kind){return badgeChange(d.userId,state=>{
+           const id=kind==='call'?d.callId:d.messageId;
+           const at=kind==='call'?d.endedAt:d.createdAt;
+           const chat=d.conversationId;
+           if(typeof id!=='string'||!id||!badgeDate(at))return;
+           if(kind==='message'&&(typeof chat!=='string'||!chat))return;
+           const baseline=kind==='call'?state.missed?.lastAt:state.chats?.[chat]?.lastAt;
+           if(badgeDate(at)<=badgeDate(baseline))return;
+           const pending=Array.isArray(state.pending)?state.pending:[];
+           if(pending.some(item=>item.kind===kind&&item.id===id))return;
+           pending.push({kind,id,at,chat:kind==='message'?chat:''});
+           // Cap memory; foreground reconciliation restores the exact count.
+           state.pending=pending.slice(-300);
+          });}
+          function badgeRead(user,chat,readAt){return badgeChange(user,state=>{
+           const boundary=badgeDate(readAt);
+           if(!boundary||!chat)return;
+           const entry=state.chats?.[chat];
+           if(entry&&badgeDate(entry.lastAt)<=boundary)entry.count=0;
+           state.pending=(state.pending||[]).filter(item=>item.kind!=='message'||item.chat!==chat||badgeDate(item.at)>boundary);
+          });}
+          function badgeCallsViewed(user,viewedAt){return badgeChange(user,state=>{
+           const boundary=badgeDate(viewedAt);if(!boundary)return;
+           if(badgeDate(state.missed?.lastAt)<=boundary)state.missed={count:0,lastAt:viewedAt};
+           state.pending=(state.pending||[]).filter(item=>item.kind!=='call'||badgeDate(item.at)>boundary);
+          });}
+          ''', 'Service worker badge state')
+          replace_once(sw,"async function clearRead(d){await watermark(d.userId,d.conversationId,d.readAt);", "async function clearRead(d){await watermark(d.userId,d.conversationId,d.readAt);await badgeRead(d.userId,d.conversationId,d.readAt).catch(()=>{});",'Read push decrements badge')
+          replace_once(sw,"self.addEventListener('message',event=>{if(event.data?.type==='CONNECT_READ')", "self.addEventListener('message',event=>{if(event.data?.type==='CONNECT_BADGE_SNAPSHOT')event.waitUntil(badgeSnapshot(event.data).catch(()=>{}));if(event.data?.type==='CONNECT_READ')",'Foreground badge snapshot')
+          replace_once(sw,"await watermark(d.userId,'#calls',d.viewedAt);for(const alert", "await watermark(d.userId,'#calls',d.viewedAt);await badgeCallsViewed(d.userId,d.viewedAt).catch(()=>{});for(const alert",'Calls viewed clears badge')
+          replace_once(sw,"data:{kind:'missed-call',userId:d.userId,callId:d.callId,conversationId:d.conversationId,endedAt:d.endedAt}});return;}", "data:{kind:'missed-call',userId:d.userId,callId:d.callId,conversationId:d.conversationId,endedAt:d.endedAt}});await badgeEvent(d,'call').catch(()=>{});return;}", 'Missed-call push increases badge')
+          replace_once(sw,"silent:false,...(isCall?{requireInteraction:true}:{})});", "silent:false,...(isCall?{requireInteraction:true}:{})});if(!isCall)await badgeEvent(d,'message').catch(()=>{});",'Message push increases badge')
+          page='app/page.tsx'
+          insert_once(page,'  function clearConversation(id: string) {','''
+            // CONNECT_PWA_HOME_ICON_BADGE_V1 — authoritative foreground reconciliation.
+            const [badgeCalls,setBadgeCalls]=useState<{userId:string;count:number;latest:string}>({userId:'',count:0,latest:''});
+            useEffect(()=>{
+              const listener=(event:Event)=>{
+                const item=(event as CustomEvent<{userId:string;count:number;latest:string}>).detail;
+                if(!item?.userId||item.userId!==user?.id)return;
+                const count=Math.min(9999,Math.max(0,Math.floor(Number(item.count)||0)));
+                const latest=typeof item.latest==='string'?item.latest:'';
+                setBadgeCalls(prev=>prev.userId===item.userId&&prev.count===count&&prev.latest===latest?prev:{userId:item.userId,count,latest});
+              };
+              window.addEventListener('connect:badge:missed',listener);
+              return()=>window.removeEventListener('connect:badge:missed',listener);
+            },[user?.id]);
+            // Include chats already read: their last known message time prevents a delayed push
+            // from turning a cleared badge back on.
+            const badgeMessages=useMemo(()=>Object.fromEntries(
+              [...new Set([...Object.keys(latest),...Object.keys(unread)])].map(id=>[id,Math.max(0,unread[id]||0)])
+            ),[unread,latest]);
+            const badgeMessageLatest=useMemo(()=>Object.fromEntries(Object.keys(badgeMessages).map(id=>[id,latest[id]?.created_at||''])),[badgeMessages,latest]);
+            const badgeSignature=JSON.stringify({chats:badgeMessages,latest:badgeMessageLatest});
+            useEffect(()=>{
+              if(window.ConnectAndroid)return;
+              const userId=user?.id||'';
+              const calls=badgeCalls.userId===userId?badgeCalls.count:0;
+              const count=userId?Math.min(9999,unreadTotal+calls):0;
+              const nav=navigator as Navigator&{setAppBadge?:(n:number)=>Promise<void>;clearAppBadge?:()=>Promise<void>};
+              // The browser displays the badge only when installed/permissioned; no extra prompt.
+              if(count>0)void nav.setAppBadge?.(count).catch(()=>{});
+              else if(nav.clearAppBadge)void nav.clearAppBadge().catch(()=>{});
+              else void nav.setAppBadge?.(0).catch(()=>{});
+              if(!('serviceWorker'in navigator))return;
+              const snapshot={type:'CONNECT_BADGE_SNAPSHOT',userId,
+                chats:userId?badgeMessages:{},latest:userId?badgeMessageLatest:{},
+                missed:calls,callsLatest:badgeCalls.userId===userId?badgeCalls.latest:''};
+              const send=(worker:ServiceWorker|null|undefined)=>worker?.postMessage(snapshot);
+              if(navigator.serviceWorker.controller)send(navigator.serviceWorker.controller);
+              else void navigator.serviceWorker.ready.then(reg=>send(reg.active)).catch(()=>{});
+            },[user?.id,unreadTotal,badgeSignature,badgeCalls.userId,badgeCalls.count,badgeCalls.latest]);
+          ''', 'PWA badge sync from unread and calls')
+          calls='components/ConnectCallsHub.tsx'
+          insert_once(calls,'function missed(call: Call, self: string) {',"function badgeTime(value:string){const time=Date.parse(value||'');return Number.isFinite(time)?time:0;}\n", 'Call timestamp helper')
+          insert_once(calls,'  function openCalls() {','''
+            // Keep the Home Screen badge consistent with the existing Calls tab counter.
+            useEffect(()=>{
+              if(!userId)return;
+              const latest=visibleCalls.reduce((max,call)=>{
+                const iso=call.ended_at||call.created_at;
+                return badgeTime(iso)>badgeTime(max)?iso:max;
+              },'');
+              window.dispatchEvent(new CustomEvent('connect:badge:missed',{
+                detail:{userId,count:unseenMissed,latest}
+              }));
+            },[userId,unseenMissed,visibleCalls]);
+          ''', 'CallsHub badge reporting')
+
+          # Validate patch wiring without changing phone-call services, UI, SQL, keys or native files.
+          assert 'CONNECT_BADGE_SNAPSHOT' in Path(sw).read_text()
+          assert 'connect:badge:missed' in Path(page).read_text()
+          assert "window.ConnectAndroid)return" in Path(page).read_text()
+          Path('tests/app-badge.test.cjs').write_text('''const {test}=require('node:test');
+          const assert=require('node:assert/strict');
+          const {readFileSync}=require('node:fs');
+          const vm=require('node:vm');
+          const sw=readFileSync('public/sw.js','utf8');
+          const src=sw.split('// CONNECT_PWA_HOME_ICON_BADGE_V1')[1]?.split('function markers(){')[0];
+          assert.ok(src,'missing badge state in service worker');
+          const ctx=vm.createContext({self:{navigator:{}},indexedDB:{},Promise,Date,Number,Math,Object,console});
+          vm.runInContext(src,ctx);
+          vm.runInContext('badgeChange=(_user,edit)=>{edit(state);return Promise.resolve();};let state=badgeEmpty();',ctx);
+          const time=(v)=>`2026-11-13T00:00:${String(v).padStart(2,'0')}Z`;
+          const chat='11111111-1111-4111-8111-111111111111';
+          const invoke=async expression=>await vm.runInContext(expression,ctx);
+
+          test('snapshots replace approximate push totals, duplicate pushes never inflate them',async()=>{
+           await invoke(`badgeSnapshot({userId:'u',chats:{'${chat}':2},latest:{'${chat}':'${time(2)}'},missed:1,callsLatest:'${time(1)}'})`);
+           assert.equal(await invoke('badgeCount(state)'),3);
+           const event=`{userId:'u',kind:'message',conversationId:'${chat}',messageId:'m3',createdAt:'${time(3)}'}`;
+           await invoke(`badgeEvent(${event},'message')`);
+           await invoke(`badgeEvent(${event},'message')`);
+           assert.equal(await invoke('badgeCount(state)'),4);
+           await invoke(`badgeEvent({userId:'u',conversationId:'${chat}',messageId:'old',createdAt:'${time(1)}'},'message')`);
+           assert.equal(await invoke('badgeCount(state)'),4);
+          });
+
+          test('read and calls viewed clear only their respective events',async()=>{
+           await invoke(`badgeSnapshot({userId:'u',chats:{'${chat}':2},latest:{'${chat}':'${time(2)}'},missed:1,callsLatest:'${time(1)}'})`);
+           await invoke(`badgeEvent({userId:'u',conversationId:'${chat}',messageId:'m3',createdAt:'${time(3)}'},'message')`);
+           await invoke(`badgeRead('u','${chat}','${time(3)}')`);
+           assert.equal(await invoke('badgeCount(state)'),1);
+           await invoke(`badgeEvent({userId:'u',callId:'c1',endedAt:'${time(5)}'},'call')`);
+           await invoke(`badgeEvent({userId:'u',callId:'c1',endedAt:'${time(5)}'},'call')`);
+           assert.equal(await invoke('badgeCount(state)'),2);
+           await invoke(`badgeCallsViewed('u','${time(6)}')`);
+           assert.equal(await invoke('badgeCount(state)'),0);
+          });
+          ''',encoding='utf-8')
+          BADGE_SOURCE
+          git diff --check
+
+      - name: Verify service worker syntax
+        run: node --check public/sw.js
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: TypeScript, regression tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          node --test tests/app-badge.test.cjs
+          node tests/missed-call-status.test.cjs
+          node tests/call-push-delivery.test.cjs
+          npm run build
+
+      - name: Commit only verified PWA badge changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- public/sw.js app/page.tsx components/ConnectCallsHub.tsx tests/app-badge.test.cjs
+          if ! git diff --cached --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Connect PWA: badge Home Screen icon for unread chats and missed calls [skip ci]'
+            git push origin HEAD:main
+          fi
