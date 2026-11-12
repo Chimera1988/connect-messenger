@@ -1,0 +1,99 @@
+# Connect PWA — readable checks on colored bubbles + sticker timestamp below image
+# Save as .github/workflows/connect-pwa-receipts-stickers-fix.yml
+# Scoped CSS fix only. No message state, theme palette, video, calls or Android changes.
+name: Connect PWA — receipt contrast and sticker badge FIX
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-receipts-stickers-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-receipts-stickers-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'Chimera1988/connect-messenger' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout current Connect PWA
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply focused CSS fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/connect-unified-chat.css')
+          page_path = Path('app/page.tsx')
+          marker = 'CONNECT_PWA_RECEIPTS_STICKER_VISIBILITY_V1_20261112'
+          if not path.is_file() or not page_path.is_file():
+              raise SystemExit('Required Connect PWA sources are missing; no changes made')
+          existing = path.read_text(encoding='utf-8')
+          page = page_path.read_text(encoding='utf-8')
+          if marker in existing:
+              print('Receipt and sticker fix already applied')
+              raise SystemExit(0)
+          assertions = {
+              'receipt class': '.delivery-checks.is-read' in existing,
+              'sticker badge': '.bubble.sticker-bubble:not(.voice-note-bubble):not(.video-note-bubble) > .bubble-meta' in existing,
+              'old negative sticker offset': 'margin-top:-11px!important;' in existing,
+              'sticker layout': 'sticker-bubble' in page,
+              'receipt JSX': 'function MessageChecks(' in page,
+          }
+          missing = [key for key, ok in assertions.items() if not ok]
+          if missing:
+              raise SystemExit('Unexpected PWA baseline, stopping safely: ' + ', '.join(missing))
+          patch = "/* CONNECT_PWA_RECEIPTS_STICKER_VISIBILITY_V1_20261112\n * Soft, legible delivery/read checks on bright sent bubbles (all seven themes).\n * Preserve delivery/read semantics; change presentation only.\n */\n.connect-app .message-row.outgoing .bubble.sent:not(.media-only):not(.sticker-bubble):not(.emoji-only):not(.video-note-bubble) .delivery-checks {\n  color: #dce8f7 !important;\n  opacity: 1 !important;\n  filter: drop-shadow(0 1px 1px rgba(0,0,0,.24)) !important;\n}\n.connect-app .message-row.outgoing .bubble.sent:not(.media-only):not(.sticker-bubble):not(.emoji-only):not(.video-note-bubble) .delivery-checks.is-read {\n  color: color-mix(in srgb, #fff 88%, var(--accent2, #86d9ff) 12%) !important;\n}\n.connect-app .message-row.outgoing .bubble.sent:not(.media-only):not(.sticker-bubble):not(.emoji-only):not(.video-note-bubble) .delivery-checks svg {\n  stroke-width: 2.1px !important;\n}\n/* The bubble's subtle meta opacity must not fade the icon as well. */\n.connect-app .message-row.outgoing .bubble.sent:not(.sticker-bubble):not(.emoji-only):not(.media-only):not(.video-note-bubble) > .bubble-meta,\n.connect-app .message-row.outgoing .bubble.sent.voice-note-bubble .voice-message-meta {\n  opacity: .98 !important;\n}\n/* Sticker/emoji timestamps have their own dark/light glass chips: softer thematic read color. */\n.connect-app .message-row.outgoing .bubble.sent.sticker-bubble .delivery-checks.is-read,\n.connect-app .message-row.outgoing .bubble.sent.emoji-only .delivery-checks.is-read {\n  color: color-mix(in srgb, var(--text, #f8f9fd) 75%, var(--accent2, #86d9ff) 25%) !important;\n  opacity: 1 !important;\n}\n/* The sticker stays frameless. Its timestamp chip follows BELOW the image,\n * never over its pixels; no negative offset and no absolute positioning. */\n.connect-app .message-row .bubble.sticker-bubble:not(.video-note-bubble) > .bubble-meta {\n  box-sizing: border-box !important;\n  position: relative !important;\n  inset: auto !important;\n  margin: 6px 0 0 auto !important;\n  padding: 4px 7px !important;\n  align-self: flex-end !important;\n  flex: 0 0 auto !important;\n  translate: none !important;\n  transform: none !important;\n  z-index: 1 !important;\n}\n.connect-app .message-row .bubble.sticker-bubble:not(.video-note-bubble) > .bubble-body {\n  position: relative !important;\n  flex: 0 0 auto !important;\n  margin: 0 !important;\n  padding: 0 !important;\n  overflow: visible !important;\n}\n"
+          path.write_text(existing.rstrip() + '\n\n' + patch, encoding='utf-8')
+          print('Applied adaptive receipt contrast + sticker badge below sticker')
+          PY
+          git diff --check
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies and Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+
+      - name: Test existing Connect functionality and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Publish only after all checks pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/connect-unified-chat.css
+          if git diff --cached --quiet; then
+            echo 'Receipt and sticker styling already installed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Connect PWA: readable receipts and sticker badge position [skip ci]'
+          git push origin HEAD:main
