@@ -98,7 +98,8 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
     setPreview(old=>{
       if(!old || !items.length)return old;
       const current=items.findIndex(item=>item.path===old.path);
-      return items[(Math.max(0,current)+direction+items.length)%items.length];
+      const next=current+direction;
+      return next>=0 && next<items.length ? items[next] : old;
     });
   },[items]);
   useEffect(()=>{
@@ -273,6 +274,21 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
     finally { setBusy(false); }
   }
 
+  async function savePreview(item:MediaItem){
+    try{
+      const {data,error}=await client.storage.from(BUCKET).download(item.path);
+      if(error||!data)throw error||new Error('Файл недоступен');
+      const file=new File([data],item.name,{type:item.mime});
+      if(navigator.share&&navigator.canShare?.({files:[file]})){
+        try{await navigator.share({files:[file],title:item.name});return;}
+        catch(e){if((e as Error).name==='AbortError')return;}
+      }
+      const url=URL.createObjectURL(file),link=document.createElement('a');
+      link.href=url;link.download=item.name;document.body.appendChild(link);link.click();link.remove();
+      window.setTimeout(()=>URL.revokeObjectURL(url),60_000);
+    }catch(e){setError('Не удалось сохранить файл: '+(e instanceof Error?e.message:String(e)));}
+  }
+
   return <>
     <header className="profile-top"><button type="button" className="icon-btn" onClick={onBack} aria-label="Вернуться в мой профиль"><span aria-hidden="true" style={{ fontSize: 30, lineHeight: 1 }}>‹</span></button><strong>{heading}</strong></header>
     <div className="connect-profile-media-page">
@@ -310,13 +326,14 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
           if(Math.abs(dx)>55 && Math.abs(dx)>Math.abs(dy)*1.25)navigatePreview(dx>0?-1:1);
         }
       }}>
-      <button type="button" className="connect-profile-photo-close" onClick={()=>setPreview(null)}>Закрыть</button>
+      <button type="button" className="connect-profile-photo-close" onClick={()=>setPreview(null)} aria-label="Закрыть просмотр">✕</button>
       <span className="connect-gallery-count">{items.findIndex(item=>item.path===preview.path)+1} / {items.length}</span>
+      <button type="button" className="connect-gallery-download" onClick={e=>{e.stopPropagation();void savePreview(preview);}} aria-label="Сохранить файл">↓</button>
       {items.length>1 && <><button type="button" className="connect-gallery-nav connect-gallery-prev" onClick={e=>{e.stopPropagation();navigatePreview(-1);}} aria-label="Предыдущий файл">‹</button>
         <button type="button" className="connect-gallery-nav connect-gallery-next" onClick={e=>{e.stopPropagation();navigatePreview(1);}} aria-label="Следующий файл">›</button></>}
       {kind==='videos' ? <video key={preview.path} src={preview.url||undefined} playsInline controls preload="metadata" onClick={e=>e.stopPropagation()} aria-label={preview.name}/>
         : <img key={preview.path} src={preview.url} alt={preview.name} onClick={e=>e.stopPropagation()}/>}
-      <span className="connect-gallery-name">{preview.name}</span>
+      <div className="connect-gallery-description" onClick={e=>e.stopPropagation()}><strong>{preview.name}</strong><small>{preview.createdAt ? new Date(preview.createdAt).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'}) : ''}</small></div>
       {isOwner && kind==='photos' && <button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(preview.mime)} onClick={e=>{e.stopPropagation();void makeAvatar(preview);setPreview(null);}}>Сделать аватаром</button>}
     </div>}
   </>;
