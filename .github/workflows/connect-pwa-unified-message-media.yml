@@ -1,0 +1,167 @@
+# Connect PWA — unified Liquid Glass message media (2026-11-12)
+# Safe, source-anchored, idempotent. Replaces no existing workflow.
+# Upload as .github/workflows/connect-pwa-unified-message-media.yml
+# Do not put this YAML in the repository root or run old FIX workflows again.
+name: Connect PWA — unified message media and receipts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/connect-pwa-unified-message-media.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-unified-message-media-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply-and-verify:
+    if: github.repository == 'Chimera1988/connect-messenger' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - name: Checkout latest PWA main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Extract single-file UI patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/connect-unified-ui-payload.b64 <<'CONNECT_UI_BUNDLE'
+          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
+          AHgAAA==
+          CONNECT_UI_BUNDLE
+          python3 - <<'PY'
+          import base64, tarfile, io
+          from pathlib import Path
+          payload=base64.b64decode(Path('/tmp/connect-unified-ui-payload.b64').read_text().strip())
+          with tarfile.open(fileobj=io.BytesIO(payload),mode='r:gz') as t:
+              expected={'patch.py','connect-unified-chat.css'}
+              files={x.name for x in t.getmembers()}
+              if files!=expected: raise SystemExit(f'Unexpected update files: {files!r}')
+              for x in t.getmembers():
+                  if not x.isfile() or x.name not in expected: raise SystemExit('Unexpected archive item')
+                  Path('/tmp',x.name).write_bytes(t.extractfile(x).read())
+          PY
+          python3 /tmp/patch.py
+          git diff --check
+          echo 'Changed files:'
+          git status --short
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install project and Playwright Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          echo "CONNECT_CHROMIUM_PATH=$(node -e 'process.stdout.write(require("playwright-core").chromium.executablePath())')" >> "$GITHUB_ENV"
+
+      - name: Typecheck, regression tests, and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+
+      - name: Publish only verified frontend changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/page.tsx app/layout.tsx app/connect-unified-chat.css
+          if git diff --cached --quiet; then
+            echo 'Connect PWA unified media is already installed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Connect PWA: unify forwarded media, album layout and message receipts [skip ci]'
+          git push origin HEAD:main
