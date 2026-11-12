@@ -56,6 +56,7 @@ function callDuration(call: Call) {
   const mins = Math.floor(seconds / 60);
   return `${mins}:${String(seconds % 60).padStart(2, '0')}`;
 }
+function badgeTime(value:string){const time=Date.parse(value||'');return Number.isFinite(time)?time:0;}
 function missed(call: Call, self: string) {
   return call.callee_id === self && !call.answered_at && (call.status === 'missed' ||
     (call.status === 'ended' && !!call.ended_at) ||
@@ -376,6 +377,18 @@ export default function ConnectCallsHub() {
   ),[calls,hiddenCallIds,callsClearedBefore]);
   const unseenMissed = userId ? visibleCalls.filter(call =>
     missed(call, userId) && Date.parse(call.ended_at || call.created_at) > lastViewed).length : 0;
+
+  // Keep the Home Screen badge consistent with the existing Calls tab counter.
+  useEffect(()=>{
+    if(!userId)return;
+    const latest=visibleCalls.reduce((max,call)=>{
+      const iso=call.ended_at||call.created_at;
+      return badgeTime(iso)>badgeTime(max)?iso:max;
+    },'');
+    window.dispatchEvent(new CustomEvent('connect:badge:missed',{
+      detail:{userId,count:unseenMissed,latest}
+    }));
+  },[userId,unseenMissed,visibleCalls]);
   function openCalls() {
     const now = Date.now();
     setLastViewed(now);

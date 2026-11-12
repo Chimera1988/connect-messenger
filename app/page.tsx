@@ -2173,6 +2173,45 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   const filteredContacts = contacts.filter(p => p.display_name.toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   const unreadTotal = Object.values(unread).reduce((sum, n) => sum + n, 0);
 
+
+  // CONNECT_PWA_HOME_ICON_BADGE_V1 — authoritative foreground reconciliation.
+  const [badgeCalls,setBadgeCalls]=useState<{userId:string;count:number;latest:string}>({userId:'',count:0,latest:''});
+  useEffect(()=>{
+    const listener=(event:Event)=>{
+      const item=(event as CustomEvent<{userId:string;count:number;latest:string}>).detail;
+      if(!item?.userId||item.userId!==user?.id)return;
+      const count=Math.min(9999,Math.max(0,Math.floor(Number(item.count)||0)));
+      const latest=typeof item.latest==='string'?item.latest:'';
+      setBadgeCalls(prev=>prev.userId===item.userId&&prev.count===count&&prev.latest===latest?prev:{userId:item.userId,count,latest});
+    };
+    window.addEventListener('connect:badge:missed',listener);
+    return()=>window.removeEventListener('connect:badge:missed',listener);
+  },[user?.id]);
+  // Include chats already read: their last known message time prevents a delayed push
+  // from turning a cleared badge back on.
+  const badgeMessages=useMemo(()=>Object.fromEntries(
+    [...new Set([...Object.keys(latest),...Object.keys(unread)])].map(id=>[id,Math.max(0,unread[id]||0)])
+  ),[unread,latest]);
+  const badgeMessageLatest=useMemo(()=>Object.fromEntries(Object.keys(badgeMessages).map(id=>[id,latest[id]?.created_at||''])),[badgeMessages,latest]);
+  const badgeSignature=JSON.stringify({chats:badgeMessages,latest:badgeMessageLatest});
+  useEffect(()=>{
+    if(window.ConnectAndroid)return;
+    const userId=user?.id||'';
+    const calls=badgeCalls.userId===userId?badgeCalls.count:0;
+    const count=userId?Math.min(9999,unreadTotal+calls):0;
+    const nav=navigator as Navigator&{setAppBadge?:(n:number)=>Promise<void>;clearAppBadge?:()=>Promise<void>};
+    // The browser displays the badge only when installed/permissioned; no extra prompt.
+    if(count>0)void nav.setAppBadge?.(count).catch(()=>{});
+    else if(nav.clearAppBadge)void nav.clearAppBadge().catch(()=>{});
+    else void nav.setAppBadge?.(0).catch(()=>{});
+    if(!('serviceWorker'in navigator))return;
+    const snapshot={type:'CONNECT_BADGE_SNAPSHOT',userId,
+      chats:userId?badgeMessages:{},latest:userId?badgeMessageLatest:{},
+      missed:calls,callsLatest:badgeCalls.userId===userId?badgeCalls.latest:''};
+    const send=(worker:ServiceWorker|null|undefined)=>worker?.postMessage(snapshot);
+    if(navigator.serviceWorker.controller)send(navigator.serviceWorker.controller);
+    else void navigator.serviceWorker.ready.then(reg=>send(reg.active)).catch(()=>{});
+  },[user?.id,unreadTotal,badgeSignature,badgeCalls.userId,badgeCalls.count,badgeCalls.latest]);
   function clearConversation(id: string) {
     if (!user || !window.confirm('Очистить переписку только на этом устройстве? У собеседника сообщения останутся.')) return;
     const next={...clearedChats,[id]:new Date().toISOString()};
