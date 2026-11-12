@@ -487,3 +487,51 @@
     max-width: min(284px, calc(100vw - 30px)) !important;
   }
 }
+
+/* CONNECT_PWA_RECEIPTS_STICKER_VISIBILITY_V1_20261112
+ * Soft, legible delivery/read checks on bright sent bubbles (all seven themes).
+ * Preserve delivery/read semantics; change presentation only.
+ */
+.connect-app .message-row.outgoing .bubble.sent:not(.media-only):not(.sticker-bubble):not(.emoji-only):not(.video-note-bubble) .delivery-checks {
+  color: #dce8f7 !important;
+  opacity: 1 !important;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,.24)) !important;
+}
+.connect-app .message-row.outgoing .bubble.sent:not(.media-only):not(.sticker-bubble):not(.emoji-only):not(.video-note-bubble) .delivery-checks.is-read {
+  color: color-mix(in srgb, #fff 88%, var(--accent2, #86d9ff) 12%) !important;
+}
+.connect-app .message-row.outgoing .bubble.sent:not(.media-only):not(.sticker-bubble):not(.emoji-only):not(.video-note-bubble) .delivery-checks svg {
+  stroke-width: 2.1px !important;
+}
+/* The bubble's subtle meta opacity must not fade the icon as well. */
+.connect-app .message-row.outgoing .bubble.sent:not(.sticker-bubble):not(.emoji-only):not(.media-only):not(.video-note-bubble) > .bubble-meta,
+.connect-app .message-row.outgoing .bubble.sent.voice-note-bubble .voice-message-meta {
+  opacity: .98 !important;
+}
+/* Sticker/emoji timestamps have their own dark/light glass chips: softer thematic read color. */
+.connect-app .message-row.outgoing .bubble.sent.sticker-bubble .delivery-checks.is-read,
+.connect-app .message-row.outgoing .bubble.sent.emoji-only .delivery-checks.is-read {
+  color: color-mix(in srgb, var(--text, #f8f9fd) 75%, var(--accent2, #86d9ff) 25%) !important;
+  opacity: 1 !important;
+}
+/* The sticker stays frameless. Its timestamp chip follows BELOW the image,
+ * never over its pixels; no negative offset and no absolute positioning. */
+.connect-app .message-row .bubble.sticker-bubble:not(.video-note-bubble) > .bubble-meta {
+  box-sizing: border-box !important;
+  position: relative !important;
+  inset: auto !important;
+  margin: 6px 0 0 auto !important;
+  padding: 4px 7px !important;
+  align-self: flex-end !important;
+  flex: 0 0 auto !important;
+  translate: none !important;
+  transform: none !important;
+  z-index: 1 !important;
+}
+.connect-app .message-row .bubble.sticker-bubble:not(.video-note-bubble) > .bubble-body {
+  position: relative !important;
+  flex: 0 0 auto !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: visible !important;
+}
