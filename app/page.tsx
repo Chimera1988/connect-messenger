@@ -2852,7 +2852,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
                       onPointerMoveCapture={e=>{const g=gesture.current;if(g&&e.target instanceof Element&&e.target.closest('.voice-wave')&&(Math.abs(e.clientX-g.x)>8||Math.abs(e.clientY-g.y)>8)){clearGestureTimer();gesture.current=null;setSwipe(null);}}}
-                      onClickCapture={e=>{if(selectionMode){e.preventDefault();e.stopPropagation();selectOne(m.id);}else if(Date.now()<suppressMessageClick.current){e.preventDefault();e.stopPropagation();}}}
+                      onClickCapture={e=>{if(selectionMode){e.preventDefault();e.stopPropagation();selectOne(m.id);}else if(Date.now()<suppressMessageClick.current && !(e.target instanceof Element && e.target.closest('.connect-transcript'))){e.preventDefault();e.stopPropagation();}}}
                       onClick={()=>{if(selectionMode)selectOne(m.id)}}
                       onContextMenu={e => { e.preventDefault(); if(selectionMode)selectOne(m.id);else openMenu(m, e.currentTarget); }}
                       onKeyDown={e => bubbleKey(e, m)} tabIndex={m.deleted_at ? -1 : 0}
