@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import * as tus from 'tus-js-client';
 import { ConnectMusicLibrary } from './ConnectMusicSystem';
+import ConnectGalleryViewer from './ConnectGalleryViewer';
 import { readProfileLibrary, writeProfileLibrary, removeProfileLibraryItem, type ProfileLibraryRow } from '../lib/profile-media-index';
 import { resolveCachedProfileFile, prefetchProfileFile, cacheUploadedProfileFile, retireCachedProfileFile } from '../lib/media-cache';
 // CONNECT_PROFILE_MEDIA_INSTANT_CACHE_V3_20261111
@@ -318,23 +319,21 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
       </>}
       <p className="connect-profile-media-hint">{isOwner ? 'Медиа доступны другим участникам Connect при просмотре твоего профиля. Максимум 100 МБ на файл.' : 'Медиа этого пользователя доступны для просмотра и прослушивания только участникам Connect.'}</p>
     </div>
-    {preview && <div className="connect-profile-photo-overlay" role="dialog" aria-modal="true" aria-label={kind==='photos'?'Просмотр фотографий':'Просмотр видео'}
-      onClick={()=>setPreview(null)}
-      onTouchStart={e=>{const touch=e.touches[0];if(touch)swipeStart.current={x:touch.clientX,y:touch.clientY};}}
-      onTouchEnd={e=>{const touch=e.changedTouches[0];const start=swipeStart.current;swipeStart.current=null;
-        if(touch && start){const dx=touch.clientX-start.x;const dy=touch.clientY-start.y;
-          if(Math.abs(dx)>55 && Math.abs(dx)>Math.abs(dy)*1.25)navigatePreview(dx>0?-1:1);
-        }
-      }}>
-      <button type="button" className="connect-profile-photo-close" onClick={()=>setPreview(null)} aria-label="Закрыть просмотр">✕</button>
-      <span className="connect-gallery-count">{items.findIndex(item=>item.path===preview.path)+1} / {items.length}</span>
-      <button type="button" className="connect-gallery-download" onClick={e=>{e.stopPropagation();void savePreview(preview);}} aria-label="Сохранить файл">↓</button>
-      {items.length>1 && <><button type="button" className="connect-gallery-nav connect-gallery-prev" onClick={e=>{e.stopPropagation();navigatePreview(-1);}} aria-label="Предыдущий файл">‹</button>
-        <button type="button" className="connect-gallery-nav connect-gallery-next" onClick={e=>{e.stopPropagation();navigatePreview(1);}} aria-label="Следующий файл">›</button></>}
-      {kind==='videos' ? <video key={preview.path} src={preview.url||undefined} playsInline controls preload="metadata" onClick={e=>e.stopPropagation()} aria-label={preview.name}/>
-        : <img key={preview.path} src={preview.url} alt={preview.name} onClick={e=>e.stopPropagation()}/>}
-      <div className="connect-gallery-description" onClick={e=>e.stopPropagation()}><strong>{preview.name}</strong><small>{preview.createdAt ? new Date(preview.createdAt).toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric'}) : ''}</small></div>
-      {isOwner && kind==='photos' && <button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(preview.mime)} onClick={e=>{e.stopPropagation();void makeAvatar(preview);setPreview(null);}}>Сделать аватаром</button>}
-    </div>}
+    {preview && <ConnectGalleryViewer
+      items={items.map(item=>({path:item.path,name:item.name,url:item.url,kind:kind==='videos'?'video' as const:'image' as const}))}
+      currentPath={preview.path}
+      onClose={()=>setPreview(null)}
+      onStep={navigatePreview}
+      onSave={item=>{const original=items.find(row=>row.path===item.path);if(original)void savePreview(original);}}
+      onFetch={async item=>{
+        const {data,error}=await client.storage.from(BUCKET).download(item.path);
+        if(error||!data)throw error||new Error('Файл недоступен');
+        return data;
+      }}
+      onAvatar={isOwner&&kind==='photos'&&['image/jpeg','image/png','image/webp'].includes(preview.mime)?item=>{
+        const original=items.find(row=>row.path===item.path);
+        if(original){setPreview(null);void makeAvatar(original);}
+      }:undefined}
+    />}
   </>;
 }

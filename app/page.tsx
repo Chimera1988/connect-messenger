@@ -1,4 +1,5 @@
 'use client';
+// CONNECT_PWA_GALLERY_CIRCLES_TRANSCRIPT_FIX_V2_20261112
 
 // CONNECT_PWA_GALLERY_VIDEO_NOTE_TRANSCRIPT_V1_20261112
 import RecordingBar from '../components/ConnectRecordingBar';
@@ -13,6 +14,7 @@ import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
 import ConnectSplashScreen from '../components/ConnectSplashScreen';
 import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
 import ConnectTranscript from '../components/ConnectTranscript';
+import ConnectGalleryViewer from '../components/ConnectGalleryViewer';
 import { warmOwnProfileLibraries, warmPeerProfileLibraries } from '../lib/profile-media-index';
 import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
 import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
@@ -315,8 +317,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
         onKeyDown={e => {const audio=audioRef.current;if(!audio)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();audio.currentTime=Math.max(0,Math.min(duration,audio.currentTime+(e.key==='ArrowRight'?5:-5)));}}}>
         {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
       </div>
-      <div className="voice-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span><button type="button" className="voice-speed" onClick={e=>{e.stopPropagation();changeSpeed();}} aria-label="Скорость воспроизведения">{speed}×</button>{onSave&&<button className="voice-speed" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div>
-      {messageId && supabase && <ConnectTranscript client={supabase} messageId={messageId}/>}
+      <div className="voice-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span><button type="button" className="voice-speed" onClick={e=>{e.stopPropagation();changeSpeed();}} aria-label="Скорость воспроизведения">{speed}×</button>{onSave&&<button className="voice-speed" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<div className="connect-voice-meta-stack">{messageId && supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div></div>
     </div>
   </div>;
 });
@@ -715,7 +716,7 @@ function isVideoNote(m: Message): boolean {
 }
 
 // Connect video-note sound control v3: round progress and mute below the circle
-function VideoNoteBubble({src,name,path,messageId}:{src:string;name:string;path:string;messageId:string}) {
+function VideoNoteBubble({src,name,path,messageId,sentAt,mine,delivered,read}:{src:string;name:string;path:string;messageId:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean}) {
   const [poster,setPoster]=useState<string|undefined>();
   useEffect(()=>{
     let alive=true;setPoster(undefined);
@@ -727,23 +728,31 @@ function VideoNoteBubble({src,name,path,messageId}:{src:string;name:string;path:
   const [muted,setMuted]=useState(true);
   const [duration,setDuration]=useState(0);
   const [expanded,setExpanded]=useState(false);
-  const [speed,setSpeed]=useState(1);
   const [progress,setProgress]=useState(0);
   const userPaused=useRef(false),mutedRef=useRef(true);
   useVisibleVideo(ref,src,userPaused,mutedRef);
   const circumference=2*Math.PI*47;
+  const toggleNote=(event:React.MouseEvent)=>{
+    event.stopPropagation();
+    const video=ref.current;if(!video)return;
+    if(!expanded){
+      setExpanded(true);userPaused.current=false;
+      claimVisibleVideo(video);
+      void video.play().catch(()=>{});
+      return;
+    }
+    userPaused.current=!video.paused;
+    if(!userPaused.current)claimVisibleVideo(video);else reconcileVisibleVideos();
+  };
   return <div className={'connect-video-note'+(expanded?' expanded':'')}>
     <div className="connect-video-note-media">
-      <button type="button" className="connect-video-note-screen" aria-label="Приостановить или продолжить видеокружок"
-        onClick={event=>{
-          event.stopPropagation();const video=ref.current;if(!video)return;
-          userPaused.current=!video.paused;
-          if(!userPaused.current)claimVisibleVideo(video);else reconcileVisibleVideos();
-        }}>
+      <button type="button" className="connect-video-note-screen"
+        aria-label={expanded?'Пауза или воспроизведение видеокружка':'Увеличить и воспроизвести видеокружок'}
+        onClick={toggleNote}>
         <video ref={ref} poster={poster} muted={muted} playsInline loop preload="none" aria-label={name}
-          onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d)}}
-          onTimeUpdate={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}
-          onSeeked={event=>{const v=event.currentTarget;const d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)))}}/>
+          onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
+          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}
+          onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
       </button>
       <svg className="connect-video-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
         <circle className="connect-video-note-progress-track" cx="50" cy="50" r="47" fill="none" strokeWidth="2.7"/>
@@ -751,19 +760,23 @@ function VideoNoteBubble({src,name,path,messageId}:{src:string;name:string;path:
           strokeDasharray={circumference} strokeDashoffset={circumference*(1-progress)}/>
       </svg>
       {duration>0&&<span className="connect-video-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
+      {expanded && <button type="button" className="connect-video-note-close" aria-label="Уменьшить видеокружок" onClick={event=>{
+        event.stopPropagation();setExpanded(false);userPaused.current=true;ref.current?.pause();
+      }}><Icon name="close" size={24}/></button>}
     </div>
-    <div className="connect-video-note-controls">
-      <button type="button" className="connect-video-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
-        title={muted?'Включить звук':'Выключить звук'}
-        onClick={event=>{
-          event.stopPropagation();const video=ref.current;if(!video)return;
-          const next=!video.muted;mutedRef.current=next;video.muted=next;setMuted(next);
-          if(!next){userPaused.current=false;claimVisibleVideo(video);}
-        }}><ConnectSoundGlyph muted={muted}/></button>
-      <button type="button" className="connect-video-note-expand" onClick={event=>{event.stopPropagation();setExpanded(value=>!value);}} aria-expanded={expanded} aria-label={expanded?'Уменьшить видеокружок':'Увеличить видеокружок'}>{expanded?'Свернуть':'Развернуть'}</button>
-      {expanded && <button type="button" className="connect-video-note-speed" onClick={event=>{event.stopPropagation();const next=speed===1?1.5:speed===1.5?2:1;setSpeed(next);if(ref.current)ref.current.playbackRate=next;}} aria-label="Скорость видео">{speed}×</button>}
+    <div className="connect-video-note-footer">
+      <div className="connect-video-note-actions">
+        <button type="button" className="connect-video-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
+          title={muted?'Включить звук':'Выключить звук'}
+          onClick={event=>{
+            event.stopPropagation();const video=ref.current;if(!video)return;
+            const next=!video.muted;mutedRef.current=next;video.muted=next;setMuted(next);
+            if(!next){userPaused.current=false;claimVisibleVideo(video);}
+          }}><ConnectSoundGlyph muted={muted}/></button>
+        {supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}
+      </div>
+      <span className="connect-video-note-time">{timeLabel(sentAt)}{mine&&<MessageChecks delivered={delivered} read={read}/>}</span>
     </div>
-    {expanded && supabase && <ConnectTranscript client={supabase} messageId={messageId}/>}
   </div>;
 }
 
@@ -2848,7 +2861,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                                      onError={()=>failedPhotoPreview(m.attachment_path!)}
                                      onLoad={e=>{if(!supportsPhotoPreview(m.attachment_path!))connectUpdatePhotoSize(e.currentTarget,m.attachment_path!);}}/>
                                  : <span>Миниатюра…</span>}</button>)
-                            : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'} path={m.attachment_path} messageId={m.id}/>
+                            : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'} path={m.attachment_path} messageId={m.id} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>
                             : m.attachment_kind==='video' ? <ConnectInlineAutoplayVideo src={attachmentUrls[m.attachment_path]} path={m.attachment_path} onOpen={()=>setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}/>
                             : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} messageId={m.id} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/></div>
                             : isPlayableAudioFile(m) ? <VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} fileName={m.attachment_name||'Аудиофайл'} onSave={()=>void saveAttachment(m.attachment_path!,m.attachment_name||'Аудиофайл')} delivered={Boolean(currentPeerState?.delivered&&currentPeerState.delivered>=m.created_at||currentPeerState?.read&&currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read&&currentPeerState.read>=m.created_at)}/>
@@ -2856,7 +2869,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                         </div>}
                         {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);return st?<img className="sent-sticker" src={customStickerUrl(st)} alt="Стикер" loading="lazy"/>:<span>Стикер недоступен</span>})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (parseAlbum(m.body).length ? null : forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
                       </></div>
-                      {m.attachment_kind!=='audio' && !isPlayableAudioFile(m) && <div className="bubble-meta">{!m.deleted_at && isPlayableAudioFile(m) && <button type="button" className="connect-inline-audio-save" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудиофайл')}}>Сохранить</button>}{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>}
+                      {m.attachment_kind!=='audio' && !isPlayableAudioFile(m) && !isVideoNote(m) && <div className="bubble-meta">{!m.deleted_at && isPlayableAudioFile(m) && <button type="button" className="connect-inline-audio-save" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудиофайл')}}>Сохранить</button>}{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>}
                     </div>
                   </div>
                   </div>;
@@ -2974,26 +2987,30 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     {notice && <button type="button" className="notice-toast"  role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
     {forwardIds.length>0&&<div className="forward-overlay"><div className="forward-dialog"><header><strong>Переслать сообщения</strong><button type="button" onClick={()=>setForwardIds([])}><Icon name="close" size={21}/></button></header><p>Выберите получателя · {forwardIds.length} сообщ.</p><div className="forward-contacts">{contacts.map(p=><button type="button" key={p.id} disabled={busy} onClick={()=>void forwardTo(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span>{p.display_name}</span><Icon name="chevron" size={18}/></button>)}</div></div></div>}
     {videoNoteOpen && <VideoNoteRecorder onClose={()=>setVideoNoteOpen(false)} onSend={file=>{setVideoNoteOpen(false);void sendAttachment(file)}}/>}
-    {mediaViewer && <div className="connect-media-overlay" role="dialog" aria-modal="true" aria-label="Просмотр вложения" onClick={()=>setMediaViewer(null)}>
-      <div className="connect-media-toolbar" onClick={e=>e.stopPropagation()}>
-        <button type="button" onClick={()=>setMediaViewer(null)} aria-label="Закрыть">✕</button>
-        <span className="connect-media-counter">{galleryIndex>=0 ? `${galleryIndex+1} / ${gallery.length}` : mediaViewer.name}</span>
-        {galleryIndex>=0 && <button type="button" onClick={()=>{beginForward([gallery[galleryIndex].messageId]);setMediaViewer(null);}} aria-label="Переслать медиа">↪</button>}
-        <button type="button" disabled={savingMedia} onClick={()=>void saveAttachment(mediaViewer.path,mediaViewer.name)}>{savingMedia?'Сохранение…':'Сохранить'}</button>
-      </div>
-      <div className="connect-media-gallery" onClick={e=>e.stopPropagation()} onTouchStart={e=>{mediaTouchStart.current={x:e.touches[0].clientX,y:e.touches[0].clientY}}} onTouchEnd={e=>{const start=mediaTouchStart.current;mediaTouchStart.current=null;if(!start)return;const dx=e.changedTouches[0].clientX-start.x;const dy=e.changedTouches[0].clientY-start.y;if(Math.abs(dx)>65 && Math.abs(dx)>Math.abs(dy)*1.5)stepGallery(dx<0?1:-1)}}>
-        {galleryIndex>0 && <button type="button" className="connect-gallery-arrow prev" aria-label="Предыдущее вложение" onClick={()=>stepGallery(-1)}>‹</button>}
-        <div className="connect-media-stage" key={mediaViewer.path}>
-          {mediaViewer.kind==='image' ? <img src={mediaViewer.url} alt={mediaViewer.name} draggable={false}/> : <video src={mediaViewer.url} controls playsInline autoPlay/>}
-        </div>
-        {galleryIndex>=0 && galleryIndex<gallery.length-1 && <button type="button" className="connect-gallery-arrow next" aria-label="Следующее вложение" onClick={()=>stepGallery(1)}>›</button>}
-      </div>
-      <footer className="connect-media-caption" onClick={e=>e.stopPropagation()}>
-        <strong>{galleryIndex>=0 && gallery[galleryIndex].senderId===user?.id ? 'Вы' : selected?.other?.display_name||'Собеседник'}</strong>
-        <small>{galleryIndex>=0 ? new Date(gallery[galleryIndex].createdAt).toLocaleString('ru-RU',{day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}) : ''}</small>
-        <span title={mediaViewer.name}>{mediaViewer.name}</span>
-      </footer>
-    </div>}
+    {mediaViewer && <ConnectGalleryViewer
+      items={galleryIndex>=0?gallery:[...gallery,mediaViewer]}
+      currentPath={mediaViewer.path}
+      onClose={()=>setMediaViewer(null)}
+      onStep={stepGallery}
+      onSave={item=>saveAttachment(item.path,item.name)}
+      onFetch={async item=>{
+        if(!supabase)throw new Error('Хранилище недоступно');
+        const {data,error}=await supabase.storage.from('connect-attachments').download(item.path);
+        if(error||!data)throw error||new Error('Файл недоступен');
+        return data;
+      }}
+      onForward={item=>{if(item.messageId){beginForward([item.messageId]);setMediaViewer(null);}}}
+      onJump={item=>{
+        if(!item.messageId)return;
+        const id=item.messageId;
+        setMediaViewer(null);
+        requestAnimationFrame(()=>{
+          const node=document.getElementById('msg-'+id);
+          if(node)node.scrollIntoView({block:'center',behavior:'smooth'});
+          else setNotice('Сообщение не найдено в загруженной истории');
+        });
+      }}
+    />}
     {menuMessage && <div className="context-overlay" role="presentation" onClickCapture={e=>{if(Date.now()<suppressMessageClick.current){e.preventDefault();e.stopPropagation();}}} onPointerDownCapture={()=>{suppressMessageClick.current=0;clearGestureTimer();gesture.current=null;}} onKeyDownCapture={()=>{suppressMessageClick.current=0;}}><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
       {isKeyboardSticker(menuMessage) && <button type="button" onClick={() => void saveKeyboardStickerFavorite(menuMessage)} disabled={busy}><Icon name="plus" size={22}/>Добавить в избранное</button>}
       <button type="button" onClick={() => beginForward([menuMessage.id])}><Icon name="forward" size={22}/>Переслать</button>
