@@ -1,6 +1,7 @@
 # Connect PWA: unified chat/profile gallery, video-note controls, opt-in transcription.
 # Upload to: .github/workflows/connect-pwa-gallery-video-transcript.yml
 # No E2EE enablement, no Supabase migrations, no Android changes.
+# FIX: Pin Ubuntu 24.04. Playwright 1.58.2 cannot install Chromium on Ubuntu 26.04.
 name: Connect PWA — galleries, video circles and voice transcription
 
 on:
@@ -20,7 +21,7 @@ concurrency:
 jobs:
   update:
     if: github.repository == 'Chimera1988/connect-messenger' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
