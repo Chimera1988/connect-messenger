@@ -95,10 +95,10 @@
 .connect-video-note-length{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:2;background:#0008;border-radius:10px;color:#fff;padding:3px 8px;font-size:12px;pointer-events:none}
 .connect-video-note-controls{display:flex;align-items:center;justify-content:center;gap:8px;min-height:28px}
 .connect-video-note-sound,.connect-video-note-expand,.connect-video-note-speed{position:static!important;width:auto!important;height:auto!important;min-height:27px;padding:3px 9px;background:#28303c!important;border:0;border-radius:13px;color:#fff;font-size:12px}
-.connect-transcript{display:flex;flex-direction:column;gap:6px;min-width:0;max-width:100%;align-items:stretch}
-.connect-transcript-toggle{align-self:flex-start;border:0;border-radius:11px;background:color-mix(in srgb,var(--accent,#087dff) 18%,#232833);color:var(--text,#fff);font-size:12px;font-weight:650;padding:5px 10px;min-height:28px}
-.connect-transcript-result{background:color-mix(in srgb,var(--panel,#232833) 88%,#fff 12%);border-radius:10px;padding:9px 11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:200px;overflow-y:auto;font-size:13px;line-height:1.45}
-.connect-transcript-error{color:#ff9299}
+
+
+
+
 
 /* CONNECT_PWA_GALLERY_CIRCLES_TRANSCRIPT_FIX_V2_20261112
    One clean, true viewport gallery for chats and profile libraries. */
@@ -152,25 +152,12 @@
 .connect-app .voice-note-bubble .voice-player{overflow:visible!important}
 .connect-app .voice-note-bubble .voice-content{min-width:0;flex:1}
 .connect-app .voice-note-bubble .voice-bottom{display:flex;align-items:flex-end;flex-wrap:wrap;gap:4px 5px}
-.connect-app .connect-voice-meta-stack{display:flex;flex-direction:column;align-items:flex-end;gap:0;margin-left:auto;flex:none;min-width:0}
-.connect-app .connect-voice-meta-stack .voice-message-meta{margin-left:0}
-.connect-app .connect-transcript.is-compact{position:relative;display:inline-flex;align-items:center;width:auto;min-width:0;max-width:none;flex:0 0 auto;overflow:visible}
-.connect-app .connect-transcript.is-compact .connect-transcript-toggle{
-  appearance:none;display:inline-flex;align-items:center;justify-content:center;
-  border:0!important;border-radius:0!important;background:transparent!important;
-  box-shadow:none!important;color:inherit!important;font-size:16px;font-weight:650;
-  line-height:1;height:25px;min-height:25px;min-width:29px;padding:2px 3px;
-}
-.connect-app .connect-transcript.is-compact .connect-transcript-toggle:focus-visible{outline:2px solid var(--accent2);outline-offset:1px}
-.connect-app .connect-transcript.is-compact .connect-transcript-result{
-  position:absolute;z-index:50;bottom:calc(100% + 9px);right:0;
-  width:max-content;min-width:210px;max-width:min(315px,78vw);
-  background:var(--menu,rgba(33,39,52,.98));border:1px solid var(--v4-border,var(--border));
-  border-radius:14px;padding:11px 13px;box-shadow:0 14px 35px rgba(0,0,0,.35);
-  color:var(--text);font-weight:400;font-size:13px;line-height:1.5;
-  white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow-y:auto;
-  -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
-}
+
+
+
+
+
+
 /* Restore the original small round video note, then expand only when tapped. */
 .connect-app .bubble.video-note-bubble,
 .connect-app .bubble.video-note-bubble .attachment-preview,
@@ -236,9 +223,7 @@
   padding:3px!important;margin:0!important;border:0!important;border-radius:0!important;
   background:transparent!important;color:var(--text)!important;box-shadow:none!important;
 }
-.connect-app .bubble.video-note-bubble .connect-video-note-actions .connect-transcript-toggle{
-  font-size:17px!important;height:25px!important;min-height:25px!important;
-}
+
 .connect-app .bubble.video-note-bubble .connect-video-note-time{
   display:inline-flex;align-items:center;gap:3px;font-size:10.5px;opacity:.75;line-height:1.25;white-space:nowrap;
 }
@@ -264,51 +249,12 @@
   gap:6px 8px!important;
   flex-wrap:nowrap!important;
 }
-.connect-app .voice-note-bubble .connect-voice-meta-stack{
-  display:flex!important;
-  flex-direction:column!important;
-  align-items:flex-end!important;
-  justify-content:flex-end!important;
-  gap:2px!important;
-  margin-left:auto!important;
-  flex:0 0 auto!important;
-}
-.connect-app .voice-note-bubble .connect-voice-meta-stack .voice-message-meta{
-  margin-left:0!important;
-  line-height:1.1!important;
-}
-.connect-app .voice-note-bubble .connect-transcript.is-compact{
-  display:inline-flex!important;
-  align-items:center!important;
-  width:auto!important;
-}
-.connect-app .voice-note-bubble .connect-transcript.is-compact .connect-transcript-toggle{
-  appearance:none!important;
-  display:inline-flex!important;
-  align-items:center!important;
-  justify-content:center!important;
-  min-width:42px!important;
-  height:36px!important;
-  padding:0 10px!important;
-  border-radius:12px!important;
-  border:1px solid rgba(255,255,255,.16)!important;
-  background:rgba(19,27,39,.24)!important;
-  color:#fff!important;
-  box-shadow:inset 0 0 .5px rgba(255,255,255,.18)!important;
-  -webkit-backdrop-filter:blur(16px)!important;
-  backdrop-filter:blur(16px)!important;
-  font-size:20px!important;
-  font-weight:650!important;
-  line-height:1!important;
-}
-.connect-app .voice-note-bubble .connect-transcript.is-compact .connect-transcript-toggle:focus-visible{
-  outline:2px solid var(--accent2)!important;
-  outline-offset:1px!important;
-}
-.connect-app .voice-note-bubble .connect-transcript.is-compact .connect-transcript-result{
-  right:0!important;
-  bottom:calc(100% + 10px)!important;
-}
+
+
+
+
+
+
 /* Voice speed button is removed in JSX; never hide .voice-speed because the
    audio-file "Save" action still uses that same class. */
 
@@ -394,9 +340,7 @@
   gap:8px!important;
   margin:0!important;
   padding:0!important;
-}
-.connect-app .bubble.video-note-bubble .connect-video-note-actions > .connect-video-note-sound,
-.connect-app .bubble.video-note-bubble .connect-video-note-actions .connect-transcript-toggle{
+}.connect-app .bubble.video-note-bubble .connect-video-note-actions > .connect-video-note-sound{
   appearance:none!important;
   display:inline-flex!important;
   align-items:center!important;
@@ -416,11 +360,7 @@
   width:36px!important;
   padding:0!important;
 }
-.connect-app .bubble.video-note-bubble .connect-video-note-actions .connect-transcript-toggle{
-  font-size:20px!important;
-  font-weight:650!important;
-  line-height:1!important;
-}
+
 .connect-app .bubble.video-note-bubble .connect-video-note-time{
   display:inline-flex!important;
   align-items:center!important;
@@ -434,23 +374,8 @@
   bottom:10px!important;
 }
 
-/* Same vector arrow + Cyrillic Т on every platform; no iOS emoji variant. */
-.connect-app .connect-transcript.is-compact .connect-transcript-toggle{
-  gap:1px!important;
-  white-space:nowrap!important;
-}
-.connect-app .connect-transcript.is-compact .connect-arrow-t-icon{
-  display:block!important;
-  width:20px!important;
-  height:20px!important;
-  flex:0 0 20px!important;
-}
-.connect-app .connect-transcript.is-compact .connect-transcript-toggle>span{
-  font-family:inherit!important;
-  font-size:18px!important;
-  font-weight:650!important;
-  line-height:1!important;
-}
+
+
 /* Force the media circle itself to stay exactly square, without grey letterboxing. */
 .connect-app .bubble.video-note-bubble .connect-video-note-media>.connect-video-note-screen>video{
   display:block!important;
@@ -524,42 +449,10 @@
   height:32px!important;
   margin:0!important;
 }
-.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript.is-compact {
-  flex:0 0 41px!important;
-  min-width:41px!important;
-  max-width:41px!important;
-  align-self:center!important;
-}
-.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript.is-compact .connect-transcript-toggle {
-  box-sizing:border-box!important;
-  appearance:none!important;
-  width:41px!important;
-  min-width:41px!important;
-  height:35px!important;
-  min-height:35px!important;
-  padding:0 5px!important;
-  gap:1px!important;
-  display:inline-flex!important;
-  align-items:center!important;
-  justify-content:center!important;
-  border:1px solid rgba(255,255,255,.16)!important;
-  border-radius:11px!important;
-  background:rgba(21,31,48,.17)!important;
-  color:inherit!important;
-  box-shadow:none!important;
-  -webkit-backdrop-filter:blur(10px)!important;
-  backdrop-filter:blur(10px)!important;
-}
-.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-arrow-t-icon {
-  width:17px!important;
-  height:17px!important;
-  flex:0 0 17px!important;
-}
-.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript-toggle>span {
-  font-size:17px!important;
-  font-weight:600!important;
-  line-height:1!important;
-}
+
+
+
+
 .connect-app .bubble.voice-note-bubble .connect-voice-v4-bottom {
   display:flex!important;
   align-items:center!important;
@@ -577,11 +470,7 @@
   line-height:1.15!important;
   white-space:nowrap!important;
 }
-.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .connect-transcript-result {
-  z-index:80!important;
-  bottom:calc(100% + 9px)!important;
-  right:0!important;
-}
+
 @media(max-width:360px){
   .connect-app .bubble.voice-note-bubble .voice-player {gap:7px!important;padding:7px 8px!important;}
   .connect-app .bubble.voice-note-bubble .voice-play {flex-basis:44px!important;width:44px!important;height:44px!important;min-height:44px!important;min-width:44px!important;}
@@ -751,10 +640,8 @@
   width:auto!important;
   margin:0!important;
   padding:0!important;
-}
-.connect-app .bubble.video-note-bubble .connect-v4-note-close,
-.connect-app .bubble.video-note-bubble .connect-v4-note-sound,
-.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript.is-compact .connect-transcript-toggle {
+}.connect-app .bubble.video-note-bubble .connect-v4-note-close,
+.connect-app .bubble.video-note-bubble .connect-v4-note-sound{
   box-sizing:border-box!important;
   appearance:none!important;
   display:inline-flex!important;
@@ -777,24 +664,10 @@
   opacity:1!important;
   transform:none!important;
 }
-.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript.is-compact {
-  flex:0 0 auto!important;
-  min-width:0!important;
-  max-width:none!important;
-}
-.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript.is-compact .connect-transcript-toggle {
-  width:42px!important;
-  min-width:42px!important;
-}
-.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-arrow-t-icon {
-  width:17px!important;
-  height:17px!important;
-  flex:0 0 17px!important;
-}
-.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript-toggle>span {
-  font-size:16px!important;
-  font-weight:600!important;
-}
+
+
+
+
 .connect-app .bubble.video-note-bubble .connect-v4-note-sound>svg {
   width:17px!important;
   height:17px!important;
@@ -812,8 +685,185 @@
   width:15px!important;
   height:12px!important;
 }
-.connect-app .bubble.video-note-bubble .connect-v4-note-actions .connect-transcript-result {
-  z-index:80!important;
-  bottom:calc(100% + 7px)!important;
-  right:0!important;
+
+
+
+/* CONNECT_PWA_COMPACT_AUDIO_NO_TRANSCRIPTION_20261112
+   242px audio bubbles, slightly narrower than the 254px video-note frame.
+   Both kinds use the same measured 72px player; audio filename is one line. */
+.connect-app .bubble.sent.voice-note-bubble,
+.connect-app .bubble.received.voice-note-bubble,
+.connect-app .bubble.sent.voice-note-bubble:has(.connect-audio-download),
+.connect-app .bubble.received.voice-note-bubble:has(.connect-audio-download){
+  box-sizing:border-box!important;
+  width:min(242px,calc(100vw - 42px))!important;
+  min-width:0!important;
+  max-width:min(242px,calc(100vw - 42px))!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  overflow:visible!important;
+}
+.connect-app .bubble.voice-note-bubble .bubble-body,
+.connect-app .bubble.voice-note-bubble .attachment-preview,
+.connect-app .bubble.voice-note-bubble .connect-audio-download{
+  display:block!important;
+  box-sizing:border-box!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  margin:0!important;
+  padding:0!important;
+  gap:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  border:0!important;
+}
+.connect-app .bubble.voice-note-bubble .voice-player,
+.connect-app .bubble.voice-note-bubble .connect-audio-download .voice-player{
+  box-sizing:border-box!important;
+  display:flex!important;
+  align-items:center!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  height:72px!important;
+  min-height:72px!important;
+  max-height:72px!important;
+  padding:7px 9px!important;
+  gap:8px!important;
+  border-radius:18px!important;
+  overflow:visible!important;
+}
+.connect-app .bubble.voice-note-bubble .voice-play,
+.connect-app .bubble.voice-note-bubble .connect-audio-download .voice-play{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  flex:0 0 43px!important;
+  width:43px!important;
+  min-width:43px!important;
+  height:43px!important;
+  min-height:43px!important;
+  padding:0!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-content{
+  box-sizing:border-box!important;
+  flex:1 1 0!important;
+  min-width:0!important;
+  max-width:100%!important;
+  display:flex!important;
+  flex-direction:column!important;
+  justify-content:center!important;
+  gap:2px!important;
+  padding:0!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top{
+  display:flex!important;
+  align-items:center!important;
+  width:100%!important;
+  min-width:0!important;
+  height:32px!important;
+  min-height:32px!important;
+  max-height:32px!important;
+  gap:0!important;
+  overflow:hidden!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top .voice-wave,
+.connect-app .bubble.voice-note-bubble .connect-audio-download .voice-wave{
+  flex:1 1 0!important;
+  display:flex!important;
+  align-items:center!important;
+  height:25px!important;
+  min-height:0!important;
+  width:100%!important;
+  min-width:0!important;
+  overflow:hidden!important;
+  gap:1px!important;
+  margin:0!important;
+}
+.connect-app .bubble.voice-note-bubble .voice-bar{
+  min-width:1px!important;
+  max-width:4px!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top.has-file{
+  flex-direction:column!important;
+  align-items:stretch!important;
+  justify-content:center!important;
+  gap:1px!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top.has-file .voice-file-name{
+  box-sizing:border-box!important;
+  display:block!important;
+  flex:0 0 auto!important;
+  width:100%!important;
+  min-width:0!important;
+  max-width:100%!important;
+  height:12px!important;
+  line-height:12px!important;
+  font-size:10px!important;
+  font-weight:550!important;
+  margin:0!important;
+  padding:0!important;
+  white-space:nowrap!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-top.has-file .voice-wave{
+  height:18px!important;
+  max-height:18px!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-bottom,
+.connect-app .bubble.voice-note-bubble .connect-audio-download .connect-voice-v4-bottom{
+  box-sizing:border-box!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  flex-wrap:nowrap!important;
+  width:100%!important;
+  min-width:0!important;
+  min-height:19px!important;
+  max-height:19px!important;
+  gap:3px!important;
+  padding:0!important;
+  margin:0!important;
+  font-size:10px!important;
+  line-height:1.15!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-bottom .voice-message-meta{
+  display:inline-flex!important;
+  align-items:center!important;
+  margin-left:auto!important;
+  font-size:10px!important;
+  line-height:1.1!important;
+  white-space:nowrap!important;
+}
+.connect-app .bubble.voice-note-bubble .connect-voice-v4-bottom .voice-save{
+  appearance:none!important;
+  display:inline-flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  min-width:0!important;
+  min-height:18px!important;
+  max-height:18px!important;
+  padding:1px 5px!important;
+  font-size:9px!important;
+  font-weight:600!important;
+  line-height:1!important;
+  white-space:nowrap!important;
+  border:0!important;
+  border-radius:7px!important;
+  background:color-mix(in srgb,currentColor 15%,transparent)!important;
+  color:inherit!important;
+}
+@media(max-width:360px){
+  .connect-app .bubble.sent.voice-note-bubble,
+  .connect-app .bubble.received.voice-note-bubble,
+  .connect-app .bubble.sent.voice-note-bubble:has(.connect-audio-download),
+  .connect-app .bubble.received.voice-note-bubble:has(.connect-audio-download){
+    width:min(232px,calc(100vw - 34px))!important;
+    max-width:min(232px,calc(100vw - 34px))!important;
+  }
 }

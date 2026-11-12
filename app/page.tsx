@@ -1,9 +1,8 @@
 'use client';
+// CONNECT_PWA_COMPACT_AUDIO_NO_TRANSCRIPTION_20261112
 // CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
 // CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
-// CONNECT_PWA_GALLERY_CIRCLES_TRANSCRIPT_FIX_V2_20261112
 
-// CONNECT_PWA_GALLERY_VIDEO_NOTE_TRANSCRIPT_V1_20261112
 import RecordingBar from '../components/ConnectRecordingBar';
 import CacheSettings from '../components/ConnectCacheSettings';
 import {mediaIdentity, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia} from '../lib/media-cache';
@@ -15,7 +14,6 @@ import ConnectNotificationSettings from '../components/ConnectNotificationSettin
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
 import ConnectSplashScreen from '../components/ConnectSplashScreen';
 import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
-import ConnectTranscript from '../components/ConnectTranscript';
 import ConnectGalleryViewer from '../components/ConnectGalleryViewer';
 import { warmOwnProfileLibraries, warmPeerProfileLibraries } from '../lib/profile-media-index';
 import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
@@ -222,7 +220,7 @@ function voiceTime(seconds: number) {
 }
 
 const voiceWaveformCache = new Map<string, {bars:number[];duration:number}>();
-const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, read, fileName, onSave, messageId }: { src:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean;fileName?:string;onSave?:()=>void;messageId?:string }) {
+const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, read, fileName, onSave }: { src:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean;fileName?:string;onSave?:()=>void }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
@@ -304,8 +302,8 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
       {playing ? <span className="voice-pause-icon"/> : <Icon name="play" size={21}/>}
     </button>
     <div className="voice-content connect-voice-v4-content">
-      {fileName&&<div className="voice-file-name" title={fileName}>{fileName}</div>}
-      <div className="connect-voice-v4-top">
+      <div className={'connect-voice-v4-top'+(fileName?' has-file':'')}>
+        {fileName&&<div className="voice-file-name" title={fileName}>{fileName}</div>}
         <div className="voice-wave" role="slider" tabIndex={0} aria-label="Перемотка голосового сообщения" aria-valuemin={0} aria-valuemax={Math.max(0,Math.round(duration))} aria-valuenow={Math.round(position)}
         onPointerDown={e => {e.stopPropagation();seeking.current=false;wavePointer.current={x:e.clientX,y:e.clientY,started:performance.now()};e.currentTarget.setPointerCapture(e.pointerId);}}
         onPointerMove={e => {const p=wavePointer.current;if(!p)return;if(Math.abs(e.clientY-p.y)>Math.abs(e.clientX-p.x)+8){wavePointer.current=null;seeking.current=false;return;}if(Math.abs(e.clientX-p.x)>8)seeking.current=true;if(seeking.current)seek(e);}}
@@ -314,9 +312,8 @@ const VoicePlayer = memo(function VoicePlayer({ src, sentAt, mine, delivered, re
         onKeyDown={e => {const audio=audioRef.current;if(!audio)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();audio.currentTime=Math.max(0,Math.min(duration,audio.currentTime+(e.key==='ArrowRight'?5:-5)));}}}>
         {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
         </div>
-        {messageId && supabase && <ConnectTranscript client={supabase} messageId={messageId} compact/>}
       </div>
-      <div className="voice-bottom connect-voice-v4-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-speed" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div>
+      <div className="voice-bottom connect-voice-v4-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-save" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div>
     </div>
   </div>;
 });
@@ -715,7 +712,7 @@ function isVideoNote(m: Message): boolean {
 }
 
 // Connect video-note sound control v3: round progress and mute below the circle
-function VideoNoteBubble({src,name,path,messageId,sentAt,mine,delivered,read}:{src:string;name:string;path:string;messageId:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean}) {
+function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;name:string;path:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean}) {
   const [poster,setPoster] = useState<string|undefined>();
   useEffect(()=>{
     let alive=true;
@@ -782,7 +779,6 @@ function VideoNoteBubble({src,name,path,messageId,sentAt,mine,delivered,read}:{s
             mutedRef.current=next;video.muted=next;setMuted(next);
             if(!next){userPaused.current=false;claimVisibleVideo(video);}
           }}><ConnectSoundGlyph muted={muted}/></button>
-        {supabase&&<ConnectTranscript client={supabase} messageId={messageId} compact/>}
       </div>
       <span className="connect-v4-note-time">{timeLabel(sentAt)}{mine&&<MessageChecks delivered={delivered} read={read}/>}</span>
     </div>
@@ -2852,7 +2848,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                       onTouchStart={e => touchStart(e, m)} onTouchMove={e => touchMove(e, m)}
                       onTouchEnd={() => touchEnd(m)} onTouchCancel={() => { clearGestureTimer(); gesture.current = null; setSwipe(null); }}
                       onPointerMoveCapture={e=>{const g=gesture.current;if(g&&e.target instanceof Element&&e.target.closest('.voice-wave')&&(Math.abs(e.clientX-g.x)>8||Math.abs(e.clientY-g.y)>8)){clearGestureTimer();gesture.current=null;setSwipe(null);}}}
-                      onClickCapture={e=>{if(selectionMode){e.preventDefault();e.stopPropagation();selectOne(m.id);}else if(Date.now()<suppressMessageClick.current && !(e.target instanceof Element && e.target.closest('.connect-transcript'))){e.preventDefault();e.stopPropagation();}}}
+                      onClickCapture={e=>{if(selectionMode){e.preventDefault();e.stopPropagation();selectOne(m.id);}else if(Date.now()<suppressMessageClick.current){e.preventDefault();e.stopPropagation();}}}
                       onClick={()=>{if(selectionMode)selectOne(m.id)}}
                       onContextMenu={e => { e.preventDefault(); if(selectionMode)selectOne(m.id);else openMenu(m, e.currentTarget); }}
                       onKeyDown={e => bubbleKey(e, m)} tabIndex={m.deleted_at ? -1 : 0}
@@ -2870,9 +2866,9 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                                      onError={()=>failedPhotoPreview(m.attachment_path!)}
                                      onLoad={e=>{if(!supportsPhotoPreview(m.attachment_path!))connectUpdatePhotoSize(e.currentTarget,m.attachment_path!);}}/>
                                  : <span>Миниатюра…</span>}</button>)
-                            : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'} path={m.attachment_path} messageId={m.id} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>
+                            : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'} path={m.attachment_path} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>
                             : m.attachment_kind==='video' ? <ConnectInlineAutoplayVideo src={attachmentUrls[m.attachment_path]} path={m.attachment_path} onOpen={()=>setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}/>
-                            : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} messageId={m.id} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/></div>
+                            : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/></div>
                             : isPlayableAudioFile(m) ? <VoicePlayer src={attachmentUrls[m.attachment_path]} sentAt={m.created_at} mine={mine} fileName={m.attachment_name||'Аудиофайл'} onSave={()=>void saveAttachment(m.attachment_path!,m.attachment_name||'Аудиофайл')} delivered={Boolean(currentPeerState?.delivered&&currentPeerState.delivered>=m.created_at||currentPeerState?.read&&currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read&&currentPeerState.read>=m.created_at)}/>
                             : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
                         </div>}

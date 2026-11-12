@@ -14,7 +14,6 @@ import './profile-media.css';
 import './music-system.css';
 import './connect-splash.css';
 import './connect-icons.css';
-import './connect-transcript.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
