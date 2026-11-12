@@ -15,6 +15,7 @@ import './connect-unified-chat.css';
 import './music-system.css';
 import './connect-splash.css';
 import './connect-icons.css';
+import './connect-media-frame-overlay.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
