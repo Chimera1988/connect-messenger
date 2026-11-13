@@ -624,15 +624,21 @@ async function cachedChatPoster(path:string):Promise<string|null>{
 /** Save the most recent nonempty decoded frame as a stable attachment poster.
  * PWA only. Cross-origin/tainted video falls back to its uploaded poster.
  */
-function preserveVisibleChatFrame(video:HTMLVideoElement,path:string,display:(url:string)=>void):boolean{
+function preserveVisibleChatFrame(video:HTMLVideoElement,path:string,display:(url:string)=>void,squareCrop=false):boolean{
   if(isNativeMediaRuntime()||!path||!mediaCacheOwner()||video.readyState<2||video.currentTime<.12||!video.videoWidth||!video.videoHeight)return false;
   try{
     const canvas=document.createElement('canvas');
-    const scale=Math.min(1,420/video.videoWidth,420/video.videoHeight);
-    canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
-    canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+    // Fit the actual pixels, not the intrinsic portrait/landscape frame, to the
+    // fixed circular viewport. Other video posters keep their original ratio.
+    const width=video.videoWidth,height=video.videoHeight,edge=Math.min(width,height);
+    const cropSquare=squareCrop&&edge>0;
+    const sourceWidth=cropSquare?edge:width,sourceHeight=cropSquare?edge:height;
+    const scale=Math.min(1,420/sourceWidth,420/sourceHeight);
+    canvas.width=Math.max(1,Math.round(sourceWidth*scale));
+    canvas.height=Math.max(1,Math.round(sourceHeight*scale));
     const ctx=canvas.getContext('2d',{willReadFrequently:true});if(!ctx)return false;
-    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const x=cropSquare?(width-edge)/2:0,y=cropSquare?(height-edge)/2:0;
+    ctx.drawImage(video,x,y,sourceWidth,sourceHeight,0,0,canvas.width,canvas.height);
     // Avoid persisting a decoder's all-black placeholder on iOS.
     const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
     let sampled=0,lit=0;
@@ -681,7 +687,7 @@ function VideoThumbnail({src,path}:{src:string;path?:string}) {
       if(url.length>100){setPoster(url);if(path)rememberChatPoster(mediaCacheOwner(),path,url);}
     }catch{setFailed(true)}
   }
-  return <span ref={frameRef} className="connect-video-preview">
+  return <span ref={frameRef} className={isNativeMediaRuntime()?"connect-video-preview":"connect-video-preview connect-pwa-frame-fit"}>
     {(uploadedPoster || poster) && <img src={uploadedPoster || poster || ''} alt="Предпросмотр видео" onError={()=>{setUploadedPoster(null);setPosterChecked(true);}}/>}
     {near&&posterChecked&&!uploadedPoster&&!poster&&<video ref={videoRef} src={src} playsInline muted preload="metadata"
       onLoadedMetadata={e=>{const v=e.currentTarget;if(path)connectUpdateVideoFrame(v,path);else syncVideoThumbnailSize(v);try{v.currentTime=path && Number.isFinite(v.duration) && v.duration>.3 ? Math.min(1.2,Math.max(.3,v.duration*.12),v.duration*.8) : Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
@@ -754,7 +760,7 @@ function ConnectInlineAutoplayVideo({src,path,onOpen}:{src:string;path:string;on
   const userPaused=useRef(false);
   useVisibleVideo(ref,src,userPaused,soundRef,freezeFrame);
 
-  return <div className="connect-inline-autoplay-video">
+  return <div className={isNativeMediaRuntime()?"connect-inline-autoplay-video":"connect-inline-autoplay-video connect-pwa-frame-fit"}>
     <button type="button" className="connect-inline-autoplay-video-open" aria-label="Открыть видео на весь экран"
       onClick={event=>{event.stopPropagation();onOpen();}}>
       {!isNativeMediaRuntime()&&(poster?<img className="connect-inline-video-still" src={poster} alt="" aria-hidden="true"/>:<span className="connect-inline-video-still-fallback" aria-hidden="true">▶</span>)}
@@ -799,7 +805,7 @@ function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;
   const [expanded,setExpanded]=useState(false);
   const [progress,setProgress]=useState(0);
   const userPaused=useRef(false),mutedRef=useRef(true);
-  const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster);};
+  const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster,true);};
   useVisibleVideo(ref,src,userPaused,mutedRef,freezeFrame);
   const circumference=2*Math.PI*47;
   const toggleNote=(event:React.MouseEvent)=>{
@@ -822,7 +828,7 @@ function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;
     userPaused.current=true;
     ref.current?.pause();
   };
-  return <div className={'connect-v4-video-note connect-v5-video-note'+(expanded?' is-expanded':'')}>
+  return <div className={'connect-v4-video-note connect-v5-video-note'+(expanded?' is-expanded':'')+(!isNativeMediaRuntime()?' connect-pwa-frame-fit':'')}>
     <div className="connect-v5-note-stage">
       <div className="connect-v4-note-circle">
         {!isNativeMediaRuntime()&&(poster?<img className="connect-note-still" src={poster} alt="" aria-hidden="true"/>:<span className="connect-note-still connect-note-still-fallback" aria-hidden="true">▶</span>)}
@@ -830,7 +836,7 @@ function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;
           onLoadedData={()=>{/* Wait for a drawable frame instead of revealing iOS decoder black. */}}
           onEmptied={()=>{if(!isNativeMediaRuntime())setVideoFrameReady(false);}}
           onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
-          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));if(!isNativeMediaRuntime()&&v.currentTime>.12){setVideoFrameReady(true);if(!firstFrameStored.current)firstFrameStored.current=preserveVisibleChatFrame(v,path,setPoster);}}}
+          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));if(!isNativeMediaRuntime()&&v.currentTime>.12){setVideoFrameReady(true);if(!firstFrameStored.current)firstFrameStored.current=preserveVisibleChatFrame(v,path,setPoster,true);}}}
           onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
         <button type="button" className="connect-v4-note-hit" aria-label={expanded?'Приостановить или воспроизвести видеокружок':'Увеличить и воспроизвести видеокружок'} onClick={toggleNote}/>
         <svg className="connect-v4-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
