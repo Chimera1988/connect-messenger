@@ -1,0 +1,254 @@
+name: Connect PWA | Push Diagnostics FIX1 (VAPID ArrayBuffer)
+'on':
+  workflow_dispatch: {}
+  push:
+    branches:
+    - main
+    paths:
+    - .github/workflows/Connect-PWA-Push-Diagnostics-FIX1.yml
+permissions:
+  contents: write
+concurrency:
+  group: connect-pwa-push-diagnostics-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  push-diagnostics:
+    name: PWA subscription check, test push receipt, regression tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+    - name: Checkout main
+      uses: actions/checkout@v4
+      with:
+        ref: main
+        fetch-depth: 0
+    - name: Set up Node 22
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+    - name: Apply PWA notification diagnostics (Android unchanged)
+      shell: bash
+      run: "python3 - <<'PY'\nfrom pathlib import Path\n\nROOT=Path('.')\nmarker='CONNECT_PWA_PUSH_DIAGNOSTICS_V1'\n\
+        component_path=ROOT/'components/ConnectNotificationSettings.tsx'\nweb_path=ROOT/'components/ConnectWebPushDiagnostics.tsx'\n\
+        sw_path=ROOT/'public/sw.js'\ncss_path=ROOT/'app/liquid-glass.css'\napi_path=ROOT/'app/api/push/diagnostics/route.ts'\n\
+        test_path=ROOT/'tests/push-diagnostics.test.cjs'\nfor required in [component_path,sw_path,css_path]:\n    if\
+        \ not required.is_file():raise RuntimeError('Missing Connect source '+str(required))\norig=component_path.read_text(encoding='utf-8')\n\
+        sw=sw_path.read_text(encoding='utf-8')\ncss=css_path.read_text(encoding='utf-8')\nif marker in orig:\n    if\
+        \ marker not in sw or marker not in css or not api_path.exists() or not web_path.exists() or not test_path.exists():\n\
+        \        raise RuntimeError('Partial diagnostics patch detected; stop instead of overwriting other changes')\n\
+        \    print('Connect PWA push diagnostics already applied; checking project without rewriting.')\nelse:\n    if\
+        \ any(p.exists() for p in [web_path,api_path,test_path]) or marker in sw or marker in css:\n        raise RuntimeError('Unexpected\
+        \ existing diagnostics files; refusing to overwrite')\n    def once(body,old,new,label):\n        n=body.count(old)\n\
+        \        if n!=1:raise RuntimeError(label+': expected one exact anchor, got '+str(n))\n        return body.replace(old,new,1)\n\
+        \    # Keep existing Android settings function/logic intact; mount its component only on Android.\n    orig=once(orig,\"\
+        import type { SupabaseClient } from '@supabase/supabase-js';\",\n        \"import type { SupabaseClient } from\
+        \ '@supabase/supabase-js';\\nimport ConnectWebPushDiagnostics from './ConnectWebPushDiagnostics';\".replace('\\\
+        n','\\n'),'notification import')\n    old=\"export default function ConnectNotificationSettings({supabase,userId}:{supabase:SupabaseClient,userId:string})\
+        \ {\"\n    wrapper=\"\"\"/* CONNECT_PWA_PUSH_DIAGNOSTICS_V1: runtime choice after hydration; Android stays unchanged.\
+        \ */\nexport default function ConnectNotificationSettings(props:{supabase:SupabaseClient;userId:string}){\n \
+        \ const [runtime,setRuntime]=useState<'pending'|'web'|'android'>('pending');\n  useEffect(()=>{setRuntime(window.ConnectAndroid?'android':'web');},[]);\n\
+        \  if(runtime==='pending')return <section className=\"connect-notifications\" aria-label=\"Уведомления\"/>;\n\
+        \  return runtime==='web'?<ConnectWebPushDiagnostics {...props}/>:<ConnectAndroidNotificationSettings {...props}/>;\n\
+        }\nfunction ConnectAndroidNotificationSettings({supabase,userId}:{supabase:SupabaseClient,userId:string}) {\"\
+        \"\"\n    orig=once(orig,old,wrapper,'notification runtime split')\n    # The worker must display a real system\
+        \ notification before acknowledging it.\n    msg_anchor=\"self.addEventListener('message',event=>{if(event.data?.type==='CONNECT_BADGE_SNAPSHOT')\"\
+        \n    msg_new=\"self.addEventListener('message',event=>{if(event.data?.type==='CONNECT_DIAGNOSTICS_PING'){event.ports?.[0]?.postMessage({type:'CONNECT_DIAGNOSTICS_READY'});return;}if(event.data?.type==='CONNECT_BADGE_SNAPSHOT')\"\
+        \n    sw=once(sw,msg_anchor,msg_new,'worker feature handshake')\n    push_anchor=\" if(d.kind==='call-ended')\"\
+        \n    push_new=\"\"\" /* CONNECT_PWA_PUSH_DIAGNOSTICS_V1: diagnostic push never changes unread badges/call states.\
+        \ */\n if(d.kind==='connect-push-diagnostic'){\n  const id=typeof d.requestId==='string'?d.requestId:'';\n  if(!/^[0-9a-f-]{36}$/i.test(id)||typeof\
+        \ d.userId!=='string')return;\n  await self.registration.showNotification('Connect · Проверка',{body:'Тестовое\
+        \ уведомление',icon:'/icon-192.png',badge:'/icon-192.png',tag:'connect-push-check-'+id,data:{kind:'connect-push-diagnostic'},silent:false});\n\
+        \  for(const client of await clients.matchAll({type:'window',includeUncontrolled:true})){\n   if(new URL(client.url).origin===self.location.origin)client.postMessage({type:'CONNECT_PUSH_DIAGNOSTIC_RECEIVED',requestId:id,userId:d.userId,receivedAt:new\
+        \ Date().toISOString()});\n  }\n  return;\n }\n if(d.kind==='call-ended')\"\"\"\n    sw=once(sw,push_anchor,push_new,'push\
+        \ diagnostic before normal messages')\n    click_anchor=\"event.notification.close();const details=event.notification.data||{};event.waitUntil((async()=>{\"\
+        \n    click_new=\"\"\"event.notification.close();const details=event.notification.data||{};\nif(details.kind==='connect-push-diagnostic'){event.waitUntil((async()=>{\n\
+        \ for(const client of await clients.matchAll({type:'window',includeUncontrolled:true}))if(new URL(client.url).origin===self.location.origin){await\
+        \ client.focus();return;}\n await clients.openWindow('/');\n})());return;}\nevent.waitUntil((async()=>{\"\"\"\
+        \n    sw=once(sw,click_anchor,click_new,'diagnostic notification click isolation')\n    css+='\\n'+r'''/* CONNECT_PWA_PUSH_DIAGNOSTICS_V1:\
+        \ seven-theme Liquid Glass PWA diagnostics */\n.connect-app .connect-notifications.connect-web-push{display:flex;flex-direction:column;gap:16px;padding:12px\
+        \ 5px 10px}\n.connect-app .connect-web-push-state,.connect-app .connect-web-push-delivery{display:flex;align-items:flex-start;gap:12px;padding:15px\
+        \ 14px;border:1px solid var(--glass-stroke-hi,rgba(255,255,255,.14));border-radius:17px;background:color-mix(in\
+        \ srgb,var(--glass-surface,rgba(33,44,65,.6)) 85%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px)}\n\
+        .connect-app .connect-web-push-state>div,.connect-app .connect-web-push-delivery>div{flex:1;min-width:0;display:flex;flex-direction:column;gap:7px}\n\
+        .connect-app .connect-web-push-state strong,.connect-app .connect-web-push-delivery strong{color:var(--text);font-size:15px;font-weight:660}\n\
+        .connect-app .connect-web-push-state small,.connect-app .connect-web-push-delivery small{font-size:12px;line-height:1.5;color:var(--muted);overflow-wrap:anywhere}\n\
+        .connect-app .connect-web-push-indicator{width:11px;height:11px;min-width:11px;border-radius:50%;margin-top:3px;background:var(--muted);box-shadow:0\
+        \ 0 0 4px color-mix(in srgb,var(--muted) 14%,transparent)}\n.connect-app .connect-web-push-indicator.is-active{background:var(--wave-primary,var(--accent));box-shadow:0\
+        \ 0 0 4px color-mix(in srgb,var(--wave-primary,var(--accent)) 15%,transparent),0 0 15px color-mix(in srgb,var(--wave-primary,var(--accent))\
+        \ 25%,transparent)}\n.connect-app .connect-web-push-indicator.is-checking{background:var(--wave-secondary,var(--accent))}\n\
+        .connect-app .connect-web-push-indicator.is-denied,.connect-app .connect-web-push-indicator.is-error,.connect-app\
+        \ .connect-web-push-indicator.is-unregistered{background:#e6a55a}\n.connect-app .connect-web-push-primary,.connect-app\
+        \ .connect-web-push-secondary{display:flex!important;align-items:center!important;justify-content:center!important;min-height:48px!important;padding:12px\
+        \ 16px!important;border:1px solid var(--glass-stroke-hi,rgba(255,255,255,.2))!important;border-radius:15px!important;font-size:14px!important;font-weight:650!important;color:var(--text)!important;box-shadow:inset\
+        \ 0 1px 0 rgba(255,255,255,.12)!important}\n.connect-app .connect-web-push-primary{background:linear-gradient(120deg,color-mix(in\
+        \ srgb,var(--wave-primary,var(--accent)) 25%,var(--glass-surface-strong,#172034)),color-mix(in srgb,var(--wave-secondary,var(--accent))\
+        \ 21%,var(--glass-surface-strong,#172034)))!important}\n.connect-app .connect-web-push-secondary{background:color-mix(in\
+        \ srgb,var(--glass-surface,rgba(27,39,58,.64)) 90%,transparent)!important}\n.connect-app .connect-web-push-primary:disabled,.connect-app\
+        \ .connect-web-push-secondary:disabled{opacity:.48}\n.connect-app .connect-web-push-note{font-size:12px;line-height:1.55;color:var(--muted);margin:0\
+        \ 5px}\n'''\n    web_path.write_text(r''''use client';\n\nimport {useCallback,useEffect,useRef,useState} from\
+        \ 'react';\nimport type {SupabaseClient} from '@supabase/supabase-js';\n\ntype Connection = 'checking'|'active'|'unsupported'|'denied'|'permission'|'missing'|'unregistered'|'disabled'|'invalid-key'|'error';\n\
+        type Delivery = 'idle'|'sending'|'confirmed'|'unconfirmed'|'error';\ntype Props={supabase:SupabaseClient;userId:string};\n\
+        const VAPID=process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY||'';\nconst ACK_EVENT='CONNECT_PUSH_DIAGNOSTIC_RECEIVED';\n\
+        \nfunction vapidBytes(value:string):Uint8Array{\n  const pad='='.repeat((4-value.length%4)%4);\n  return Uint8Array.from(atob((value+pad).replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));\n\
+        }\n/** DOM PushSubscriptionOptions requires a real ArrayBuffer, not ArrayBufferLike. */\nfunction vapidKeyBuffer(value:string):ArrayBuffer{\n\
+        \  const bytes=vapidBytes(value);\n  const buffer=new ArrayBuffer(bytes.byteLength);\n  new Uint8Array(buffer).set(bytes);\n\
+        \  return buffer;\n}\nfunction validCurrentKey(sub:PushSubscription):boolean{\n  if(!VAPID)return false;\n  try{\n\
+        \    const expected=vapidBytes(VAPID),current=sub.options.applicationServerKey;\n    if(!current)return true;\
+        \ // Some browsers do not expose the key after subscribing.\n    const actual=new Uint8Array(current);\n    return\
+        \ actual.length===expected.length&&actual.every((n,i)=>n===expected[i]);\n  }catch{return false;}\n}\nasync function\
+        \ diagnosticWorkerReady(reg:ServiceWorkerRegistration):Promise<boolean>{\n  const worker=reg.active||navigator.serviceWorker.controller;\n\
+        \  if(!worker)return false;\n  return new Promise(resolve=>{\n    const channel=new MessageChannel();\n    const\
+        \ timer=window.setTimeout(()=>{channel.port1.close();resolve(false);},2500);\n    channel.port1.onmessage=event=>{\n\
+        \      window.clearTimeout(timer);channel.port1.close();\n      resolve(event.data?.type==='CONNECT_DIAGNOSTICS_READY');\n\
+        \    };\n    try{worker.postMessage({type:'CONNECT_DIAGNOSTICS_PING'},[channel.port2]);}\n    catch{window.clearTimeout(timer);channel.port1.close();resolve(false);}\n\
+        \  });\n}\nfunction available():boolean{\n  return typeof window!=='undefined'&&'serviceWorker'in navigator&&'PushManager'in\
+        \ window&&'Notification'in window&&Boolean(VAPID);\n}\nfunction label(state:Connection):string{\n  return ({checking:'Проверяем\
+        \ подписку',active:'Подписка активна',unsupported:'Web Push недоступен',denied:'Уведомления запрещены в iOS',permission:'Требуется\
+        \ разрешение',missing:'Подписка отсутствует',unregistered:'Устройство не зарегистрировано на сервере',disabled:'Уведомления\
+        \ отключены на сервере','invalid-key':'Подписка требует переподключения',error:'Не удалось проверить подписку'})[state];\n\
+        }\nfunction description(state:Connection):string{\n  return ({checking:'Проверяем разрешение, подписку и регистрацию\
+        \ устройства.',active:'Разрешение получено, текущая подписка есть и зарегистрирована на сервере.',unsupported:'На\
+        \ iPhone открой Connect с экрана «Домой»; проверь настройку Web Push.',denied:'Разреши уведомления для Connect\
+        \ в настройках iPhone.',permission:'Нажми «Подключить уведомления» и предоставь разрешение.',missing:'Нажми «Подключить\
+        \ уведомления», чтобы создать подписку.',unregistered:'Подписка есть на iPhone, но отсутствует в базе Connect.\
+        \ Подключи её повторно.',disabled:'Нажми «Подключить уведомления», чтобы снова включить отправку.', 'invalid-key':'Ключ\
+        \ подписки изменился. Переподключи уведомления.',error:'Не удалось подтвердить регистрацию на сервере. Попробуй\
+        \ ещё раз.'})[state];\n}\nfunction formatDate(value:string|null):string{\n  if(!value)return '';\n  const d=new\
+        \ Date(value);\n  return Number.isFinite(d.getTime())?d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';\n\
+        }\n\nexport default function ConnectWebPushDiagnostics({supabase,userId}:Props){\n  const [connection,setConnection]=useState<Connection>('checking');\n\
+        \  const [delivery,setDelivery]=useState<Delivery>('idle');\n  const [detail,setDetail]=useState('');\n  const\
+        \ [busy,setBusy]=useState(false);\n  const [lastReceived,setLastReceived]=useState<string|null>(null);\n  const\
+        \ pending=useRef<{id:string;timer:number}|null>(null);\n  const refreshGeneration=useRef(0);\n  const lastTestAt=useRef(0);\n\
+        \n  const check=useCallback(async()=>{\n    const generation=++refreshGeneration.current;\n    const update=(next:Connection)=>{if(generation===refreshGeneration.current)setConnection(next);};\n\
+        \    if(!available()){update('unsupported');return;}\n    if(Notification.permission==='denied'){update('denied');return;}\n\
+        \    if(Notification.permission!=='granted'){update('permission');return;}\n    try{\n      const reg=await navigator.serviceWorker.getRegistration();\n\
+        \      const subscription=await reg?.pushManager.getSubscription();\n      if(!subscription){update('missing');return;}\n\
+        \      if(!validCurrentKey(subscription)){update('invalid-key');return;}\n      const {data:{session}}=await\
+        \ supabase.auth.getSession();\n      if(!session){update('error');return;}\n      const res=await fetch('/api/push/diagnostics',{\n\
+        \        method:'POST',cache:'no-store',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},\n\
+        \        body:JSON.stringify({action:'status',endpoint:subscription.endpoint}),\n      });\n      if(!res.ok){update('error');return;}\n\
+        \      const result=await res.json() as {registered?:boolean;enabled?:boolean};\n      update(!result.registered?'unregistered':result.enabled===false?'disabled':'active');\n\
+        \    }catch{update('error');}\n  },[supabase,userId]);\n\n  useEffect(()=>{\n    try{\n      const saved=localStorage.getItem('connect-push-diagnostic-last:'+userId);\n\
+        \      if(saved&&Number.isFinite(Date.parse(saved)))setLastReceived(saved);\n    }catch{}\n    void check();\n\
+        \    const onFocus=()=>{void check();};\n    const onVisible=()=>{if(document.visibilityState==='visible')void\
+        \ check();};\n    const onMessage=(event:MessageEvent)=>{\n      const data=event.data as {type?:string;requestId?:string;userId?:string;receivedAt?:string}|null;\n\
+        \      const request=pending.current;\n      if(!request||!data||data.type!==ACK_EVENT||data.userId!==userId||data.requestId!==request.id)return;\n\
+        \      window.clearTimeout(request.timer);pending.current=null;\n      const at=typeof data.receivedAt==='string'&&Number.isFinite(Date.parse(data.receivedAt))?data.receivedAt:new\
+        \ Date().toISOString();\n      setLastReceived(at);setDelivery('confirmed');setDetail('Тестовый push обработан\
+        \ на этом iPhone.');\n      try{localStorage.setItem('connect-push-diagnostic-last:'+userId,at);}catch{}\n  \
+        \  };\n    window.addEventListener('focus',onFocus);\n    document.addEventListener('visibilitychange',onVisible);\n\
+        \    navigator.serviceWorker?.addEventListener('message',onMessage);\n    return()=>{\n      refreshGeneration.current++;\n\
+        \      window.removeEventListener('focus',onFocus);\n      document.removeEventListener('visibilitychange',onVisible);\n\
+        \      navigator.serviceWorker?.removeEventListener('message',onMessage);\n      if(pending.current){window.clearTimeout(pending.current.timer);pending.current=null;}\n\
+        \    };\n  },[check,userId]);\n\n  async function connect(){\n    if(busy||!available())return;\n    setBusy(true);setDetail('');\n\
+        \    try{\n      // Permission request must originate from this direct button tap on iOS.\n      if(Notification.permission==='denied')throw\
+        \ Error('Разреши уведомления в настройках iOS.');\n      if(Notification.permission!=='granted'&&await Notification.requestPermission()!=='granted')\n\
+        \        throw Error('Разрешение на уведомления не предоставлено.');\n      const {data:{session}}=await supabase.auth.getSession();\n\
+        \      if(!session)throw Error('Для подключения войди в Connect.');\n      const reg=await navigator.serviceWorker.register('/sw.js');\n\
+        \      let subscription=await reg.pushManager.getSubscription();\n      if(subscription&&!validCurrentKey(subscription)){await\
+        \ subscription.unsubscribe();subscription=null;}\n      if(!subscription)subscription=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:vapidKeyBuffer(VAPID)});\n\
+        \      const response=await fetch('/api/push/register',{\n        method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer\
+        \ ${session.access_token}`},\n        body:JSON.stringify({platform:'web',endpoint:subscription.endpoint,subscription:subscription.toJSON()}),\n\
+        \      });\n      if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(typeof body.error==='string'?body.error:'Не\
+        \ удалось зарегистрировать устройство');}\n      // The old PWA toggle may have left server-side notifications\
+        \ disabled.\n      const {data:stored,error:readError}=await supabase.from('notification_preferences')\n    \
+        \    .select('enabled,sound,vibrate').eq('user_id',userId).maybeSingle();\n      if(readError)throw Error('Устройство\
+        \ зарегистрировано, но настройки уведомлений не загрузились.');\n      if(stored?.enabled!==true){\n        const\
+        \ {error:saveError}=await supabase.from('notification_preferences').upsert({\n          user_id:userId,enabled:true,sound:stored?.sound||'soft',vibrate:stored?.vibrate??true,updated_at:new\
+        \ Date().toISOString()\n        },{onConflict:'user_id'});\n        if(saveError)throw Error('Устройство зарегистрировано,\
+        \ но включить отправку не удалось.');\n      }\n      setDetail('Устройство зарегистрировано. Можно проверить\
+        \ тестовую доставку.');\n      setDelivery('idle');\n      await check();\n    }catch(e){setDetail(e instanceof\
+        \ Error?e.message:'Ошибка подключения.');await check();}\n    finally{setBusy(false);}\n  }\n\n  async function\
+        \ testDelivery(){\n    if(connection!=='active'||pending.current||Date.now()-lastTestAt.current<12000||!available())return;\n\
+        \    lastTestAt.current=Date.now();setDelivery('sending');setDetail('Отправляем тестовое уведомление…');\n  \
+        \  const id=crypto.randomUUID();\n    try{\n      const reg=await navigator.serviceWorker.getRegistration();\n\
+        \      const subscription=await reg?.pushManager.getSubscription();\n      if(!reg||!await diagnosticWorkerReady(reg))throw\
+        \ Error('Нужно обновить Service Worker Connect: закрой и снова открой PWA.');\n      if(!subscription)throw Error('Подписка\
+        \ исчезла. Подключи уведомления ещё раз.');\n      const {data:{session}}=await supabase.auth.getSession();\n\
+        \      if(!session)throw Error('Сессия Connect истекла.');\n      const timer=window.setTimeout(()=>{\n     \
+        \   if(pending.current?.id!==id)return;\n        pending.current=null;setDelivery('unconfirmed');\n        setDetail('Подтверждение\
+        \ не получено за 20 секунд. Это не обязательно означает сбой iOS.');\n      },20000);\n      pending.current={id,timer};\n\
+        \      const response=await fetch('/api/push/diagnostics',{\n        method:'POST',cache:'no-store',headers:{'Content-Type':'application/json',Authorization:`Bearer\
+        \ ${session.access_token}`},\n        body:JSON.stringify({action:'test',endpoint:subscription.endpoint,requestId:id}),\n\
+        \      });\n      if(!response.ok){\n        const body=await response.json().catch(()=>({}));\n        throw\
+        \ Error(typeof body.error==='string'?body.error:'Сервер не смог отправить тестовый push.');\n      }\n      //\
+        \ HTTP success is only a provider acceptance, NOT a delivery confirmation.\n      // The only success path is\
+        \ the matching Service Worker message.\n    }catch(e){\n      if(pending.current?.id===id){window.clearTimeout(pending.current.timer);pending.current=null;}\n\
+        \      setDelivery('error');setDetail(e instanceof Error?e.message:'Не удалось отправить тест.');\n      void\
+        \ check();\n    }\n  }\n\n  return <section className=\"connect-notifications connect-web-push\" aria-label=\"\
+        Уведомления PWA\">\n    <div className=\"connect-web-push-state\" role=\"status\" aria-live=\"polite\">\n   \
+        \   <span className={'connect-web-push-indicator is-'+connection} aria-hidden=\"true\"/>\n      <div><strong>{label(connection)}</strong><small>{description(connection)}</small></div>\n\
+        \    </div>\n    <button type=\"button\" className=\"connect-web-push-primary\" disabled={busy||connection==='unsupported'||connection==='checking'}\
+        \ onClick={()=>void connect()}>{busy?'Подключаем…':'Подключить уведомления'}</button>\n    <button type=\"button\"\
+        \ className=\"connect-web-push-secondary\" disabled={connection!=='active'||delivery==='sending'} onClick={()=>void\
+        \ testDelivery()}>{delivery==='sending'?'Ожидаем подтверждение…':'Проверить доставку'}</button>\n    <div className=\"\
+        connect-web-push-delivery\" role=\"status\" aria-live=\"polite\">\n      <span className={'connect-web-push-indicator\
+        \ is-'+(delivery==='confirmed'?'active':delivery==='error'||delivery==='unconfirmed'?'unregistered':'checking')}\
+        \ aria-hidden=\"true\"/>\n      <div><strong>{delivery==='confirmed'?'Тестовая доставка подтверждена':delivery==='sending'?'Проверяем\
+        \ доставку':delivery==='unconfirmed'?'Нет подтверждения':delivery==='error'?'Ошибка отправки':'Последняя проверка\
+        \ доставки'}</strong>\n        <small>{detail|| (lastReceived?'Последний подтверждённый тест: '+formatDate(lastReceived):'Проверка\
+        \ ещё не проводилась')}</small>\n        {lastReceived&&detail&&<small>Последний подтверждённый тест: {formatDate(lastReceived)}</small>}\n\
+        \      </div>\n    </div>\n    <p className=\"connect-web-push-note\">Тест отправляет настоящее системное уведомление.\
+        \ Подтверждение означает, что Service Worker получил push и запросил показ уведомления; оно не гарантирует баннер\
+        \ на экране блокировки.</p>\n  </section>;\n}\n''',encoding='utf-8')\n    api_path.parent.mkdir(parents=True,exist_ok=True)\n\
+        \    api_path.write_text(r'''import {NextRequest,NextResponse} from 'next/server';\nimport {createClient} from\
+        \ '@supabase/supabase-js';\nimport webpush from 'web-push';\n\nexport const runtime='nodejs';\nconst noStore={'Cache-Control':'no-store'};\n\
+        type Payload={action?:unknown;endpoint?:unknown;requestId?:unknown};\nfunction response(body:Record<string,unknown>,status=200){return\
+        \ NextResponse.json(body,{status,headers:noStore});}\n\n/** Diagnostic sends ONLY to the authenticated user's\
+        \ matching WEB subscription. */\nexport async function POST(req:NextRequest){\n  const url=process.env.NEXT_PUBLIC_SUPABASE_URL;\n\
+        \  const pub=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;\n  const secret=process.env.SUPABASE_SERVICE_ROLE_KEY;\n\
+        \  if(!url||!pub||!secret)return response({error:'Сервер регистрации не настроен'},503);\n  const token=req.headers.get('authorization')?.match(/^Bearer\
+        \ (.+)$/i)?.[1];\n  if(!token)return response({error:'Требуется вход в Connect'},401);\n  const auth=createClient(url,pub,{auth:{persistSession:false,autoRefreshToken:false}});\n\
+        \  const {data:{user},error:authError}=await auth.auth.getUser(token);\n  if(authError||!user)return response({error:'Недействительная\
+        \ сессия'},401);\n  const body=await req.json().catch(()=>null) as Payload|null;\n  const action=body?.action,endpoint=body?.endpoint;\n\
+        \  if(!['status','test'].includes(String(action))||typeof endpoint!=='string'||endpoint.length<32||endpoint.length>4096||!endpoint.startsWith('https://'))\n\
+        \    return response({error:'Неверный запрос'},400);\n  const db=createClient(url,secret,{auth:{persistSession:false,autoRefreshToken:false}});\n\
+        \  const [{data:device,error:deviceError},{data:preferences,error:prefError}]=await Promise.all([\n    db.from('push_devices').select('id,subscription').eq('user_id',user.id).eq('platform','web').eq('endpoint',endpoint).maybeSingle(),\n\
+        \    db.from('notification_preferences').select('enabled').eq('user_id',user.id).maybeSingle(),\n  ]);\n  if(deviceError||prefError)return\
+        \ response({error:'Не удалось проверить регистрацию'},503);\n  const registered=Boolean(device?.subscription),enabled=preferences?.enabled!==false;\n\
+        \  if(action==='status')return response({registered,enabled});\n  if(!registered)return response({error:'Устройство\
+        \ не зарегистрировано. Подключи уведомления.'},409);\n  if(!enabled)return response({error:'Уведомления отключены.\
+        \ Подключи их снова.'},409);\n  const id=body?.requestId;\n  if(typeof id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))return\
+        \ response({error:'Неверный идентификатор проверки'},400);\n  if(!process.env.VAPID_PUBLIC_KEY||!process.env.VAPID_PRIVATE_KEY||!process.env.VAPID_SUBJECT)return\
+        \ response({error:'Push-сервер не настроен'},503);\n  try{\n    webpush.setVapidDetails(process.env.VAPID_SUBJECT,process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);\n\
+        \    await webpush.sendNotification(device!.subscription,JSON.stringify({kind:'connect-push-diagnostic',requestId:id,userId:user.id}),{TTL:30,urgency:'normal',timeout:8000});\n\
+        \    // This is ONLY provider acceptance; the client awaits a worker receipt.\n    return response({accepted:true});\n\
+        \  }catch(e:unknown){\n    const status=(e as {statusCode?:number})?.statusCode;\n    if(status===404||status===410){await\
+        \ db.from('push_devices').delete().eq('id',device!.id);return response({error:'Push-подписка больше не действует.\
+        \ Подключи уведомления заново.'},410);}\n    console.error('Connect web push diagnostic send failed',status||'transport');\n\
+        \    return response({error:'Push-сервер не принял тест. Повтори проверку позже.'},502);\n  }\n}\n''',encoding='utf-8')\n\
+        \    test_path.write_text(r'''const test = require('node:test');\nconst assert = require('node:assert/strict');\n\
+        const fs = require('node:fs');\ntest('web push diagnostic is isolated from real message/call pushes and Android\
+        \ preferences',()=>{\n const sw=fs.readFileSync('public/sw.js','utf8');\n const component=fs.readFileSync('components/ConnectNotificationSettings.tsx','utf8');\n\
+        \ const web=fs.readFileSync('components/ConnectWebPushDiagnostics.tsx','utf8');\n const api=fs.readFileSync('app/api/push/diagnostics/route.ts','utf8');\n\
+        \ assert(sw.includes(\"if(d.kind==='connect-push-diagnostic')\"));\n assert(sw.indexOf(\"if(d.kind==='connect-push-diagnostic')\"\
+        )<sw.indexOf(\"if(d.kind==='call-ended')\"));\n assert(sw.includes('CONNECT_PUSH_DIAGNOSTIC_RECEIVED'));\n assert(sw.includes('CONNECT_DIAGNOSTICS_READY'));\n\
+        \ assert(sw.includes('showNotification'));\n assert(sw.includes(\"if(details.kind==='connect-push-diagnostic')\"\
+        ));\n assert(component.includes('ConnectAndroidNotificationSettings'));\n assert(component.includes('<ConnectWebPushDiagnostics\
+        \ {...props}/>'));\n assert(component.includes('window.ConnectAndroid'));\n assert(web.includes('navigator.serviceWorker.getRegistration()'));\n\
+        \ assert(web.includes(\"action:'status'\"));\n assert(web.includes(\"action:'test'\"));\n assert(web.includes('getSubscription()'));\n\
+        \ assert(web.includes('data.requestId!==request.id'));\n assert(api.includes(\".eq('user_id',user.id).eq('platform','web').eq('endpoint',endpoint)\"\
+        ));\n assert(api.includes(\"kind:'connect-push-diagnostic'\"));\n assert(api.includes('accepted:true'));\n assert(api.includes('webpush.sendNotification'));\n\
+        });\n''',encoding='utf-8')\n    component_path.write_text(orig,encoding='utf-8')\n    sw_path.write_text(sw,encoding='utf-8')\n\
+        \    css_path.write_text(css,encoding='utf-8')\n    print('PWA-only push diagnostic UI, authenticated test route,\
+        \ worker receipt and tests added.')\n\nPY"
+    - name: Install locked dependencies
+      run: npm ci
+    - name: Check TypeScript
+      run: npm run typecheck
+    - name: Check diagnostics isolation
+      run: node tests/push-diagnostics.test.cjs
+    - name: Install Chromium for browser regression tests
+      run: npx playwright-core install --with-deps chromium
+    - name: Run regression tests
+      run: npm test
+    - name: Build PWA release
+      run: npm run build
+    - name: Publish only after all checks pass
+      shell: bash
+      run: "set -euo pipefail\ngit add components/ConnectNotificationSettings.tsx components/ConnectWebPushDiagnostics.tsx\
+        \ public/sw.js app/liquid-glass.css app/api/push/diagnostics/route.ts tests/push-diagnostics.test.cjs\nif git\
+        \ diff --cached --quiet; then\n  echo 'No changes: diagnostics already present.'\n  exit 0\nfi\ngit config user.name\
+        \ 'github-actions[bot]'\ngit config user.email '41898282+github-actions[bot]@users.noreply.github.com'\ngit commit\
+        \ -m 'feat(pwa): test and verify web push delivery without changing Android'\ngit push origin HEAD:main"
