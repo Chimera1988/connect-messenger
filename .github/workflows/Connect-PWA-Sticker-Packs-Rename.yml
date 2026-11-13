@@ -1,0 +1,94 @@
+name: "Connect PWA | Rename Anime Sticker Packs"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/Connect-PWA-Sticker-Packs-Rename.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-rename-stickers-main
+  cancel-in-progress: false
+
+jobs:
+  rename-sticker-packs:
+    name: "Rename built-in sticker packs in PWA only"
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: true
+
+      - name: Rename display labels only (keep IDs and assets unchanged)
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/stickers.ts')
+          if not path.is_file():
+              raise SystemExit('ERROR: lib/stickers.ts was not found; no changes made.')
+          source = path.read_text(encoding='utf-8')
+          modified = source
+          changes = (
+              ("{id:'anime-girls',name:'Аниме-девушки'", "{id:'anime-girls',name:'Хината'"),
+              ("{id:'anime-boys',name:'Аниме-парни'", "{id:'anime-boys',name:'Итачи'"),
+          )
+          for old, new in changes:
+              old_count = modified.count(old)
+              new_count = modified.count(new)
+              if old_count == 1 and new_count == 0:
+                  modified = modified.replace(old, new, 1)
+              elif old_count == 0 and new_count == 1:
+                  print('Already renamed:', new)
+              else:
+                  raise SystemExit(f'ERROR: unexpected sticker-pack source for {old!r} (old={old_count}, new={new_count}). No changes made.')
+
+          if modified != source:
+              path.write_text(modified, encoding='utf-8')
+              print('Updated PWA labels: Аниме-девушки → Хината; Аниме-парни → Итачи')
+          else:
+              print('PWA labels are already correct; no changes needed.')
+          PY
+
+      - name: Verify built-in IDs and names
+        shell: bash
+        run: |
+          node - <<'JS'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const source = fs.readFileSync('lib/stickers.ts', 'utf8');
+          assert(source.includes("{id:'anime-girls',name:'Хината'"));
+          assert(source.includes("{id:'anime-boys',name:'Итачи'"));
+          assert(source.includes("'[[connect-sticker:"));
+          assert(source.includes('/stickers/${sticker.pack}/${sticker.id}.webp'));
+          console.log('Labels and stable sticker IDs verified.');
+          JS
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Build PWA
+        run: npm run build
+
+      - name: Publish change only after successful checks
+        shell: bash
+        run: |
+          if git diff --quiet -- lib/stickers.ts; then
+            echo "Names are already correct; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- lib/stickers.ts
+          git commit -m "PWA: rename built-in anime sticker packs to Хината and Итачи"
+          git push origin HEAD:main
