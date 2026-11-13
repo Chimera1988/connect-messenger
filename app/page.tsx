@@ -620,6 +620,33 @@ async function cachedChatPoster(path:string):Promise<string|null>{
   return signed;
 }
 
+// CONNECT_PWA_VIDEO_STILLS_FIX4_20261113
+/** Save the most recent nonempty decoded frame as a stable attachment poster.
+ * PWA only. Cross-origin/tainted video falls back to its uploaded poster.
+ */
+function preserveVisibleChatFrame(video:HTMLVideoElement,path:string,display:(url:string)=>void):boolean{
+  if(isNativeMediaRuntime()||!path||!mediaCacheOwner()||video.readyState<2||video.currentTime<.12||!video.videoWidth||!video.videoHeight)return false;
+  try{
+    const canvas=document.createElement('canvas');
+    const scale=Math.min(1,420/video.videoWidth,420/video.videoHeight);
+    canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
+    canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});if(!ctx)return false;
+    ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    // Avoid persisting a decoder's all-black placeholder on iOS.
+    const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+    let sampled=0,lit=0;
+    for(let i=0;i<pixels.length;i+=128){sampled++;if(pixels[i]+pixels[i+1]+pixels[i+2]>65)lit++;}
+    if(sampled&&!lit)return false;
+    const url=canvas.toDataURL('image/jpeg',.76);if(url.length<180)return false;
+    const viewer=mediaCacheOwner();
+    rememberChatPoster(viewer,path,url);
+    display(url);
+    canvas.toBlob(blob=>{if(blob&&viewer===mediaCacheOwner())void storeGeneratedChatPoster(viewer,path,blob).catch(()=>{});},'image/jpeg',.76);
+    return true;
+  }catch{return false;}
+}
+
 function VideoThumbnail({src,path}:{src:string;path?:string}) {
   const [poster,setPoster]=useState<string|null>(null);
   const [uploadedPoster,setUploadedPoster]=useState<string|null>(()=>path?getHotChatPoster(mediaCacheOwner(),path):null);
@@ -640,6 +667,10 @@ function VideoThumbnail({src,path}:{src:string;path?:string}) {
   }, [path,near]);
   function capture(video:HTMLVideoElement){
     if(!video.videoWidth||!video.videoHeight)return;
+    if(!isNativeMediaRuntime()&&path){
+      preserveVisibleChatFrame(video,path,url=>{setPoster(url);setUploadedPoster(url);});
+      return;
+    }
     try{
       const canvas=document.createElement('canvas');
       const scale=Math.min(1,480/video.videoWidth,480/video.videoHeight);
@@ -674,15 +705,17 @@ function reconcileVisibleVideos(){
  candidates.sort(([a],[b])=>Number(b===preferredVideo)-Number(a===preferredVideo)||Math.abs(a.getBoundingClientRect().top-innerHeight/2)-Math.abs(b.getBoundingClientRect().top-innerHeight/2));
  const winner=candidates[0]?.[0];for(const[video,item]of visibleVideos)item.activate(video===winner);
 }
-function useVisibleVideo(ref:{current:HTMLVideoElement|null},src:string,userPaused:{current:boolean},muted:{current:boolean}){
- const resumePosition=useRef(0);
+function useVisibleVideo(ref:{current:HTMLVideoElement|null},src:string,userPaused:{current:boolean},muted:{current:boolean},onBeforeDetach?:(video:HTMLVideoElement)=>void){
+  const onBeforeDetachRef=useRef(onBeforeDetach);
+  onBeforeDetachRef.current=onBeforeDetach;
+  const resumePosition=useRef(0);
  useEffect(()=>{
   const video=ref.current;if(!video)return;let attached=false;
   const resume=()=>{if(resumePosition.current>0&&Number.isFinite(video.duration))video.currentTime=Math.min(resumePosition.current,Math.max(0,video.duration-.05));};
   video.addEventListener('loadedmetadata',resume);
   const item:VisibleVideo={visible:false,paused:()=>userPaused.current,activate(active){
    if(active){video.muted=muted.current;if(!attached){attached=true;video.src=src;video.load();}if(video.paused)void video.play().catch(()=>{});}
-   else if(attached){resumePosition.current=video.currentTime||resumePosition.current;attached=false;video.pause();video.removeAttribute('src');video.load();}
+   else if(attached){if(!isNativeMediaRuntime())onBeforeDetachRef.current?.(video);resumePosition.current=video.currentTime||resumePosition.current;attached=false;video.pause();video.removeAttribute('src');video.load();}
   }};
   visibleVideos.set(video,item);
   const observer=new IntersectionObserver(entries=>{item.visible=Boolean(entries[0]?.isIntersecting);reconcileVisibleVideos();},{root:video.closest('.message-scroll'),threshold:.35});
@@ -706,23 +739,30 @@ function ConnectInlineAutoplayVideo({src,path,onOpen}:{src:string;path:string;on
   const [muted,setMuted]=useState(true);
   const [poster,setPoster]=useState<string|null>(()=>getHotChatPoster(mediaCacheOwner(),path));
   const [error,setError]=useState(false);
+  const [frameReady,setFrameReady]=useState(false);
+  const firstFrameStored=useRef(false);
+  const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster);};
 
   useEffect(()=>{
-    setPoster(getHotChatPoster(mediaCacheOwner(),path));setError(false);
+    setPoster(getHotChatPoster(mediaCacheOwner(),path));setError(false);setFrameReady(false);firstFrameStored.current=false;
     if(!supabase || !/__vid_\d{1,5}x\d{1,5}$/.test(path))return;
     let cancelled=false;
-    void cachedChatPoster(path).then(url=>{if(!cancelled&&url)setPoster(url);}).catch(()=>{});
+    void cachedChatPoster(path).then(url=>{if(!cancelled&&url)setPoster(previous=>previous?.startsWith('data:')?previous:url);}).catch(()=>{});
     return()=>{cancelled=true;};
   },[path]);
 
   const userPaused=useRef(false);
-  useVisibleVideo(ref,src,userPaused,soundRef);
+  useVisibleVideo(ref,src,userPaused,soundRef,freezeFrame);
 
   return <div className="connect-inline-autoplay-video">
     <button type="button" className="connect-inline-autoplay-video-open" aria-label="Открыть видео на весь экран"
       onClick={event=>{event.stopPropagation();onOpen();}}>
-      <video ref={ref} poster={poster||undefined} muted={muted} loop playsInline preload="none"
+      {!isNativeMediaRuntime()&&(poster?<img className="connect-inline-video-still" src={poster} alt="" aria-hidden="true"/>:<span className="connect-inline-video-still-fallback" aria-hidden="true">▶</span>)}
+      <video ref={ref} poster={poster||undefined} muted={muted} loop playsInline preload="none" crossOrigin={isNativeMediaRuntime()?undefined:'anonymous'}
+        style={isNativeMediaRuntime()?undefined:{opacity:frameReady?1:0}}
         onLoadedMetadata={event=>connectUpdateVideoFrame(event.currentTarget,path)}
+        onEmptied={()=>{if(!isNativeMediaRuntime())setFrameReady(false);}}
+        onTimeUpdate={event=>{if(isNativeMediaRuntime())return;const video=event.currentTarget;if(video.currentTime>.12){setFrameReady(true);if(!firstFrameStored.current){firstFrameStored.current=preserveVisibleChatFrame(video,path,setPoster);}}}}
         onError={()=>setError(true)}/>
       {error&&<span className="connect-inline-video-error">Видео недоступно</span>}
     </button>
@@ -746,10 +786,11 @@ function isVideoNote(m: Message): boolean {
 function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;name:string;path:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean}) {
   const [poster,setPoster] = useState<string|undefined>(()=>getHotChatPoster(mediaCacheOwner(),path)||undefined);
   const [videoFrameReady,setVideoFrameReady]=useState(false);
+  const firstFrameStored=useRef(false);
   useEffect(()=>{
     let alive=true;
-    setPoster(getHotChatPoster(mediaCacheOwner(),path)||undefined);
-    if(supabase)void cachedChatPoster(path).then(url=>{if(alive)setPoster(url||undefined);}).catch(()=>{});
+    setPoster(getHotChatPoster(mediaCacheOwner(),path)||undefined);firstFrameStored.current=false;
+    if(supabase)void cachedChatPoster(path).then(url=>{if(alive&&url)setPoster(url);}).catch(()=>{});
     return()=>{alive=false;};
   },[path]);
   const ref=useRef<HTMLVideoElement|null>(null);
@@ -758,25 +799,9 @@ function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;
   const [expanded,setExpanded]=useState(false);
   const [progress,setProgress]=useState(0);
   const userPaused=useRef(false),mutedRef=useRef(true);
-  useVisibleVideo(ref,src,userPaused,mutedRef);
+  const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster);};
+  useVisibleVideo(ref,src,userPaused,mutedRef,freezeFrame);
   const circumference=2*Math.PI*47;
-  const captureNotePoster=(video:HTMLVideoElement)=>{
-    if(isNativeMediaRuntime()||poster||!video.videoWidth||!video.videoHeight||!mediaCacheOwner())return;
-    try{
-      const canvas=document.createElement('canvas'),scale=Math.min(1,360/video.videoWidth,360/video.videoHeight);
-      canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
-      canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
-      canvas.getContext('2d')?.drawImage(video,0,0,canvas.width,canvas.height);
-      canvas.toBlob(blob=>{
-        if(!blob)return;
-        const viewer=mediaCacheOwner();
-        void storeGeneratedChatPoster(viewer,path,blob).then(url=>{
-          if(!url)return;
-          rememberChatPoster(viewer,path,url);setPoster(url);
-        });
-      },'image/jpeg',.74);
-    }catch{/* Cross-origin frames may not be readable; keep the regular player. */}
-  };
   const toggleNote=(event:React.MouseEvent)=>{
     event.stopPropagation();
     const video=ref.current;
@@ -802,10 +827,10 @@ function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;
       <div className="connect-v4-note-circle">
         {!isNativeMediaRuntime()&&(poster?<img className="connect-note-still" src={poster} alt="" aria-hidden="true"/>:<span className="connect-note-still connect-note-still-fallback" aria-hidden="true">▶</span>)}
         <video ref={ref} className="connect-v4-note-video" poster={poster} crossOrigin={isNativeMediaRuntime()?undefined:'anonymous'} muted={muted} playsInline loop preload="none" aria-label={name} style={isNativeMediaRuntime()?undefined:{opacity:videoFrameReady?1:0}}
-          onLoadedData={event=>{if(!isNativeMediaRuntime()){setVideoFrameReady(true);captureNotePoster(event.currentTarget);}}}
+          onLoadedData={()=>{/* Wait for a drawable frame instead of revealing iOS decoder black. */}}
           onEmptied={()=>{if(!isNativeMediaRuntime())setVideoFrameReady(false);}}
           onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
-          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}
+          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));if(!isNativeMediaRuntime()&&v.currentTime>.12){setVideoFrameReady(true);if(!firstFrameStored.current)firstFrameStored.current=preserveVisibleChatFrame(v,path,setPoster);}}}
           onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
         <button type="button" className="connect-v4-note-hit" aria-label={expanded?'Приостановить или воспроизвести видеокружок':'Увеличить и воспроизвести видеокружок'} onClick={toggleNote}/>
         <svg className="connect-v4-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
@@ -3018,7 +3043,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
             </header>
             {chatSearchOpen&&<div className="chat-search-bar"><Icon name="search" size={18}/><input autoFocus placeholder="Поиск по чату" value={chatQuery} onChange={e=>{setChatQuery(e.target.value);setSearchPosition(0)}}/><small>{searchMatches.length?`${searchPosition+1}/${searchMatches.length}`:'0'}</small><button type="button" onClick={()=>showMatch(searchPosition-1)}>↑</button><button type="button" onClick={()=>showMatch(searchPosition+1)}>↓</button><button type="button" onClick={()=>{setChatSearchOpen(false);setChatQuery('')}} aria-label="Закрыть поиск"><Icon name="close" size={17}/></button></div>}
             {selectionMode&&<div className="selection-toolbar"><button type="button" onClick={()=>{setSelectionMode(false);setSelectedIds([])}}>Отмена</button><strong>Выбрано: {selectedIds.length}</strong><button type="button" disabled={!selectedIds.length} onClick={()=>beginForward(selectedIds)}>Переслать</button><button type="button" disabled={!selectedIds.length} onClick={()=>hideMessages(selectedIds)}>У себя</button><button type="button" disabled={!selectedIds.length||selectedIds.some(id=>visibleMessages.find(m=>m.id===id)?.sender_id!==user.id)} onClick={()=>void removeForEveryone(selectedIds)}>У всех</button></div>}
-            {!isNativeMediaRuntime()&&chatDisplayReady!==activeChat&&<div className="connect-chat-entry-overlay" role="status" aria-live="polite"><span className="connect-chat-entry-spinner" aria-hidden="true"/><strong>Подготавливаем переписку</strong><small>Восстанавливаем медиа и миниатюры…</small></div>}
+            {!isNativeMediaRuntime()&&chatDisplayReady!==activeChat&&<div className="connect-chat-entry-overlay" role="status" aria-label="Подготовка переписки" style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`,backgroundSize:'cover',backgroundPosition:'center'}:undefined}><span className="connect-chat-entry-pulse" aria-hidden="true"><i/><i/><i/></span></div>}
             <div className={"message-scroll"+(wallpaper?" has-wallpaper":"")} style={wallpaper?{backgroundImage:`linear-gradient(#00000018,#00000018),url(${wallpaper})`}:undefined} ref={scrollRef} onScroll={trackScroll} onPointerDownCapture={()=>{historyTouched.current=true}} onWheelCapture={()=>{historyTouched.current=true}} aria-label="История сообщений">
               <div className="message-stream">
                 {historyHasMore&&<button type="button" className="connect-history-more" disabled={historyLoadingMore} onClick={()=>void loadOlderChatMessages()}>{historyLoadingMore?'Загружаем…':'Предыдущие сообщения'}</button>}

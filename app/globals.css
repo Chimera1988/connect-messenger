@@ -662,3 +662,21 @@
 .connect-v4-note-circle>.connect-note-still-fallback{display:flex;align-items:center;justify-content:center;background:var(--panel,rgba(45,55,70,.72));font-size:22px;color:var(--muted)}
 .connect-v4-note-circle:has(>.connect-note-still)>.connect-v4-note-video{z-index:1;transition:none!important}
 .connect-media-unavailable{color:var(--muted);font-size:12px}
+
+/* CONNECT_PWA_VIDEO_STILLS_FIX4_20261113: themed, text-free media warmup */
+.connect-app .connect-chat-entry-overlay {
+  background-color:transparent !important;
+  color:var(--wave-primary,var(--accent)) !important;
+  -webkit-backdrop-filter:blur(3px) saturate(112%);
+  backdrop-filter:blur(3px) saturate(112%);
+}
+.connect-chat-entry-pulse{display:flex;align-items:center;justify-content:center;gap:15px;width:110px;height:58px;pointer-events:none}
+.connect-chat-entry-pulse>i{display:block;width:13px;height:13px;border-radius:50%;background:var(--wave-primary,var(--accent));box-shadow:0 0 17px color-mix(in srgb,var(--wave-primary,var(--accent)) 70%,transparent),0 0 34px color-mix(in srgb,var(--wave-secondary,var(--accent)) 38%,transparent);animation:connect-media-dot 1.18s ease-in-out infinite both}
+.connect-chat-entry-pulse>i:nth-child(2){background:var(--wave-secondary,var(--accent));animation-delay:.16s}
+.connect-chat-entry-pulse>i:nth-child(3){background:var(--wave-tertiary,var(--accent));animation-delay:.32s}
+@keyframes connect-media-dot{0%,70%,100%{opacity:.4;transform:translateY(0) scale(.75)}36%{opacity:1;transform:translateY(-8px) scale(1.15)}}
+@media(prefers-reduced-motion:reduce){.connect-chat-entry-pulse>i{animation:none;opacity:1}}
+.connect-app .connect-v4-note-circle>.connect-note-still-fallback{background:linear-gradient(135deg,color-mix(in srgb,var(--wave-primary,var(--accent)) 18%,var(--panel)),color-mix(in srgb,var(--wave-secondary,var(--accent)) 14%,var(--panel))) !important;color:var(--text)!important}
+.connect-app .connect-inline-autoplay-video-open>.connect-inline-video-still,.connect-app .connect-inline-autoplay-video-open>.connect-inline-video-still-fallback{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:contain;pointer-events:none;z-index:0;border-radius:12px}
+.connect-app .connect-inline-autoplay-video-open>.connect-inline-video-still-fallback{display:grid;place-items:center;font-size:28px;color:var(--wave-primary,var(--accent));background:linear-gradient(120deg,color-mix(in srgb,var(--wave-primary,var(--accent)) 16%,var(--panel)),color-mix(in srgb,var(--wave-secondary,var(--accent)) 11%,var(--panel)))}
+.connect-app .connect-inline-autoplay-video-open>video{z-index:1;transition:opacity .12s ease}
