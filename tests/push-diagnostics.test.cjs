@@ -1,0 +1,27 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+test('web push diagnostic is isolated from real message/call pushes and Android preferences',()=>{
+ const sw=fs.readFileSync('public/sw.js','utf8');
+ const component=fs.readFileSync('components/ConnectNotificationSettings.tsx','utf8');
+ const web=fs.readFileSync('components/ConnectWebPushDiagnostics.tsx','utf8');
+ const api=fs.readFileSync('app/api/push/diagnostics/route.ts','utf8');
+ assert(sw.includes("if(d.kind==='connect-push-diagnostic')"));
+ assert(sw.indexOf("if(d.kind==='connect-push-diagnostic')")<sw.indexOf("if(d.kind==='call-ended')"));
+ assert(sw.includes('CONNECT_PUSH_DIAGNOSTIC_RECEIVED'));
+ assert(sw.includes('CONNECT_DIAGNOSTICS_READY'));
+ assert(sw.includes('showNotification'));
+ assert(sw.includes("if(details.kind==='connect-push-diagnostic')"));
+ assert(component.includes('ConnectAndroidNotificationSettings'));
+ assert(component.includes('<ConnectWebPushDiagnostics {...props}/>'));
+ assert(component.includes('window.ConnectAndroid'));
+ assert(web.includes('navigator.serviceWorker.getRegistration()'));
+ assert(web.includes("action:'status'"));
+ assert(web.includes("action:'test'"));
+ assert(web.includes('getSubscription()'));
+ assert(web.includes('data.requestId!==request.id'));
+ assert(api.includes(".eq('user_id',user.id).eq('platform','web').eq('endpoint',endpoint)"));
+ assert(api.includes("kind:'connect-push-diagnostic'"));
+ assert(api.includes('accepted:true'));
+ assert(api.includes('webpush.sendNotification'));
+});

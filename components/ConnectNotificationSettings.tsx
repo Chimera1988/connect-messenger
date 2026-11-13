@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import ConnectWebPushDiagnostics from './ConnectWebPushDiagnostics';
 
 type Sound = 'soft' | 'bright' | 'gentle' | 'silent';
 type Prefs = { enabled: boolean; sound: Sound; vibrate: boolean };
@@ -70,7 +71,14 @@ function nativeSounds(): NativeSounds | null {
   try {return window.ConnectAndroid ? JSON.parse(window.ConnectAndroid.getSoundSettings()) as NativeSounds : null;} catch {return null;}
 }
 
-export default function ConnectNotificationSettings({supabase,userId}:{supabase:SupabaseClient,userId:string}) {
+/* CONNECT_PWA_PUSH_DIAGNOSTICS_V1: runtime choice after hydration; Android stays unchanged. */
+export default function ConnectNotificationSettings(props:{supabase:SupabaseClient;userId:string}){
+  const [runtime,setRuntime]=useState<'pending'|'web'|'android'>('pending');
+  useEffect(()=>{setRuntime(window.ConnectAndroid?'android':'web');},[]);
+  if(runtime==='pending')return <section className="connect-notifications" aria-label="Уведомления"/>;
+  return runtime==='web'?<ConnectWebPushDiagnostics {...props}/>:<ConnectAndroidNotificationSettings {...props}/>;
+}
+function ConnectAndroidNotificationSettings({supabase,userId}:{supabase:SupabaseClient,userId:string}) {
   const [prefs,setPrefs]=useState<Prefs>(defaults), [status,setStatus]=useState(''), [busy,setBusy]=useState(false);
   const [sounds,setSounds]=useState<NativeSounds|null>(null);
   const [fullScreenAllowed,setFullScreenAllowed]=useState(true);
