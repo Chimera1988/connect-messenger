@@ -1,0 +1,256 @@
+name: Connect PWA | Video frame geometry FIX6
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-media-geometry-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pwa-media-frame-geometry:
+    name: Fix circular and rectangular media fitting without changing containers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply safe PWA-only frame geometry correction
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+
+          page_path = Path('app/page.tsx')
+          css_path = Path('app/connect-media-frame-overlay.css')
+          page = page_path.read_text(encoding='utf-8')
+          css = css_path.read_text(encoding='utf-8')
+          marker = 'CONNECT_PWA_VIDEO_FRAME_GEOMETRY_FIX6_20261113'
+
+          if marker in css:
+              if page.count('connect-pwa-frame-fit') >= 3 and 'squareCrop=false' in page:
+                  print('FIX6 already applied. Files unchanged.')
+                  sys.exit(0)
+              raise RuntimeError('FIX6 partially applied: refusing mixed source state')
+
+
+          def unique(src: str, old: str, new: str, label: str) -> str:
+              count = src.count(old)
+              if count != 1:
+                  raise RuntimeError(f'{label}: expected exactly one current code anchor; got {count}. No files changed.')
+              return src.replace(old, new, 1)
+
+          # PWA-only media flags: never alter the classes or behavior on Connect Android.
+          page = unique(page,
+              '<span ref={frameRef} className="connect-video-preview">',
+              '<span ref={frameRef} className={isNativeMediaRuntime()?"connect-video-preview":"connect-video-preview connect-pwa-frame-fit"}>',
+              'video thumbnail PWA flag')
+          page = unique(page,
+              '<div className="connect-inline-autoplay-video">',
+              '<div className={isNativeMediaRuntime()?"connect-inline-autoplay-video":"connect-inline-autoplay-video connect-pwa-frame-fit"}>',
+              'normal video PWA flag')
+          page = unique(page,
+              "<div className={'connect-v4-video-note connect-v5-video-note'+(expanded?' is-expanded':'')}>",
+              "<div className={'connect-v4-video-note connect-v5-video-note'+(expanded?' is-expanded':'')+(!isNativeMediaRuntime()?' connect-pwa-frame-fit':'')}>",
+              'video circle PWA flag')
+
+          # Generated circular posters must have the same square geometry as the player.
+          # Do not change the actual chat container, expand state, progress ring or controls.
+          start = page.index('function preserveVisibleChatFrame(')
+          end = page.index('\nfunction VideoThumbnail(', start)
+          frame = page[start:end]
+          frame = unique(frame,
+              'function preserveVisibleChatFrame(video:HTMLVideoElement,path:string,display:(url:string)=>void):boolean{',
+              'function preserveVisibleChatFrame(video:HTMLVideoElement,path:string,display:(url:string)=>void,squareCrop=false):boolean{',
+              'capture function signature')
+          frame = unique(frame, '''    const scale=Math.min(1,420/video.videoWidth,420/video.videoHeight);
+              canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
+              canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
+              const ctx=canvas.getContext('2d',{willReadFrequently:true});if(!ctx)return false;
+              ctx.drawImage(video,0,0,canvas.width,canvas.height);''',
+          '''    // Fit the actual pixels, not the intrinsic portrait/landscape frame, to the
+              // fixed circular viewport. Other video posters keep their original ratio.
+              const width=video.videoWidth,height=video.videoHeight,edge=Math.min(width,height);
+              const cropSquare=squareCrop&&edge>0;
+              const sourceWidth=cropSquare?edge:width,sourceHeight=cropSquare?edge:height;
+              const scale=Math.min(1,420/sourceWidth,420/sourceHeight);
+              canvas.width=Math.max(1,Math.round(sourceWidth*scale));
+              canvas.height=Math.max(1,Math.round(sourceHeight*scale));
+              const ctx=canvas.getContext('2d',{willReadFrequently:true});if(!ctx)return false;
+              const x=cropSquare?(width-edge)/2:0,y=cropSquare?(height-edge)/2:0;
+              ctx.drawImage(video,x,y,sourceWidth,sourceHeight,0,0,canvas.width,canvas.height);''',
+              'center-cropped square frame generator')
+          page = page[:start] + frame + page[end:]
+
+          # Both small and expanded video notes call the same component/renderer.
+          start = page.index('function VideoNoteBubble(')
+          end = page.index('\ntype VideoNotePhase',start)
+          note = page[start:end]
+          note = unique(note,
+              'const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster);};',
+              'const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster,true);};',
+              'video-note offscreen square poster')
+          note = unique(note,
+              'firstFrameStored.current=preserveVisibleChatFrame(v,path,setPoster);',
+              'firstFrameStored.current=preserveVisibleChatFrame(v,path,setPoster,true);',
+              'video-note first square poster')
+          page = page[:start] + note + page[end:]
+
+          # Last imported stylesheet overrides older contain/geometry rules. PWA classes
+          # ensure Android media elements remain completely unaffected.
+          css += '''
+          /* CONNECT_PWA_VIDEO_FRAME_GEOMETRY_FIX6_20261113
+             Media pixels fill existing fixed viewports. NEVER resize the chat bubbles,
+             stage, playback controls, sound control or progress ring. */
+          .connect-app .bubble.video-note-bubble .connect-v5-video-note.connect-pwa-frame-fit .connect-v5-note-stage > .connect-v4-note-circle {
+            overflow: hidden !important;
+            border-radius: 50% !important;
+            isolation: isolate !important;
+          }
+          .connect-app .bubble.video-note-bubble .connect-v5-video-note.connect-pwa-frame-fit .connect-v5-note-stage > .connect-v4-note-circle > img.connect-note-still,
+          .connect-app .bubble.video-note-bubble .connect-v5-video-note.connect-pwa-frame-fit .connect-v5-note-stage > .connect-v4-note-circle > video.connect-v4-note-video {
+            display: block !important;
+            position: absolute !important;
+            inset: 0 !important;
+            box-sizing: border-box !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-width: 0 !important;
+            min-height: 0 !important;
+            max-width: none !important;
+            max-height: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            border: 0 !important;
+            aspect-ratio: auto !important;
+            object-fit: cover !important;
+            object-position: center center !important;
+            border-radius: 50% !important;
+            -webkit-clip-path: circle(50% at 50% 50%);
+            clip-path: circle(50% at 50% 50%);
+          }
+          /* The old Liquid Glass video rules use 'contain' which produces empty bars.
+             Cover applies to moving frames and frozen images; the viewport stays put. */
+          .connect-app .connect-inline-autoplay-video.connect-pwa-frame-fit .connect-inline-autoplay-video-open > video,
+          .connect-app .connect-inline-autoplay-video.connect-pwa-frame-fit .connect-inline-autoplay-video-open > img.connect-inline-video-still,
+          .connect-app .connect-video-preview.connect-pwa-frame-fit > video,
+          .connect-app .connect-video-preview.connect-pwa-frame-fit > img {
+            position: absolute !important;
+            inset: 0 !important;
+            display: block !important;
+            box-sizing: border-box !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-width: 0 !important;
+            min-height: 0 !important;
+            max-width: none !important;
+            max-height: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            object-fit: cover !important;
+            object-position: center center !important;
+          }
+          '''
+
+          # Only write after all expected source anchors and safety checks passed.
+          assert page.count('connect-pwa-frame-fit') == 3
+          assert 'squareCrop=false' in page
+          assert 'preserveVisibleChatFrame(video,path,setPoster,true)' in page
+          assert 'preserveVisibleChatFrame(v,path,setPoster,true)' in page
+          page_path.write_text(page,encoding='utf-8')
+          css_path.write_text(css,encoding='utf-8')
+          print('FIX6 PWA-only media crop geometry applied. Container dimensions and E2EE are untouched.')
+          PY
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Install Chromium for browser regression tests
+        run: |
+          npx playwright-core install --with-deps chromium
+          node -e "require('node:fs').accessSync(require('playwright-core').chromium.executablePath())"
+
+      - name: Run project regression tests
+        run: npm test
+
+      - name: Check both video-note sizes and full-bleed video
+        shell: bash
+        run: |
+          node <<'JS'
+          const assert=require('node:assert/strict');
+          const fs=require('node:fs');
+          const {chromium}=require('playwright-core');
+          (async()=>{
+            const css=fs.readFileSync('app/connect-media-frame-overlay.css','utf8');
+            assert(css.includes('CONNECT_PWA_VIDEO_FRAME_GEOMETRY_FIX6_20261113'));
+            const source=fs.readFileSync('app/page.tsx','utf8');
+            assert(source.includes('preserveVisibleChatFrame(v,path,setPoster,true)'));
+            const browser=await chromium.launch({headless:true});
+            try{
+              for(const size of [256,512]){
+                const page=await browser.newPage({viewport:{width:850,height:920}});
+                await page.setContent(`<style>
+                  .connect-v5-note-stage{width:${size}px;height:${size}px;position:relative}
+                  .connect-v4-note-circle{position:absolute;inset:0;width:100%;height:100%}
+                  .connect-inline-autoplay-video-open{position:relative;display:block;width:320px;height:400px}
+                  .connect-video-preview{position:relative;display:block;width:200px;height:250px}
+                </style><style>${css}</style>
+                <div class="connect-app">
+                  <div class="bubble video-note-bubble"><div class="connect-v5-video-note connect-pwa-frame-fit"><div class="connect-v5-note-stage"><div class="connect-v4-note-circle"><img class="connect-note-still"/><video class="connect-v4-note-video"></video></div></div></div></div>
+                  <div class="connect-inline-autoplay-video connect-pwa-frame-fit"><button class="connect-inline-autoplay-video-open"><img class="connect-inline-video-still"/><video></video></button></div>
+                  <span class="connect-video-preview connect-pwa-frame-fit"><img/><video></video></span>
+                </div>`);
+                const stats=await page.evaluate(()=>{
+                  const pick=selector=>{const e=document.querySelector(selector);const b=e.getBoundingClientRect();return {fit:getComputedStyle(e).objectFit,x:b.x,y:b.y,width:b.width,height:b.height};};
+                  const circle=pick('.connect-v4-note-circle');
+                  return {circle,still:pick('.connect-note-still'),video:pick('.connect-v4-note-video'),rectangle:pick('.connect-inline-video-still'),normalVideo:pick('.connect-inline-autoplay-video-open > video'),thumb:pick('.connect-video-preview > img')};
+                });
+                for(const kind of ['still','video']){
+                  const item=stats[kind];
+                  assert.equal(item.fit,'cover',kind+' fill');
+                  assert(Math.abs(item.width-stats.circle.width)<=2,kind+' width mismatch');
+                  assert(Math.abs(item.height-stats.circle.height)<=2,kind+' height mismatch');
+                  assert(Math.abs(item.x-stats.circle.x)<=2,kind+' x shift');
+                  assert(Math.abs(item.y-stats.circle.y)<=2,kind+' y shift');
+                }
+                for(const kind of ['rectangle','normalVideo','thumb'])assert.equal(stats[kind].fit,'cover',kind+' full-bleed');
+                await page.close();
+              }
+            }finally{await browser.close();}
+            console.log('FIX6 browser geometry check passed (256px/512px circles, ordinary video and thumbnail).');
+          })().catch(err=>{console.error(err);process.exit(1);});
+          JS
+
+      - name: Build release PWA
+        run: npm run build
+
+      - name: Publish only after every check succeeds
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/page.tsx app/connect-media-frame-overlay.css
+          if git diff --cached --quiet; then
+            echo 'FIX6 already present. No commit required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(pwa): fit video circle and inline stills to existing frames'
+          git push origin HEAD:main
