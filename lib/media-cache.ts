@@ -102,7 +102,7 @@ export async function trimCache() {
     let temporary = rows.filter(x => x.category !== 'system').reduce((n, x) => n + x.size, 0), avatars = rows.filter(x => x.category === 'system' && !x.key.includes(':core')).reduce((n, x) => n + x.size, 0);
     const limit = LIMITS[cacheLimit()] || LIMITS.auto;
     for (const row of rows) {
-        const avatar = row.category === 'system' && !row.key.includes(':core'), expired = Date.now() - row.used > 30 * 86400000;
+        const avatar = row.category === 'system' && !row.key.includes(':core'), expired = Boolean((window as Window & {ConnectAndroid?:unknown;ConnectNative?:unknown}).ConnectAndroid||(window as Window & {ConnectAndroid?:unknown;ConnectNative?:unknown}).ConnectNative) && Date.now() - row.used > 30 * 86400000;
         if (row.category === 'system' ? !avatar || avatars <= 64 * 1024 ** 2 : temporary <= limit && !expired)
             continue;
         await run('readwrite', s => s.delete(row.key));
@@ -315,4 +315,24 @@ export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'
   const max=typeof limitBytes==='number'&&Number.isFinite(limitBytes)?Math.max(0,Math.min(defaultMax,limitBytes)):defaultMax;
   if(!max)return;
   try{await remember(url,viewer,max,true);}catch{/* Network streaming remains available. */}
+}
+
+
+/** Save a generated video-note first frame to the existing account-scoped media cache.
+ * Only a JPEG image is written. This never persists an extra video decoder.
+ */
+export async function storeGeneratedChatPoster(viewer:string,path:string,image:Blob):Promise<string|null>{
+  if(!viewer||owner!==viewer||!path||image.type!=='image/jpeg'||!image.size||image.size>512*1024)return null;
+  const identity='connect-attachments/'+path+'__poster.jpg',key=viewer+':'+identity;
+  try{
+    const bytes=await image.arrayBuffer();
+    const database=await db();
+    await new Promise<void>((resolve,reject)=>{
+      const tx=database.transaction([STORE,'retired'],'readwrite');
+      const guard=tx.objectStore('retired').get(key);
+      guard.onsuccess=()=>{if(!guard.result)tx.objectStore(STORE).put({key,user:viewer,category:'photos',size:image.size,used:Date.now(),bytes,type:'image/jpeg'} satisfies Entry);};
+      tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+    });
+    return await resolveCachedMedia('/storage/v1/object/sign/'+identity,viewer);
+  }catch{return null;}
 }
