@@ -890,15 +890,18 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       <span className="connect-call-mini-phase">{phaseTitle[phase]}</span>
       <span className="connect-call-mini-expand" aria-hidden="true">↗</span>
     </button>}
-    {calling && !compactCall && <div className="connect-call-backdrop" role="dialog" aria-modal="true" aria-label="Аудиозвонок Connect">
+    {calling && !compactCall && <div className={"connect-call-backdrop" + (!window.ConnectAndroid && !window.ConnectNative ? " connect-pwa-call-layout" : "")} role="dialog" aria-modal="true" aria-label="Аудиозвонок Connect">
       <div className="connect-call-modal">
         <div className="connect-call-headline">
           <p className="connect-call-eyebrow">CONNECT · АУДИО</p>
-          {(phase==='active'||phase==='reconnecting') && !window.ConnectAndroid && !window.ConnectNative && <button className="connect-call-minimize" type="button" onClick={()=>{setAudioRouteOpen(false);setMinimized(true);}} aria-label="Свернуть звонок">⌄ Свернуть</button>}
+          {(phase==='active'||phase==='reconnecting') && !window.ConnectAndroid && !window.ConnectNative && <button className="connect-call-minimize" type="button" onClick={()=>{setAudioRouteOpen(false);setMinimized(true);}} aria-label="Свернуть звонок">Свернуть</button>}
         </div>
-        <ConnectCallAvatar className="connect-call-avatar" name={shownName || 'Собеседник'} url={shownAvatarUrl}/>
-        <h2>{shownName || 'Собеседник'}</h2>
-        <p className="connect-call-info" role="status">{phaseTitle[phase]}</p>
+        {/* CONNECT_PWA_CALL_SCREEN_JOURNAL_V2_20261114: centered identity; transport remains mounted. */}
+        <div className="connect-call-identity">
+          <ConnectCallAvatar className="connect-call-avatar" name={shownName || 'Собеседник'} url={shownAvatarUrl}/>
+          <h2>{shownName || 'Собеседник'}</h2>
+          <p className="connect-call-info" role="status">{phaseTitle[phase]}</p>
+        </div>
         <div className="connect-call-actions">
           {incoming && <button className="connect-call-action accept" type="button" onClick={() => void acceptIncoming()}>
             <span><Glyph name="call"/></span><span>Принять</span>
