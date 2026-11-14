@@ -2538,3 +2538,68 @@
   border-color: var(--v4-border, var(--glass-stroke)) !important;
   box-shadow: var(--glass-shadow, 0 16px 40px rgba(0,0,0,.32));
 }
+
+/* CONNECT_PWA_LIST_PARITY_GESTURE_V1_20261114 — Contacts are the visual list baseline.
+   Only iPhone/desktop PWA receives this attribute; the Android wrapper is untouched. */
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-entry {
+  min-height:66px;
+  padding:0;
+  background:linear-gradient(120deg,rgba(37,54,78,.35),rgba(25,35,53,.20));
+  -webkit-backdrop-filter:blur(14px);
+  backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--glass-stroke);
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row {
+  display:flex !important;
+  flex-wrap:nowrap;
+  align-items:center;
+  min-height:66px;
+  gap:12px;
+  padding:8px 9px;
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .connect-presence-avatar {
+  flex:0 0 46px;
+  width:46px;
+  min-width:46px;
+  height:46px;
+  overflow:visible;
+  border-radius:0;
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .connect-presence-avatar > .person-avatar {
+  width:100%;height:100%;border-radius:50%;overflow:hidden;
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .dialog-summary {
+  display:flex;
+  flex:1 1 0;
+  flex-direction:column;
+  justify-content:center;
+  min-width:0;
+  gap:5px;
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .dialog-summary strong {
+  font-size:16px;
+  font-weight:680;
+  line-height:1.25;
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .dialog-summary > span {
+  font-size:12px;
+  line-height:1.35;
+  color:var(--muted);
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .dialog-meta {
+  flex:0 0 auto;
+  align-self:center;
+  align-items:flex-end;
+  justify-self:auto;
+  max-width:84px;
+  gap:6px;
+  margin:0;
+  padding:0;
+  white-space:nowrap;
+}
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .dialog-meta time {
+  font-size:11px;
+}
+.connect-app.light[data-connect-pwa-list-parity="true"] .chat-rows .dialog-entry {
+  background:rgba(255,255,255,.76);
+}

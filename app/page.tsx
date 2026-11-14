@@ -2353,6 +2353,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     if(!user?.id || isNativeMediaRuntime())return;
     const shell=shellRef.current;
     if(!shell)return;
+    // CONNECT_PWA_LIST_PARITY_GESTURE_V1_20261114: PWA-only layout, never Android WebView.
+    shell.setAttribute('data-connect-pwa-list-parity','true');
     let started:{x:number;y:number;edge:'back'|'forward'}|null=null;
     function start(e: Event){
       started=null;
@@ -2361,6 +2363,10 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       if(touches.length!==1 || crop || mediaViewer || videoNoteOpen || !!menuMessage || !!forwardIds.length || selectionMode || stickerPicker || chatSearchOpen || chatActions)return;
       if(document.querySelector('.connect-call-backdrop,.connect-call-history-screen'))return;
       const target=e.target;
+      // Keep the entire bottom navigation dock outside swipe history, even near screen edges.
+      if(target instanceof Element && target.closest('.bottom-nav,.nav-tab,.connect-calls-tab'))return;
+      const dock=shell!.querySelector<HTMLElement>('.bottom-nav');
+      if(dock && touches[0].clientY>=dock.getBoundingClientRect().top-12)return;
       if(target instanceof Element && target.closest('input,textarea,select,[contenteditable="true"],.bubble,.context-overlay,.sticker-picker,.connect-vnote-backdrop,.connect-media-overlay'))return;
       const rect=shell!.getBoundingClientRect(),x=touches[0].clientX,y=touches[0].clientY;
       if(x>=rect.left && x<=rect.left+28)started={x,y,edge:'back'};
@@ -2370,6 +2376,10 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       const changedTouches=(e as Event & {changedTouches:TouchList}).changedTouches;
       if(!started || changedTouches.length!==1)return;
       const origin=started;started=null;
+      // Do not navigate if a gesture ends on or within the bottom dock's hit zone.
+      const dock=shell!.querySelector<HTMLElement>('.bottom-nav');
+      if((e.target instanceof Element && e.target.closest('.bottom-nav,.nav-tab,.connect-calls-tab')) ||
+        (dock && changedTouches[0].clientY>=dock.getBoundingClientRect().top-12))return;
       const dx=changedTouches[0].clientX-origin.x,dy=changedTouches[0].clientY-origin.y;
       const direction=connectSwipeDirection(origin.edge,dx,dy);
       if(!direction)return;
