@@ -2497,3 +2497,15 @@
 .connect-app .connect-web-push-secondary{background:color-mix(in srgb,var(--glass-surface,rgba(27,39,58,.64)) 90%,transparent)!important}
 .connect-app .connect-web-push-primary:disabled,.connect-app .connect-web-push-secondary:disabled{opacity:.48}
 .connect-app .connect-web-push-note{font-size:12px;line-height:1.55;color:var(--muted);margin:0 5px}
+
+/* CONNECT_PWA_CHAT_ONLINE_DOT_CLIP_FIX_20261114: allow presence marker outside the circular chat avatar. */
+.connect-app .chat-rows .dialog-row > .connect-presence-avatar {
+  overflow: visible;
+  border-radius: 0;
+}
+.connect-app .chat-rows .dialog-row > .connect-presence-avatar > .person-avatar {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  overflow: hidden;
+}
