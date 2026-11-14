@@ -2670,3 +2670,15 @@
 @media(prefers-reduced-motion:reduce) {
   .connect-app[data-connect-pwa-list-parity="true"] .bottom-nav::before {transition:none;will-change:auto;}
 }
+
+/* CONNECT_PWA_CHAT_COMPACT_OFFLINE_V1_20261115 — offline chats use the same 46px avatar as Contacts.
+   PresenceAvatar renders an unwrapped .person-avatar while offline; override the legacy
+   54/58px :first-child chat sizing without changing online dots or Android. */
+.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .person-avatar.avatar-md {
+  flex:0 0 46px;
+  width:46px;
+  min-width:46px;
+  height:46px;
+  border-radius:50%;
+  overflow:hidden;
+}
