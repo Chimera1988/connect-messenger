@@ -13,6 +13,7 @@ import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerCha
 import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
 import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
+import ConnectPushGuardian from '../components/ConnectPushGuardian'; // CONNECT_PWA_PUSH_GUARDIAN_20261114
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
 import ConnectSplashScreen from '../components/ConnectSplashScreen';
 import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
@@ -2999,6 +3000,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
   return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
     {splashVisible && <ConnectSplashScreen ready={!loading && (!user || directoryReady)} onComplete={finishSplash}/>}
+    {supabase && user && !setup && <ConnectPushGuardian supabase={supabase} userId={user.id}/>}
     {!supabase ? <div className="connection-error"><Icon name="info" size={32}/><h2>Подключение не настроено</h2><p>Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY в Vercel.</p></div>
       : loading ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
         : !user || setup ? <div className="login-screen">

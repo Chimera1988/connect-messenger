@@ -32,7 +32,7 @@ function endpoint(userId,frequency){
   getIceServers:async()=>[],notifyIncoming:async()=>{},notifyCallEnded:async()=>{},
   soundRef:{current:{unlock(){},stop(){},connected(){facts.connected++;}}},
   remoteAudioRef:{current:{srcObject:null,pause(){},play:()=>Promise.resolve()}},
-  setPhase(value){context.phase=value;},setShown(){},setShownName(){},setShownPeerId(){},setShownAvatarUrl(){},setSpeakerOn(){},setElapsed(){},setMuted(){},setToast(){},setError(){},
+  setPhase(value){context.phase=value;},setShown(){},setShownName(){},setShownPeerId(){},setShownAvatarUrl(){},setSpeakerOn(){},setAudioRouteOpen(){},setAudioRouteBusy(){},setAudioRouteName(){},setAudioRouteDevices(){},setElapsed(){},setMuted(){},setToast(){},setError(){},
  };
  for(const name of ['call','pc','stream','iceChannel','ringTimeout','transportTimeout','submittedAnswer'])context[name+'Ref']={current:null};
  for(const name of ['localIce','remoteIce'])context[name+'Ref']={current:[]};
@@ -60,7 +60,15 @@ function endpoint(userId,frequency){
    const updated=copy(row);for(const c of all)later(()=>c.onUpdatedCall(updated));return{data:updated};
   },
  };
- vm.createContext(context);
+   // CONNECT_PWA_CALL_OUTPUT_HARNESS_FIX2_20261114
+// Fail at VM setup, not during asynchronous call cleanup: every unqualified
+// React state setter used in cleanup must be present in the test harness.
+const cleanupText=functions.get('cleanup')||'';
+const cleanupSetters=new Set(cleanupText.match(/(?<![\w.])set[A-Z]\w*(?=\s*\()/g)||[]);
+for(const setter of cleanupSetters){
+  assert.equal(typeof context[setter],'function','RTC test harness missing cleanup setter: '+setter);
+}
+vm.createContext(context);
  for(const name of ['configureCallAudioSession','sendIce','flushLocalIce','flushRemoteIce','receiveIce','pullIce','watchIce','cleanup','finish','connectionDeadline','createPeer','onUpdatedCall','presentIncoming','startOutgoing','acceptIncoming']){
   assert.ok(functions.has(name),name);vm.runInContext(ts.transpileModule(functions.get(name),{compilerOptions:{target:99}}).outputText,context);
  }

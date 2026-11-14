@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import ConnectCallAvatar, { loadCallAvatarUrls } from './ConnectCallAvatar';
 import { traceCall } from '../lib/call-diagnostics';
+import {callOutputSupported,listedCallOutputs,chooseCallOutput,type ConnectCallOutput} from '../lib/connect-call-output'; // CONNECT_PWA_CALL_OUTPUT_UI_20261114
 
 type Status = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
 type CallRow = {
@@ -223,6 +224,10 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const [shownAvatarUrl, setShownAvatarUrl] = useState('');
   const [muted, setMuted] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(false);
+  const [audioRouteOpen,setAudioRouteOpen]=useState(false);
+  const [audioRouteBusy,setAudioRouteBusy]=useState(false);
+  const [audioRouteName,setAudioRouteName]=useState('Системный');
+  const [audioRouteDevices,setAudioRouteDevices]=useState<ConnectCallOutput[]>([]);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -399,6 +404,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     window.ConnectAndroid?.setSpeakerphone(false);
     if (callRef.current) window.ConnectAndroid?.setCallState(callRef.current.id, 'ended');
     setSpeakerOn(false);
+    setAudioRouteOpen(false);setAudioRouteBusy(false);setAudioRouteName('Системный');setAudioRouteDevices([]);
     soundRef.current?.stop();
     generationRef.current++;
     if (ringTimeoutRef.current) clearTimeout(ringTimeoutRef.current);
@@ -798,13 +804,55 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     streamRef.current?.getAudioTracks().forEach(track => { track.enabled = !next; });
     setMuted(next);
   }
-  function enableRemoteAudio() {
+  async function enableRemoteAudio() {
     if (window.ConnectAndroid) {
       const next=!speakerOn;
       window.ConnectAndroid.setSpeakerphone(next);
       setSpeakerOn(next);
+      void remoteAudioRef.current?.play().catch(() => setError('Не удалось включить звук.'));
+      return;
     }
-    void remoteAudioRef.current?.play().then(() => setError('')).catch(() => setError('Не удалось включить звук. Проверьте настройки воспроизведения.'));
+    // A browser can expose only the default device, even on a new iOS version.
+    // Never label a made-up device as an earpiece or a loudspeaker.
+    const audio=remoteAudioRef.current;
+    setAudioRouteOpen(value=>!value);
+    if(!audio||!callOutputSupported(audio)){
+      setError('На этом iPhone PWA не может переключать аудиовыход. Используй системный выбор звука iOS.');
+      void audio?.play().catch(()=>{});
+      return;
+    }
+    setAudioRouteBusy(true);
+    try{
+      const devices=await navigator.mediaDevices.enumerateDevices();
+      setAudioRouteDevices(listedCallOutputs(devices));
+      setError('');
+    }catch{setError('iOS не предоставила список аудиоустройств.');}
+    finally{setAudioRouteBusy(false);}
+    void audio.play().catch(()=>{});
+  }
+  async function applyAudioRoute(deviceId:string,name:string){
+    const audio=remoteAudioRef.current;
+    setAudioRouteBusy(true);
+    try{
+      await chooseCallOutput(audio,deviceId);
+      await audio?.play();
+      setAudioRouteName(name);setError('');setAudioRouteOpen(false);
+    }catch{setError('iOS не разрешила переключить аудиовыход. Текущий звук сохранён.');}
+    finally{setAudioRouteBusy(false);}
+  }
+  async function askSystemAudioOutput(){
+    // selectAudioOutput() MUST be invoked synchronously from the button click.
+    const devices=navigator.mediaDevices as MediaDevices & {selectAudioOutput?:()=>Promise<MediaDeviceInfo>};
+    if(!devices?.selectAudioOutput)return;
+    setAudioRouteBusy(true);
+    try{
+      const selected=await devices.selectAudioOutput();
+      await chooseCallOutput(remoteAudioRef.current,selected.deviceId);
+      await remoteAudioRef.current?.play();
+      setAudioRouteName(selected.label||'Выбранное устройство');
+      setAudioRouteOpen(false);setError('');
+    }catch{setError('Не удалось выбрать устройство. Проверь разрешение iOS.');}
+    finally{setAudioRouteBusy(false);}
   }
 
   // Notification action intents are delivered before or after React mounts.
@@ -845,14 +893,24 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
           </button>}
           {!incoming && (phase === 'active' || phase === 'connecting' || phase === 'reconnecting') && <button className={'connect-call-action' + (muted ? ' muted' : '')}
             type="button" onClick={toggleMute}><span><Glyph name={muted ? 'muted' : 'mic'}/></span><span>{muted ? 'Включить микрофон' : 'Выключить микрофон'}</span></button>}
-          {!incoming && <button className="connect-call-action" type="button" onClick={enableRemoteAudio}>
-            <span><Glyph name="speaker"/></span><span>{window.ConnectAndroid ? speakerOn ? 'Обычный звук' : 'Громкая связь' : 'Звук'}</span>
+          {(!incoming || !window.ConnectAndroid) && <button className="connect-call-action" type="button" onClick={() => void enableRemoteAudio()} aria-expanded={!window.ConnectAndroid ? audioRouteOpen : undefined}>
+            <span><Glyph name="speaker"/></span><span>{window.ConnectAndroid ? speakerOn ? 'Обычный звук' : 'Громкая связь' : 'Аудиовыход'}</span>
           </button>}
           <button className="connect-call-action hangup" type="button"
             onClick={() => void finish(incoming ? 'decline' : 'hangup')}>
             <span><Glyph name="end"/></span><span>{incoming ? 'Отклонить' : 'Завершить'}</span>
           </button>
         </div>
+        {audioRouteOpen && !window.ConnectAndroid && <div className="connect-call-outputs" aria-label="Выбор аудиовыхода">
+          <strong>Аудиовыход · {audioRouteName}</strong>
+          {callOutputSupported(remoteAudioRef.current) ? <>
+            <button type="button" disabled={audioRouteBusy} onClick={() => void applyAudioRoute('','Системный')}>Системный выход iOS</button>
+            {audioRouteDevices.filter(x=>x.id!=='default').map(device=><button key={device.id} type="button" disabled={audioRouteBusy} onClick={() => void applyAudioRoute(device.id,device.label)}>{device.label}</button>)}
+            {typeof (navigator.mediaDevices as MediaDevices & {selectAudioOutput?:()=>Promise<MediaDeviceInfo>})?.selectAudioOutput==='function' &&
+              <button type="button" disabled={audioRouteBusy} onClick={() => void askSystemAudioOutput()}>Выбрать другое устройство…</button>}
+            {!audioRouteDevices.some(x=>x.id!=='default') && <small>iOS не предоставила отдельные динамики. Доступен системный аудиовыход.</small>}
+          </> : <small>Этот браузер не предоставляет выбор аудиовыхода. Переключи звук в Пункте управления iOS.</small>}
+        </div>}
         {error && <p className="connect-call-error" role="alert">{error}</p>}
         <p className="connect-call-note">Звонки работают при открытой PWA. В фоне iPhone может отключить микрофон.</p>
       </div>

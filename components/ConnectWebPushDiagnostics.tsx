@@ -2,8 +2,9 @@
 
 import {useCallback,useEffect,useRef,useState} from 'react';
 import type {SupabaseClient} from '@supabase/supabase-js';
+import {reconcileWebPush} from '../lib/connect-push-repair'; // CONNECT_PWA_PUSH_REPAIR_UI_20261114
 
-type Connection = 'checking'|'active'|'unsupported'|'denied'|'permission'|'missing'|'unregistered'|'disabled'|'invalid-key'|'error';
+type Connection = 'checking'|'active'|'unsupported'|'denied'|'permission'|'missing'|'unregistered'|'disabled'|'invalid-key'|'error'|'temporary';
 type Delivery = 'idle'|'sending'|'confirmed'|'unconfirmed'|'error';
 type Props={supabase:SupabaseClient;userId:string};
 const VAPID=process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY||'';
@@ -47,10 +48,10 @@ function available():boolean{
   return typeof window!=='undefined'&&'serviceWorker'in navigator&&'PushManager'in window&&'Notification'in window&&Boolean(VAPID);
 }
 function label(state:Connection):string{
-  return ({checking:'Проверяем подписку',active:'Подписка активна',unsupported:'Web Push недоступен',denied:'Уведомления запрещены в iOS',permission:'Требуется разрешение',missing:'Подписка отсутствует',unregistered:'Устройство не зарегистрировано на сервере',disabled:'Уведомления отключены на сервере','invalid-key':'Подписка требует переподключения',error:'Не удалось проверить подписку'})[state];
+  return ({checking:'Проверяем подписку',active:'Подписка активна',unsupported:'Web Push недоступен',denied:'Уведомления запрещены в iOS',permission:'Требуется разрешение',missing:'Подписка отсутствует',unregistered:'Устройство не зарегистрировано на сервере',disabled:'Уведомления отключены на сервере','invalid-key':'Подписка требует переподключения',error:'Не удалось проверить подписку',temporary:'Временная проблема с сетью'})[state];
 }
 function description(state:Connection):string{
-  return ({checking:'Проверяем разрешение, подписку и регистрацию устройства.',active:'Разрешение получено, текущая подписка есть и зарегистрирована на сервере.',unsupported:'На iPhone открой Connect с экрана «Домой»; проверь настройку Web Push.',denied:'Разреши уведомления для Connect в настройках iPhone.',permission:'Нажми «Подключить уведомления» и предоставь разрешение.',missing:'Нажми «Подключить уведомления», чтобы создать подписку.',unregistered:'Подписка есть на iPhone, но отсутствует в базе Connect. Подключи её повторно.',disabled:'Нажми «Подключить уведомления», чтобы снова включить отправку.', 'invalid-key':'Ключ подписки изменился. Переподключи уведомления.',error:'Не удалось подтвердить регистрацию на сервере. Попробуй ещё раз.'})[state];
+  return ({checking:'Проверяем разрешение, подписку и регистрацию устройства.',active:'Разрешение получено, текущая подписка есть и зарегистрирована на сервере.',unsupported:'На iPhone открой Connect с экрана «Домой»; проверь настройку Web Push.',denied:'Разреши уведомления для Connect в настройках iPhone.',permission:'Нажми «Подключить уведомления» и предоставь разрешение.',missing:'Нажми «Подключить уведомления», чтобы создать подписку.',unregistered:'Подписка есть на iPhone, но отсутствует в базе Connect. Подключи её повторно.',disabled:'Нажми «Подключить уведомления», чтобы снова включить отправку.', 'invalid-key':'Ключ подписки изменился. Переподключи уведомления.',error:'Не удалось подтвердить регистрацию на сервере. Попробуй ещё раз.',temporary:'Подписка могла сохраниться. Повторная проверка выполнится при восстановлении сети.'})[state];
 }
 function formatDate(value:string|null):string{
   if(!value)return '';
@@ -74,6 +75,7 @@ export default function ConnectWebPushDiagnostics({supabase,userId}:Props){
     if(!available()){update('unsupported');return;}
     if(Notification.permission==='denied'){update('denied');return;}
     if(Notification.permission!=='granted'){update('permission');return;}
+    if(navigator.onLine===false){update('temporary');return;}
     try{
       const reg=await navigator.serviceWorker.getRegistration();
       const subscription=await reg?.pushManager.getSubscription();
@@ -85,10 +87,10 @@ export default function ConnectWebPushDiagnostics({supabase,userId}:Props){
         method:'POST',cache:'no-store',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},
         body:JSON.stringify({action:'status',endpoint:subscription.endpoint}),
       });
-      if(!res.ok){update('error');return;}
+      if(!res.ok){update(res.status===401?'error':'temporary');return;}
       const result=await res.json() as {registered?:boolean;enabled?:boolean};
       update(!result.registered?'unregistered':result.enabled===false?'disabled':'active');
-    }catch{update('error');}
+    }catch{update('temporary');}
   },[supabase,userId]);
 
   useEffect(()=>{
@@ -98,6 +100,10 @@ export default function ConnectWebPushDiagnostics({supabase,userId}:Props){
     }catch{}
     void check();
     const onFocus=()=>{void check();};
+    const onOnline=()=>{void check();};
+    const onPushSynced=(event:Event)=>{
+      if((event as CustomEvent<{userId:string}>).detail?.userId===userId)void check();
+    };
     const onVisible=()=>{if(document.visibilityState==='visible')void check();};
     const onMessage=(event:MessageEvent)=>{
       const data=event.data as {type?:string;requestId?:string;userId?:string;receivedAt?:string}|null;
@@ -109,11 +115,15 @@ export default function ConnectWebPushDiagnostics({supabase,userId}:Props){
       try{localStorage.setItem('connect-push-diagnostic-last:'+userId,at);}catch{}
     };
     window.addEventListener('focus',onFocus);
+    window.addEventListener('online',onOnline);
+    window.addEventListener('connect:push-synced',onPushSynced);
     document.addEventListener('visibilitychange',onVisible);
     navigator.serviceWorker?.addEventListener('message',onMessage);
     return()=>{
       refreshGeneration.current++;
       window.removeEventListener('focus',onFocus);
+      window.removeEventListener('online',onOnline);
+      window.removeEventListener('connect:push-synced',onPushSynced);
       document.removeEventListener('visibilitychange',onVisible);
       navigator.serviceWorker?.removeEventListener('message',onMessage);
       if(pending.current){window.clearTimeout(pending.current.timer);pending.current=null;}
@@ -130,15 +140,8 @@ export default function ConnectWebPushDiagnostics({supabase,userId}:Props){
         throw Error('Разрешение на уведомления не предоставлено.');
       const {data:{session}}=await supabase.auth.getSession();
       if(!session)throw Error('Для подключения войди в Connect.');
-      const reg=await navigator.serviceWorker.register('/sw.js');
-      let subscription=await reg.pushManager.getSubscription();
-      if(subscription&&!validCurrentKey(subscription)){await subscription.unsubscribe();subscription=null;}
-      if(!subscription)subscription=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:vapidKeyBuffer(VAPID)});
-      const response=await fetch('/api/push/register',{
-        method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},
-        body:JSON.stringify({platform:'web',endpoint:subscription.endpoint,subscription:subscription.toJSON()}),
-      });
-      if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(typeof body.error==='string'?body.error:'Не удалось зарегистрировать устройство');}
+      const restored=await reconcileWebPush(supabase,userId,{manual:true});
+      if(restored.state!=='active')throw Error(({denied:'Уведомления запрещены в iOS.',permission:'Нужно разрешение на уведомления.',unsupported:'Web Push недоступен.',temporary:'Сеть временно недоступна. Попробуй позже.',unauthorized:'Требуется повторный вход в Connect.', 'invalid-key':'Ошибка ключа подписки.', 'needs-action':'iOS не создала подписку. Повтори подключение.'} as Record<string,string>)[restored.state]||'Не удалось восстановить подписку.');
       // The old PWA toggle may have left server-side notifications disabled.
       const {data:stored,error:readError}=await supabase.from('notification_preferences')
         .select('enabled,sound,vibrate').eq('user_id',userId).maybeSingle();
