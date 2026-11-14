@@ -1,0 +1,267 @@
+name: Connect PWA | iOS call microphone safeguard FIX1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-ios-call-audio-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ios-call-audio:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout latest PWA
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Apply conservative PWA-only iOS audio mitigation
+        shell: bash
+        run: |
+          python3 - <<'PY_CALL'
+          from pathlib import Path
+          path = Path('components/ConnectAudioCalls.tsx')
+          source = path.read_text(encoding='utf-8')
+          marker = 'CONNECT_IOS_CALL_SCREEN_AWAKE_20261114'
+          if marker in source:
+              print('iOS PWA audio safeguard already present; nothing to change.')
+          else:
+              def replace_once(old, new):
+                  global source
+                  count = source.count(old)
+                  if count != 1:
+                      raise RuntimeError(f'Unsafe edit blocked: expected one match, got {count} for {old[:100]!r}')
+                  source = source.replace(old, new, 1)
+
+              helpers = '''/** CONNECT_IOS_CALL_SCREEN_AWAKE_20261114
+           * Audio Session improves call audio routing, not iOS background permissions.
+           * Wake Lock prevents automatic screen off, but does not override power-button lock.
+           */
+          function configureCallAudioSession(type: 'auto' | 'play-and-record') {
+            if (window.ConnectAndroid || !/iP(hone|ad|od)/.test(navigator.userAgent)) return;
+            const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+            try { if (session) session.type = type; } catch { /* WebKit may reject the transition. */ }
+          }
+
+          function holdIosCallScreenAwake(): () => void {
+            if (window.ConnectAndroid || !/iP(hone|ad|od)/.test(navigator.userAgent) || !navigator.wakeLock) return () => {};
+            let disposed = false;
+            let pending = false;
+            let lock: WakeLockSentinel | null = null;
+            async function acquire() {
+              if (disposed || pending || lock || document.visibilityState !== 'visible') return;
+              pending = true;
+              try {
+                const next = await navigator.wakeLock.request('screen');
+                if (disposed || document.visibilityState !== 'visible') {
+                  void next.release();
+                  return;
+                }
+                lock = next;
+                next.addEventListener('release', () => { if (lock === next) lock = null; });
+              } catch { /* iOS may deny wake lock in the current power state. */ }
+              finally { pending = false; }
+            }
+            document.addEventListener('visibilitychange', acquire);
+            void acquire();
+            return () => {
+              disposed = true;
+              document.removeEventListener('visibilitychange', acquire);
+              const previous = lock;
+              lock = null;
+              if (previous) void previous.release();
+            };
+          }
+          '''
+
+              replace_once('function Glyph({ name }:', helpers + '\nfunction Glyph({ name }:')
+              replace_once(
+                  '  if (!soundRef.current) soundRef.current = new ConnectCallSound();',
+                  '''  if (!soundRef.current) soundRef.current = new ConnectCallSound();
+
+            // iOS Home Screen PWA supports Screen Wake Lock from iOS 18.4.
+            const callIsOpen = phase !== 'idle';
+            useEffect(() => {
+              if (!callIsOpen) return;
+              return holdIosCallScreenAwake();
+            }, [callIsOpen]);'''
+              )
+              replace_once(
+                  '    streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;',
+                  '''    streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
+              configureCallAudioSession('auto');'''
+              )
+              replace_once(
+                  '    // On iOS request microphone access inside the original tap handler, before',
+                  '''    configureCallAudioSession('play-and-record');
+              // On iOS request microphone access inside the original tap handler, before'''
+              )
+              replace_once(
+                  '    stream.getTracks().forEach(track => pc.addTrack(track, stream));\n    const ownsPeer = () => generation === generationRef.current && pcRef.current === pc;',
+                  '''    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+              const ownsPeer = () => generation === generationRef.current && pcRef.current === pc;
+              // Separate browser-level capture interruption from the user's mute button.
+              for (const track of stream.getTracks().filter(track => track.kind === 'audio')) {
+                track.addEventListener('mute', () => {
+                  if (ownsPeer()) traceCall(callRef.current?.id, 'microphone', 'system-muted', document.visibilityState);
+                });
+                track.addEventListener('unmute', () => {
+                  if (ownsPeer()) traceCall(callRef.current?.id, 'microphone', 'system-resumed', document.visibilityState);
+                });
+              }'''
+              )
+              test_path = Path('tests/call-rtc.integration.cjs')
+              test_source = test_path.read_text(encoding='utf-8')
+              def test_replace_once(old, new):
+                  global test_source
+                  count = test_source.count(old)
+                  if count != 1:
+                      raise RuntimeError(f'Test harness changed: expected one match, got {count} for {old[:100]!r}')
+                  test_source = test_source.replace(old, new, 1)
+
+              test_replace_once(
+                  '  window:{},navigator:{mediaDevices:{async getUserMedia(){',
+                  "  window:{},navigator:{userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 27_2 like Mac OS X)',audioSession:{type:'auto'},mediaDevices:{async getUserMedia(){"
+              )
+              test_replace_once(
+                  "for(const name of ['sendIce','flushLocalIce'",
+                  "for(const name of ['configureCallAudioSession','sendIce','flushLocalIce'"
+              )
+              test_replace_once(
+                  " await begin();await until(()=>left.facts.nonzero>20",
+                  " await begin();assert.equal(left.navigator.audioSession.type,'play-and-record');assert.equal(right.navigator.audioSession.type,'play-and-record');await until(()=>left.facts.nonzero>20"
+              )
+              test_replace_once(
+                  " await right.finish('hangup');await until(()=>left.phase==='idle'&&right.phase==='idle','both ends release');",
+                  " await right.finish('hangup');await until(()=>left.phase==='idle'&&right.phase==='idle','both ends release');assert.equal(left.navigator.audioSession.type,'auto');assert.equal(right.navigator.audioSession.type,'auto');"
+              )
+              device_test_path = Path('tests/call-device-ownership.test.cjs')
+              device_test_source = device_test_path.read_text(encoding='utf-8')
+              old_loader = "  const load = name => { vm.runInContext(actualFunction(name), c); return c[name]; };"
+              new_loader = "  const load = name => { if (name === 'createPeer') vm.runInContext(actualFunction('configureCallAudioSession'), c); vm.runInContext(actualFunction(name), c); return c[name]; };"
+              if device_test_source.count(old_loader) != 1:
+                  raise RuntimeError('Device ownership test harness changed; not modifying PWA')
+              device_test_source = device_test_source.replace(old_loader, new_loader, 1)
+              ios_test_path = Path('tests/ios-call-background.test.cjs')
+              if ios_test_path.exists():
+                  raise RuntimeError('A separate iOS call test already exists; refusing to overwrite it')
+              ios_test = '''/* Browser API behavior only. Manual iPhone lock may still suspend WebRTC. */
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const vm = require('node:vm');
+          const ts = require('typescript');
+          const source = fs.readFileSync(path.join(__dirname, '../components/ConnectAudioCalls.tsx'), 'utf8');
+          const tree = ts.createSourceFile('calls.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+          const functions = new Map();
+          function walk(node) {
+            if (ts.isFunctionDeclaration(node) && node.name) functions.set(node.name.text, node.getText(tree));
+            ts.forEachChild(node, walk);
+          }
+          walk(tree);
+          function fixture() {
+            const handlers = new Map();
+            const locks = [];
+            const document = {
+              visibilityState: 'visible',
+              addEventListener(type, fn) { handlers.set(type, fn); },
+              removeEventListener(type, fn) { if (handlers.get(type) === fn) handlers.delete(type); },
+            };
+            const navigator = {
+              userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 27_2 like Mac OS X)',
+              audioSession: { type: 'auto' },
+              wakeLock: { async request(type) {
+                assert.equal(type, 'screen');
+                const listeners = [];
+                const lock = {
+                  released: false,
+                  addEventListener(type, fn) { if (type === 'release') listeners.push(fn); },
+                  async release() { this.released = true; for (const fn of listeners) fn(); },
+                };
+                locks.push(lock);
+                return lock;
+              } },
+            };
+            const context = vm.createContext({ window: {}, navigator, document });
+            for (const name of ['configureCallAudioSession', 'holdIosCallScreenAwake']) {
+              assert.ok(functions.has(name), name);
+              vm.runInContext(ts.transpileModule(functions.get(name), {
+                compilerOptions: { target: ts.ScriptTarget.ES2022 },
+              }).outputText, context);
+            }
+            return { context, navigator, document, handlers, locks };
+          }
+          const tick = () => new Promise(resolve => setImmediate(resolve));
+          (async () => {
+            const f = fixture();
+            f.context.configureCallAudioSession('play-and-record');
+            assert.equal(f.navigator.audioSession.type, 'play-and-record');
+            f.context.configureCallAudioSession('auto');
+            assert.equal(f.navigator.audioSession.type, 'auto');
+            const dispose = f.context.holdIosCallScreenAwake();
+            await tick();
+            assert.equal(f.locks.length, 1);
+            f.document.visibilityState = 'hidden';
+            await f.locks[0].release();
+            f.document.visibilityState = 'visible';
+            f.handlers.get('visibilitychange')();
+            await tick();
+            assert.equal(f.locks.length, 2, 'restore wake lock after foregrounding');
+            dispose();
+            await tick();
+            assert.equal(f.locks[1].released, true, 'release wake lock after call');
+            assert.equal(f.handlers.size, 0);
+            const native = fixture(); native.context.window.ConnectAndroid = {};
+            native.context.configureCallAudioSession('play-and-record');
+            assert.equal(native.navigator.audioSession.type, 'auto');
+            native.context.holdIosCallScreenAwake()();
+            await tick();
+            assert.equal(native.locks.length, 0, 'do not change Android native behavior');
+            console.log('PASS: iOS PWA audio session and Screen Wake Lock lifecycle');
+          })().catch(error => { console.error(error); process.exitCode = 1; });
+          '''
+              path.write_text(source, encoding='utf-8')
+              test_path.write_text(test_source, encoding='utf-8')
+              device_test_path.write_text(device_test_source, encoding='utf-8')
+              ios_test_path.write_text(ios_test, encoding='utf-8')
+              print('PWA iOS safeguards, tests and test-harness fixes applied; Android unchanged.')
+          PY_CALL
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for existing Playwright browser tests
+        run: node node_modules/playwright-core/cli.js install --with-deps chromium
+
+      - name: Validate TypeScript
+        run: npm run typecheck
+
+      - name: Test iOS call safeguards
+        run: node tests/ios-call-background.test.cjs
+
+      - name: Run existing Connect tests
+        run: npm test
+
+      - name: Commit verified PWA changes
+        shell: bash
+        run: |
+          git add -- components/ConnectAudioCalls.tsx tests/call-rtc.integration.cjs tests/call-device-ownership.test.cjs tests/ios-call-background.test.cjs
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -m "fix(pwa): mitigate iOS call auto-lock and trace mic interruptions"
+          git push origin HEAD:main
