@@ -1005,6 +1005,16 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
   </div>;
 }
 
+// CONNECT_PWA_NAV_MENUS_CALL_V1_20261114: edge gestures navigate screen history,
+// never message swipes or the iOS native system back gesture.
+type ConnectGestureView = { tab: Tab; chat: string | null; profile: string | null; media: ProfileMediaKind | null; settings: SettingsPage };
+function connectSwipeDirection(edge: 'back' | 'forward', dx: number, dy: number): -1 | 0 | 1 {
+  if (Math.abs(dx) < 76 || Math.abs(dy) > Math.abs(dx) * 0.52) return 0;
+  if (edge === 'back' && dx > 0) return -1;
+  if (edge === 'forward' && dx < 0) return 1;
+  return 0;
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [visualScene, setVisualScene] = useState<VisualScene>('waves');
@@ -1050,6 +1060,7 @@ export default function Home() {
   const [crop, setCrop] = useState<CropState | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeChat, setActiveChat] = useState<string | null>(null);
+  const gestureHistory = useRef<{ owner: string; entries: ConnectGestureView[]; cursor: number; restoring: boolean }>({owner:'',entries:[],cursor:-1,restoring:false});
   const [clearedChats, setClearedChats] = useState<Record<string,string>>({});
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatHistoryLoading,setChatHistoryLoading]=useState(false);
@@ -2322,6 +2333,69 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   },[conversations,user?.id]);
   function exitChat() { captureChatAnchor(); flushVisibleRead(); resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
   function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); setProfileMediaOpen(null); }
+  // Keep one in-memory navigation stack. Swipe restoration must not create new entries.
+  useEffect(() => {
+    const history = gestureHistory.current;
+    if(!user?.id) { history.owner='';history.entries=[];history.cursor=-1;history.restoring=false;return; }
+    if(history.owner!==user.id) { history.owner=user.id;history.entries=[];history.cursor=-1;history.restoring=false; }
+    const view:ConnectGestureView={tab,chat:activeChat,profile:profileView,media:profileMediaOpen,settings:settingsPage};
+    if(history.restoring) { history.restoring=false;return; }
+    const same=(a:ConnectGestureView|undefined,b:ConnectGestureView)=>Boolean(a && a.tab===b.tab && a.chat===b.chat && a.profile===b.profile && a.media===b.media && a.settings===b.settings);
+    if(same(history.entries[history.cursor],view))return;
+    // Native back buttons and bottom tabs must move the cursor too, not push duplicate screens.
+    if(same(history.entries[history.cursor-1],view)){history.cursor--;return;}
+    if(same(history.entries[history.cursor+1],view)){history.cursor++;return;}
+    history.entries=[...history.entries.slice(0,history.cursor+1),view].slice(-24);
+    history.cursor=history.entries.length-1;
+  },[user?.id,tab,activeChat,profileView,profileMediaOpen,settingsPage]);
+
+  useEffect(() => {
+    if(!user?.id || isNativeMediaRuntime())return;
+    const shell=shellRef.current;
+    if(!shell)return;
+    let started:{x:number;y:number;edge:'back'|'forward'}|null=null;
+    function start(e: Event){
+      started=null;
+      // This is a DOM listener, not the React TouchEvent imported for message gestures.
+      const touches=(e as Event & {touches:TouchList}).touches;
+      if(touches.length!==1 || crop || mediaViewer || videoNoteOpen || !!menuMessage || !!forwardIds.length || selectionMode || stickerPicker || chatSearchOpen || chatActions)return;
+      if(document.querySelector('.connect-call-backdrop,.connect-call-history-screen'))return;
+      const target=e.target;
+      if(target instanceof Element && target.closest('input,textarea,select,[contenteditable="true"],.bubble,.context-overlay,.sticker-picker,.connect-vnote-backdrop,.connect-media-overlay'))return;
+      const rect=shell!.getBoundingClientRect(),x=touches[0].clientX,y=touches[0].clientY;
+      if(x>=rect.left && x<=rect.left+28)started={x,y,edge:'back'};
+      else if(x<=rect.right && x>=rect.right-28)started={x,y,edge:'forward'};
+    }
+    function end(e: Event){
+      const changedTouches=(e as Event & {changedTouches:TouchList}).changedTouches;
+      if(!started || changedTouches.length!==1)return;
+      const origin=started;started=null;
+      const dx=changedTouches[0].clientX-origin.x,dy=changedTouches[0].clientY-origin.y;
+      const direction=connectSwipeDirection(origin.edge,dx,dy);
+      if(!direction)return;
+      const history=gestureHistory.current,step=history.cursor+direction;
+      if(step<0||step>=history.entries.length)return;
+      const target=history.entries[step];
+      if(target.chat && !conversations.some(c=>c.id===target.chat))return;
+      if(target.profile && !profiles.some(p=>p.id===target.profile))return;
+      e.preventDefault();
+      history.cursor=step;
+      history.restoring=true;
+      if(activeChat && target.chat!==activeChat)exitChat();
+      if(target.chat && target.chat!==activeChat)enterChat(target.chat);
+      if(!target.chat)setActiveChat(null);
+      if(target.profile)showProfile(target.profile);
+      else {setProfileView(null);setProfileMediaOpen(null);}
+      setProfileMediaOpen(target.media);
+      setTab(target.tab);setSettingsPage(target.settings);setSearch('');setListActions(null);setStickerPicker(false);
+    }
+    function cancel(){started=null;}
+    shell.addEventListener('touchstart',start,{passive:true});
+    shell.addEventListener('touchend',end,{passive:false});
+    shell.addEventListener('touchcancel',cancel,{passive:true});
+    return()=>{shell.removeEventListener('touchstart',start);shell.removeEventListener('touchend',end);shell.removeEventListener('touchcancel',cancel);};
+  },[user?.id,tab,activeChat,profileView,profileMediaOpen,settingsPage,crop,mediaViewer,videoNoteOpen,menuMessage,forwardIds.length,selectionMode,stickerPicker,chatSearchOpen,chatActions,conversations,profiles]);
+
   async function openContact(p: Profile) {
     if (!supabase || !user || busy) return;
     setBusy(true); setNotice('');

@@ -83,3 +83,57 @@
 .connect-call-outputs button {text-align:left;border:1px solid rgba(224,247,255,.13);border-radius:12px;padding:10px 12px;background:rgba(112,145,180,.16);color:var(--text);font-size:12px;min-height:39px;}
 .connect-call-outputs button:disabled {opacity:.45;}
 .connect-call-outputs small {color:var(--muted);font-size:11px;line-height:1.4;}
+
+/* CONNECT_PWA_NAV_MENUS_CALL_V1_20261114: call UI follows all seven themes. */
+.connect-app .connect-call-backdrop {
+  background: color-mix(in srgb, var(--bg) 75%, rgba(0,0,0,.75));
+}
+.connect-app .connect-call-modal {
+  color: var(--text);
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--wave-primary, var(--accent)) 13%, var(--glass-surface-strong, var(--panel))),
+    color-mix(in srgb, var(--wave-secondary, var(--accent)) 9%, var(--panel)));
+  border: 1px solid var(--v4-border, var(--glass-stroke-hi, var(--border)));
+  box-shadow: 0 25px 60px rgba(0,0,0,.30), inset 0 1px 0 var(--glass-sheen,rgba(255,255,255,.10));
+}
+.connect-app .connect-call-avatar {
+  background: linear-gradient(140deg, var(--accent), color-mix(in srgb,var(--wave-primary,var(--accent)) 22%,var(--panel)));
+}
+.connect-app .connect-call-headline {
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  margin-bottom:20px;min-height:28px;
+}
+.connect-app .connect-call-headline .connect-call-eyebrow {margin:0;text-align:left;color:var(--wave-primary,var(--accent));}
+.connect-app .connect-call-minimize {
+  flex:0 0 auto;min-height:39px;border-radius:13px;padding:8px 12px;
+  border:1px solid var(--v4-border,var(--border));
+  background:color-mix(in srgb,var(--accent) 11%,var(--glass-surface-strong,var(--panel)));
+  color:var(--text);font-size:12px;font-weight:650;
+}
+.connect-app .connect-call-action:not(.accept):not(.hangup)>span:first-child {
+  background:color-mix(in srgb,var(--wave-primary,var(--accent)) 14%,var(--glass-surface-strong,var(--panel)));
+  border-color:var(--v4-border,var(--border));
+}
+.connect-app .connect-call-outputs {
+  background:var(--glass-surface-strong,var(--panel));
+  border-color:var(--v4-border,var(--border));
+}
+.connect-app .connect-call-outputs button {
+  background:color-mix(in srgb,var(--accent) 12%,var(--glass-surface-strong,var(--panel)));
+  border-color:var(--v4-border,var(--border));
+}
+.connect-app .connect-call-mini {
+  position:absolute;z-index:21000;
+  top:max(74px,calc(env(safe-area-inset-top) + 18px));right:12px;
+  display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 11px;
+  align-items:center;text-align:left;padding:11px 13px;min-height:56px;
+  width:min(264px,calc(100% - 24px));border-radius:18px;
+  border:1px solid var(--v4-border,var(--border));
+  background:linear-gradient(125deg,color-mix(in srgb,var(--wave-primary,var(--accent)) 17%,var(--glass-surface-strong,var(--panel))),var(--panel));
+  color:var(--text);box-shadow:0 12px 34px rgba(0,0,0,.32);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
+}
+.connect-app .connect-call-mini-name{font-size:13px;font-weight:700;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.connect-app .connect-call-mini-phase{font-size:11px;grid-column:1;color:var(--muted);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.connect-app .connect-call-mini-expand{grid-column:2;grid-row:1/3;font-size:21px;color:var(--wave-primary,var(--accent));}
+@media(max-width:370px){.connect-app .connect-call-headline{gap:4px}.connect-app .connect-call-minimize{font-size:11px;padding:7px 9px;}}

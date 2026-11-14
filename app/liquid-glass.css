@@ -2509,3 +2509,32 @@
   border-radius: 50%;
   overflow: hidden;
 }
+
+/* CONNECT_PWA_NAV_MENUS_CALL_V1_20261114: native-size iOS search; unified list menus. */
+.connect-app .main-view .search-field input {
+  font-size: 16px !important;
+  line-height: normal;
+  -webkit-appearance: none;
+  appearance: none;
+  outline: none !important;
+  box-shadow: none !important;
+  -webkit-tap-highlight-color: transparent;
+}
+.connect-app .main-view .search-field input:focus,
+.connect-app .main-view .search-field input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.connect-app .main-view .search-field:focus-within {
+  border-color: var(--glass-stroke);
+  box-shadow: inset 0 1px 0 var(--glass-sheen), var(--glass-shadow);
+}
+.connect-app .chat-actions-menu,
+.connect-app .floating-menu,
+.connect-app .list-chat-popover,
+.connect-app .connect-call-editor-popup {
+  background: var(--panel) !important;
+  color: var(--text);
+  border-color: var(--v4-border, var(--glass-stroke)) !important;
+  box-shadow: var(--glass-shadow, 0 16px 40px rgba(0,0,0,.32));
+}

@@ -217,6 +217,8 @@ class ConnectCallSound {
 }
 
 export default function ConnectAudioCalls({ client, userId, conversationId, peerId, peerName }: Props) {
+  // CONNECT_PWA_NAV_MENUS_CALL_V1_20261114: minimized PWA calls keep their WebRTC component mounted.
+  const [minimized,setMinimized]=useState(false);
   const [phase, setPhase] = useState<Phase>('idle');
   const [shown, setShown] = useState<CallRow | null>(null);
   const [shownName, setShownName] = useState('');
@@ -259,6 +261,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
 
   // iOS Home Screen PWA supports Screen Wake Lock from iOS 18.4.
   const callIsOpen = phase !== 'idle';
+  useEffect(()=>{if(phase==='idle')setMinimized(false);},[phase]);
   useEffect(() => {
     if (!callIsOpen) return;
     return holdIosCallScreenAwake();
@@ -874,6 +877,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
 
   const calling = phase !== 'idle';
   const incoming = phase === 'incoming';
+  const compactCall=minimized && (phase==='active'||phase==='reconnecting') && !window.ConnectAndroid && !window.ConnectNative;
   const phaseTitle: Record<Phase, string> = {
     idle: '', preparing: 'Подключаем микрофон…', ringing: 'Вызываем…', incoming: 'Входящий аудиозвонок',
     connecting: 'Соединяем…', active: `Разговор · ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`,
@@ -881,9 +885,17 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   };
 
   return <>
-    {calling && <div className="connect-call-backdrop" role="dialog" aria-modal="true" aria-label="Аудиозвонок Connect">
+    {calling && compactCall && <button type="button" className="connect-call-mini" aria-label="Вернуться к разговору" onClick={()=>setMinimized(false)}>
+      <span className="connect-call-mini-name">{shownName || 'Собеседник'}</span>
+      <span className="connect-call-mini-phase">{phaseTitle[phase]}</span>
+      <span className="connect-call-mini-expand" aria-hidden="true">↗</span>
+    </button>}
+    {calling && !compactCall && <div className="connect-call-backdrop" role="dialog" aria-modal="true" aria-label="Аудиозвонок Connect">
       <div className="connect-call-modal">
-        <p className="connect-call-eyebrow">CONNECT · АУДИО</p>
+        <div className="connect-call-headline">
+          <p className="connect-call-eyebrow">CONNECT · АУДИО</p>
+          {(phase==='active'||phase==='reconnecting') && !window.ConnectAndroid && !window.ConnectNative && <button className="connect-call-minimize" type="button" onClick={()=>{setAudioRouteOpen(false);setMinimized(true);}} aria-label="Свернуть звонок">⌄ Свернуть</button>}
+        </div>
         <ConnectCallAvatar className="connect-call-avatar" name={shownName || 'Собеседник'} url={shownAvatarUrl}/>
         <h2>{shownName || 'Собеседник'}</h2>
         <p className="connect-call-info" role="status">{phaseTitle[phase]}</p>
