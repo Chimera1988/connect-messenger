@@ -1,0 +1,260 @@
+name: Connect PWA | Theme-aware online dots in Chats and Contacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-presence-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-and-apply:
+    name: Verify PWA presence indicators before committing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Assert Connect repository and required sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test -s AGENTS.md
+          test -s package-lock.json
+          test -s app/page.tsx
+          test -s app/globals.css
+          test -s tests/call-rtc.integration.cjs
+          test -s components/ConnectPushGuardian.tsx
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install focused regression test without overwriting user changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp)"
+          cat > "$tmp" <<'JS_PRESENCE_TEST'
+          const test = require('node:test');
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const ts = require('typescript');
+          const React = require('react');
+          const {renderToStaticMarkup} = require('react-dom/server');
+
+          const source = fs.readFileSync(path.join(__dirname,'../app/page.tsx'),'utf8');
+          const css = fs.readFileSync(path.join(__dirname,'../app/globals.css'),'utf8');
+          const tree = ts.createSourceFile('page.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+          function sourceOf(name) {
+            const found = tree.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === name);
+            assert.ok(found, `${name} missing`);
+            return found.getText(tree);
+          }
+
+          function testedFunctions() {
+            const functions = ['dayKey','dayLabel','timeLabel','formatPresence','PresenceAvatar'].map(sourceOf).join('\n');
+            const transpiled = ts.transpileModule(functions,{
+              compilerOptions:{target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.React,module:ts.ModuleKind.None},
+              fileName:'presence.tsx',reportDiagnostics:true,
+            });
+            assert.deepEqual((transpiled.diagnostics||[]).filter(x=>x.category===ts.DiagnosticCategory.Error),[]);
+            const Avatar = ({name}) => React.createElement('span',{className:'person-avatar'},name);
+            return new Function('React','Avatar',`${transpiled.outputText}\nreturn {PresenceAvatar,formatPresence};`)(React,Avatar);
+          }
+
+          test('presence lease is consistent with existing chat header',()=>{
+            const {formatPresence}=testedFunctions();
+            const now = Date.parse('2026-11-14T12:00:00Z');
+            const current = {last_seen_at:new Date(now-10000).toISOString(),online_until:new Date(now+45000).toISOString()};
+            assert.equal(formatPresence(current,now),'В сети');
+            assert.notEqual(formatPresence({...current,online_until:new Date(now-1000).toISOString()},now),'В сети');
+            assert.notEqual(formatPresence(undefined,now),'В сети');
+          });
+
+          test('online avatar has an accessible small dot; offline avatar retains old markup',()=>{
+            const {PresenceAvatar}=testedFunctions();
+            const htmlOn = renderToStaticMarkup(React.createElement(PresenceAvatar,{name:'Тест',online:true}));
+            const htmlOff = renderToStaticMarkup(React.createElement(PresenceAvatar,{name:'Тест',online:false}));
+            assert.match(htmlOn,/connect-presence-avatar/);
+            assert.match(htmlOn,/connect-presence-dot/);
+            assert.match(htmlOn,/aria-label="В сети"/);
+            assert.doesNotMatch(htmlOff,/connect-presence-avatar|connect-presence-dot/);
+            assert.match(htmlOff,/person-avatar/);
+          });
+
+          test('both Chats and Contacts use the same presence, scoped to PWA',()=>{
+            const chat = source.split('filteredChats.map(c =>')[1]?.split("{tab === 'contacts'")[0]||'';
+            const contact = source.split('filteredContacts.map(p =>')[1]?.split("{tab === 'settings'")[0]||'';
+            assert.ok(chat.includes("online={!isNativeMediaRuntime() && formatPresence(presence[c.other?.id || ''], clock) === 'В сети'}"),'Chat list missing PWA presence lease');
+            assert.ok(contact.includes("online={!isNativeMediaRuntime() && formatPresence(presence[p.id], clock) === 'В сети'}"),'Contacts missing PWA presence lease');
+            assert.match(css,/\.connect-app \.connect-presence-dot\s*\{[^}]*width:12px;height:12px;[^}]*background:var\(--accent\);border:2px solid var\(--bg\);/s);
+          });
+          JS_PRESENCE_TEST
+          if test -f tests/presence-list-indicator.test.cjs; then
+            cmp -s "$tmp" tests/presence-list-indicator.test.cjs || { echo 'SOURCE_DRIFT: presence regression test changed' >&2; exit 1; }
+          else
+            cp "$tmp" tests/presence-list-indicator.test.cjs
+          fi
+          rm "$tmp"
+          node --check tests/presence-list-indicator.test.cjs
+
+      - name: Confirm focused regression fails before the fix (RED)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q 'CONNECT_PWA_ONLINE_BADGES_V1_20261114' app/page.tsx; then
+            echo 'Patch already exists; checking it in the following steps.'
+            exit 0
+          fi
+          set +e
+          node --test tests/presence-list-indicator.test.cjs > "$RUNNER_TEMP/presence-red.log" 2>&1
+          result=$?
+          set -e
+          if test "$result" -eq 0 || ! grep -Fq 'PresenceAvatar missing' "$RUNNER_TEMP/presence-red.log"; then
+            cat "$RUNNER_TEMP/presence-red.log"
+            echo 'Baseline did not fail for the expected missing feature; refusing to patch.' >&2
+            exit 1
+          fi
+          echo 'RED confirmed: the baseline lists do not have PresenceAvatar.'
+
+      - name: Patch only the two PWA lists and theme-aware CSS
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_PRESENCE_PATCH'
+          from pathlib import Path
+          import subprocess
+
+          PAGE = Path('app/page.tsx')
+          CSS = Path('app/globals.css')
+          MARKER = 'CONNECT_PWA_ONLINE_BADGES_V1_20261114'
+          EXPECTED_PAGE_SHA = 'e2c857e2ec67c154af384e4acb26b8ffffd617c0'
+          EXPECTED_CSS_SHA = 'b2c360c6270ff09924d40ac5a5228d9eacc27af7'
+
+          HELPER = '''// CONNECT_PWA_ONLINE_BADGES_V1_20261114: reuse the chat header presence lease.
+          // Offline/native entries render the original Avatar without an extra wrapper.
+          function PresenceAvatar({ name, id, url, online }: { name:string; id?:string; url?:string; online:boolean }) {
+            if (!online) return <Avatar name={name} id={id} url={url}/>;
+            return <span className="connect-presence-avatar"><Avatar name={name} id={id} url={url}/><span className="connect-presence-dot" role="img" aria-label="В сети"/></span>;
+          }
+
+          '''
+
+          OLD_CHAT = "<Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined}/>"
+          NEW_CHAT = "<PresenceAvatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined} online={!isNativeMediaRuntime() && formatPresence(presence[c.other?.id || ''], clock) === 'В сети'}/>"
+          OLD_CONTACT = '<Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/>'
+          NEW_CONTACT = "<PresenceAvatar name={p.display_name} id={p.id} url={avatarUrls[p.id]} online={!isNativeMediaRuntime() && formatPresence(presence[p.id], clock) === 'В сети'}/>"
+          CSS_BLOCK = '''
+          /* CONNECT_PWA_ONLINE_BADGES_V1_20261114: color follows the selected Connect accent. */
+          .connect-app .connect-presence-avatar {
+            display:inline-flex;position:relative;align-items:center;justify-content:center;
+            flex:0 0 auto;vertical-align:middle;
+          }
+          .connect-app .connect-presence-dot {
+            position:absolute;right:-2px;bottom:-2px;z-index:2;
+            width:12px;height:12px;border-radius:50%;
+            background:var(--accent);border:2px solid var(--bg);
+            box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 27%,transparent);
+            pointer-events:none;
+          }
+          '''
+
+          def sha(path):
+              return subprocess.check_output(['git','hash-object',str(path)], text=True).strip()
+
+          def verified_applied(page, css):
+              assert page.count(MARKER) == 1, 'Existing presence marker missing or duplicated'
+              assert page.count(NEW_CHAT) == 1, 'Expected updated chat avatar missing/duplicated'
+              assert page.count(NEW_CONTACT) == 1, 'Expected updated contact avatar missing/duplicated'
+              assert page.count(OLD_CHAT) == 0, 'Old chat avatar unexpectedly remains'
+              # The old contact avatar may legitimately exist elsewhere (e.g. forwarding)!
+              # Check only that both intended placements are updated.
+              assert css.count(MARKER) == 1, 'CSS marker missing or duplicated'
+              assert css.count('background:var(--accent);border:2px solid var(--bg);') == 1, 'CSS theme variables changed'
+
+
+          def install():
+              assert PAGE.is_file() and CSS.is_file(), 'Missing target sources'
+              page=PAGE.read_text(encoding='utf8');css=CSS.read_text(encoding='utf8')
+              if MARKER in page or MARKER in css:
+                  verified_applied(page,css)
+                  print('Presence badge patch already installed; exact content verified.')
+                  return
+              if sha(PAGE)!=EXPECTED_PAGE_SHA or sha(CSS)!=EXPECTED_CSS_SHA:
+                  raise SystemExit('SOURCE_DRIFT: source files differ from inspected main; refusing patch')
+              insert_before='function timeLabel(iso: string) {'
+              for old in [insert_before, OLD_CHAT]:
+                  if page.count(old)!=1:
+                      raise SystemExit(f'SOURCE_DRIFT: expected unique source anchor ({old[:60]}) but found {page.count(old)}')
+              contact_start=page.find('filteredContacts.map(p =>')
+              contact_end=page.find("{tab === 'settings'",contact_start)
+              if contact_start<0 or contact_end<0 or page[contact_start:contact_end].count(OLD_CONTACT)!=1:
+                  raise SystemExit('SOURCE_DRIFT: contacts list avatar must occur exactly once within Contacts tab')
+              page=page[:contact_start]+page[contact_start:contact_end].replace(OLD_CONTACT,NEW_CONTACT,1)+page[contact_end:]
+              page=page.replace(insert_before,HELPER+insert_before,1)
+              page=page.replace(OLD_CHAT,NEW_CHAT,1)
+              css=css.rstrip('\n')+'\n'+CSS_BLOCK
+              verified_applied(page,css)
+              PAGE.write_text(page,encoding='utf8');CSS.write_text(css,encoding='utf8')
+              print('Added PWA-only presence dots in Chats and Contacts, using existing presence lease and theme accent.')
+
+          if __name__=='__main__':
+              install()
+              install() # verify safe repeat on the same checkout
+          PY_PRESENCE_PATCH
+          git diff --check
+
+      - name: Prove online, offline, native isolation, and theme behavior (GREEN)
+        run: node --test tests/presence-list-indicator.test.cjs
+
+      - name: Check TypeScript
+        run: npm run typecheck
+
+      - name: Install matching Chromium before all browser tests
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Verify Chromium executable
+        run: |
+          node -e "const fs=require('node:fs');const p=require('playwright-core').chromium.executablePath();if(!fs.existsSync(p))throw Error('Chromium not installed: '+p)"
+
+      - name: Run entire existing Connect regression suite
+        run: npm test
+
+      - name: Verify production PWA build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+          NEXT_PUBLIC_VAPID_PUBLIC_KEY: AQID
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Commit and push only verified PWA presence changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/page.tsx app/globals.css tests/presence-list-indicator.test.cjs
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'Already installed and checked; no commit necessary.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat(pwa): theme-aware online indicators in chat and contacts lists'
+          git push origin HEAD:main
