@@ -1015,6 +1015,20 @@ function connectSwipeDirection(edge: 'back' | 'forward', dx: number, dy: number)
   return 0;
 }
 
+// CONNECT_PWA_DOCK_MOTION_NESTED_GESTURES_V1_20261114: no swipes between root tabs.
+function connectAllowHistorySwipe(current: ConnectGestureView | undefined, target: ConnectGestureView, direction: -1 | 1): boolean {
+  if (!current) return false;
+  // Back and forward belong to nested screens, not primary tab switching.
+  const inSubmenu = Boolean(current.profile || current.media || current.settings !== 'home');
+  if (inSubmenu) {
+    if (current.tab !== target.tab) return false;
+    return direction === -1 || Boolean(target.profile || target.media || target.settings !== 'home');
+  }
+  // A conversation is the only full-screen root child with a back edge gesture.
+  if (current.chat) return direction === -1 && !target.chat;
+  return false;
+}
+
 export default function Home() {
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [visualScene, setVisualScene] = useState<VisualScene>('waves');
@@ -2362,6 +2376,9 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       const touches=(e as Event & {touches:TouchList}).touches;
       if(touches.length!==1 || crop || mediaViewer || videoNoteOpen || !!menuMessage || !!forwardIds.length || selectionMode || stickerPicker || chatSearchOpen || chatActions)return;
       if(document.querySelector('.connect-call-backdrop,.connect-call-history-screen'))return;
+      // A root tab never starts swipe navigation, even away from the bottom dock.
+      const currentView=gestureHistory.current.entries[gestureHistory.current.cursor];
+      if(!currentView || (!currentView.chat && !currentView.profile && !currentView.media && currentView.settings==='home'))return;
       const target=e.target;
       // Keep the entire bottom navigation dock outside swipe history, even near screen edges.
       if(target instanceof Element && target.closest('.bottom-nav,.nav-tab,.connect-calls-tab'))return;
@@ -2388,6 +2405,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       const target=history.entries[step];
       if(target.chat && !conversations.some(c=>c.id===target.chat))return;
       if(target.profile && !profiles.some(p=>p.id===target.profile))return;
+      if(!connectAllowHistorySwipe(history.entries[history.cursor],target,direction))return;
       e.preventDefault();
       history.cursor=step;
       history.restoring=true;

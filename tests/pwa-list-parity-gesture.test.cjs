@@ -16,7 +16,11 @@ test('dock does not participate in PWA edge history; other edge swipes keep work
   const finish=page.indexOf("    shell.addEventListener('touchstart',start",begin);
   assert.ok(begin>=0&&finish>begin,'could not find current native gesture handlers');
   const source=page.slice(begin,finish);
-  const factoryCode=`function harness(ctx) { const {shell,crop,mediaViewer,videoNoteOpen,menuMessage,forwardIds,selectionMode,stickerPicker,chatSearchOpen,chatActions,connectSwipeDirection,gestureHistory,conversations,profiles,activeChat,exitChat,enterChat,setActiveChat,showProfile,setProfileView,setProfileMediaOpen,setTab,setSettingsPage,setSearch,setListActions,setStickerPicker}=ctx; ${source}; return {start,end}; }`;
+  const helperStart=page.indexOf('function connectAllowHistorySwipe(');
+  const helperEnd=page.indexOf('\n}',helperStart)+2;
+  assert.ok(helperStart>=0 && helperEnd>helperStart,'missing scoped gesture policy');
+  const helper=page.slice(helperStart,helperEnd);
+  const factoryCode=`${helper}\nfunction harness(ctx) { const {shell,crop,mediaViewer,videoNoteOpen,menuMessage,forwardIds,selectionMode,stickerPicker,chatSearchOpen,chatActions,connectSwipeDirection,gestureHistory,conversations,profiles,activeChat,exitChat,enterChat,setActiveChat,showProfile,setProfileView,setProfileMediaOpen,setTab,setSettingsPage,setSearch,setListActions,setStickerPicker}=ctx; ${source}; return {start,end}; }`;
   const result=ts.transpileModule(factoryCode,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None},reportDiagnostics:true});
   assert.deepEqual((result.diagnostics||[]).filter(d=>d.category===ts.DiagnosticCategory.Error),[]);
   const factory=new Function(result.outputText+';return harness;')();
@@ -35,7 +39,9 @@ test('dock does not participate in PWA edge history; other edge swipes keep work
     let t=setup();t.h.start(ev(6,730,true));t.h.end(ev(120,730,true));assert.equal(t.history.current.cursor,1,'nav gestures must not navigate');
     t=setup();t.h.start(ev(6,726,false));t.h.end(ev(120,726,false));assert.equal(t.history.current.cursor,1,'bottom dock hit band must not navigate');
     t=setup();t.h.start(ev(6,150,false));t.h.end(ev(120,725,true));assert.equal(t.history.current.cursor,1,'touch ending in nav must not navigate');
-    t=setup();t.h.start(ev(6,150,false));t.h.end(ev(120,150,false));assert.equal(t.history.current.cursor,0,'edge gesture outside dock must navigate');assert.equal(t.state.calls,1);
+    t=setup();t.h.start(ev(6,150,false));t.h.end(ev(120,150,false));assert.equal(t.history.current.cursor,1,'root tabs must never navigate by swiping');assert.equal(t.state.calls,0);
+    t=setup();t.history.current.entries=[{tab:'settings',chat:null,profile:null,media:null,settings:'home'},{tab:'settings',chat:null,profile:null,media:null,settings:'appearance'}];
+    t.h.start(ev(6,150,false));t.h.end(ev(120,150,false));assert.equal(t.history.current.cursor,0,'swiping back inside Settings must still navigate');assert.equal(t.state.calls,1);
   }finally{global.Element=originalElement;global.document=originalDocument;}
 });
 
