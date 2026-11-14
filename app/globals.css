@@ -680,3 +680,16 @@
 .connect-app .connect-inline-autoplay-video-open>.connect-inline-video-still,.connect-app .connect-inline-autoplay-video-open>.connect-inline-video-still-fallback{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;object-fit:contain;pointer-events:none;z-index:0;border-radius:12px}
 .connect-app .connect-inline-autoplay-video-open>.connect-inline-video-still-fallback{display:grid;place-items:center;font-size:28px;color:var(--wave-primary,var(--accent));background:linear-gradient(120deg,color-mix(in srgb,var(--wave-primary,var(--accent)) 16%,var(--panel)),color-mix(in srgb,var(--wave-secondary,var(--accent)) 11%,var(--panel)))}
 .connect-app .connect-inline-autoplay-video-open>video{z-index:1;transition:opacity .12s ease}
+
+/* CONNECT_PWA_ONLINE_BADGES_V1_20261114: color follows the selected Connect accent. */
+.connect-app .connect-presence-avatar {
+  display:inline-flex;position:relative;align-items:center;justify-content:center;
+  flex:0 0 auto;vertical-align:middle;
+}
+.connect-app .connect-presence-dot {
+  position:absolute;right:-2px;bottom:-2px;z-index:2;
+  width:12px;height:12px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--bg);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 27%,transparent);
+  pointer-events:none;
+}

@@ -169,6 +169,13 @@ function Avatar({ name, id, size = 'md', url }: { name: string; id?: string; siz
   const color = avatarColors[seed % avatarColors.length];
   return <span className={'person-avatar avatar-' + size} style={{ background: `linear-gradient(140deg,${color},#1b283d)` }} aria-hidden="true">{url ? <img src={url} alt="" loading="lazy"/> : (Array.from(name.trim())[0]?.toLocaleUpperCase('ru-RU') || '?')}</span>;
 }
+// CONNECT_PWA_ONLINE_BADGES_V1_20261114: reuse the chat header presence lease.
+// Offline/native entries render the original Avatar without an extra wrapper.
+function PresenceAvatar({ name, id, url, online }: { name:string; id?:string; url?:string; online:boolean }) {
+  if (!online) return <Avatar name={name} id={id} url={url}/>;
+  return <span className="connect-presence-avatar"><Avatar name={name} id={id} url={url}/><span className="connect-presence-dot" role="img" aria-label="В сети"/></span>;
+}
+
 function timeLabel(iso: string) { return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
 function listTimeLabel(iso: string) {
   const date = new Date(iso); const today = new Date();
@@ -3150,7 +3157,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                     onTouchMove={e=>{const t=e.touches[0],h=listHold.current;if(h&&t&&(Math.abs(t.clientX-h.x)>12||Math.abs(t.clientY-h.y)>12)){if(h.timer!==null)clearTimeout(h.timer);h.timer=null}}}
                     onTouchEnd={()=>{if(listHold.current?.timer!==null&&listHold.current?.timer!==undefined)clearTimeout(listHold.current.timer);}}
                     onContextMenu={e=>{e.preventDefault();setListActions(c.id)}}
-                    onClick={() => {if(listHold.current?.opened){listHold.current=null;return;}enterChat(c.id)}}><Avatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button>{listActions===c.id&&<div className="list-chat-popover"><button type="button" onClick={()=>{setListActions(null);clearConversation(c.id)}}>Удалить переписку</button><button type="button" onClick={()=>setListActions(null)}>Отмена</button></div>}</div>)}
+                    onClick={() => {if(listHold.current?.opened){listHold.current=null;return;}enterChat(c.id)}}><PresenceAvatar name={c.other?.display_name || 'Собеседник'} id={c.other?.id} url={c.other ? avatarUrls[c.other.id] : undefined} online={!isNativeMediaRuntime() && formatPresence(presence[c.other?.id || ''], clock) === 'В сети'}/><div className="dialog-summary"><strong>{c.other?.display_name || 'Собеседник'}</strong><span>{messagePreview(c.last, user.id)}</span></div><div className="dialog-meta"><time>{listTimeLabel(c.last?.created_at || c.created_at)}</time>{c.count > 0 && <span className="unread-pill">{c.count > 99 ? '99+' : c.count}</span>}</div></button>{listActions===c.id&&<div className="list-chat-popover"><button type="button" onClick={()=>{setListActions(null);clearConversation(c.id)}}>Удалить переписку</button><button type="button" onClick={()=>setListActions(null)}>Отмена</button></div>}</div>)}
                 </div>
               </>}
               {tab === 'contacts' && <>
@@ -3159,7 +3166,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                 <div className="section-caption">МОИ КОНТАКТЫ</div>
                 <div className="scroll-content contact-rows">
                   {filteredContacts.length === 0 ? <div className="empty-state"><Icon name="contacts" size={38}/><strong>{search ? 'Контакт не найден' : 'Контактов пока нет'}</strong><span>{search ? 'Попробуйте другое имя' : 'Контакты появятся после приглашения участников'}</span></div>
-                    : filteredContacts.map(p => <button type="button" className="contact-row" key={p.id} disabled={busy} onClick={() => void openContact(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span className="contact-text"><strong>{p.display_name}</strong><small>{p.bio || "Открыть переписку"}</small></span><Icon name="chevron" size={19}/></button>)}
+                    : filteredContacts.map(p => <button type="button" className="contact-row" key={p.id} disabled={busy} onClick={() => void openContact(p)}><PresenceAvatar name={p.display_name} id={p.id} url={avatarUrls[p.id]} online={!isNativeMediaRuntime() && formatPresence(presence[p.id], clock) === 'В сети'}/><span className="contact-text"><strong>{p.display_name}</strong><small>{p.bio || "Открыть переписку"}</small></span><Icon name="chevron" size={19}/></button>)}
                 </div>
               </>}
               {tab === 'settings' && <>
