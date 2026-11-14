@@ -1,0 +1,190 @@
+name: Connect PWA | Compact chat avatars to Contacts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-compact-chats-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  compact-chat-avatars:
+    name: Reproduce oversized offline rows, fix and verify before commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Require existing PWA layout and tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          for file in AGENTS.md package.json package-lock.json tsconfig.json app/liquid-glass.css app/globals.css app/page.tsx tests/pwa-list-parity-gesture.test.cjs tests/pwa-five-ui.test.cjs; do
+            test -s "$file" || { echo "SOURCE_DRIFT: missing $file" >&2; exit 1; }
+          done
+          grep -Fq 'CONNECT_PWA_LIST_PARITY_GESTURE_V1_20261114' app/liquid-glass.css
+          grep -Fq '.connect-app .chat-rows .dialog-row > :first-child {' app/liquid-glass.css
+          grep -Fq ' .chat-rows .dialog-row > .connect-presence-avatar {' app/liquid-glass.css
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies and matching Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npx playwright-core install --with-deps chromium
+          node -e "const fs=require('fs');const p=require('playwright-core').chromium.executablePath(); if(!fs.existsSync(p)){console.error('Chromium missing: '+p);process.exit(1)}"
+      - name: Install exact focused regression tests before changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/pwa-chat-compact.test.cjs" <<'CHAT_TEST'
+          const test = require('node:test');
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = path.resolve(__dirname,'..');
+          const liquid = fs.readFileSync(path.join(root,'app/liquid-glass.css'),'utf8');
+          const marker = 'CONNECT_PWA_CHAT_COMPACT_OFFLINE_V1_20261115';
+
+          test('offline chat avatar has an explicit PWA-only size matching Contacts',()=>{
+            assert.match(liquid,new RegExp(`/\\* ${marker} `));
+            assert.match(liquid,/\.connect-app\[data-connect-pwa-list-parity="true"\] \.chat-rows \.dialog-row > \.person-avatar\.avatar-md\s*\{[^}]*width:\s*46px;[^}]*min-width:\s*46px;[^}]*height:\s*46px;/s);
+          });
+
+          test('real Chromium: Contacts and Chats offline and online avatar and card sizes match',async()=>{
+            const {chromium} = require('playwright-core');
+            const browser = await chromium.launch({executablePath:process.env.CONNECT_TEST_CHROMIUM_EXECUTABLE||undefined,args:['--no-sandbox']});
+            try {
+              for (const width of [320,375,390,430]) for (const mode of ['dark','light']) {
+                const page=await browser.newPage({viewport:{width,height:844},isMobile:true,hasTouch:true,deviceScaleFactor:2});
+                await page.setContent(`<meta name="viewport" content="width=device-width, initial-scale=1"><div class="connect-app ${mode==='light'?'light':''}" data-connect-pwa-list-parity="true"><div class="main-view">
+                <div class="contact-rows"><button class="contact-row"><span class="person-avatar avatar-md">А</span><span class="contact-text"><strong>Тестировщик )</strong><small>Тестовый аккаунт</small></span></button></div>
+                <div class="chat-rows">
+                  <div class="dialog-entry"><button class="dialog-row"><span class="person-avatar avatar-md">А</span><div class="dialog-summary"><strong>Тестировщик )</strong><span>Вы: Стикер</span></div><div class="dialog-meta"><time>Вчера</time></div></button></div>
+                  <div class="dialog-entry"><button class="dialog-row"><span class="connect-presence-avatar"><span class="person-avatar avatar-md">Б</span><span class="connect-presence-dot"></span></span><div class="dialog-summary"><strong>Онлайн</strong><span>Привет</span></div><div class="dialog-meta"><time>21:45</time></div></button></div>
+                </div></div></div>`);
+                for (const filename of ['globals.css','liquid-glass.css']) await page.addStyleTag({content:fs.readFileSync(path.join(root,'app',filename),'utf8')});
+                const dimensions = await page.evaluate(()=>{
+                  const get=sel=>document.querySelector(sel).getBoundingClientRect();
+                  return {
+                    contactAvatar:get('.contact-row > .person-avatar').width,
+                    offlineAvatar:get('.dialog-entry:first-child .dialog-row > .person-avatar').width,
+                    onlineAvatar:get('.dialog-entry:nth-child(2) .connect-presence-avatar').width,
+                    contactHeight:get('.contact-row').height,
+                    offlineHeight:get('.dialog-entry:first-child .dialog-row').height,
+                    onlineHeight:get('.dialog-entry:nth-child(2) .dialog-row').height,
+                  };
+                });
+                assert.equal(dimensions.contactAvatar,46,`Contact baseline ${width}px ${mode}`);
+                assert.equal(dimensions.offlineAvatar,dimensions.contactAvatar,`offline avatar ${width}px ${mode}: ${JSON.stringify(dimensions)}`);
+                assert.equal(dimensions.onlineAvatar,dimensions.contactAvatar,`online avatar ${width}px ${mode}`);
+                assert.ok(Math.abs(dimensions.offlineHeight-dimensions.contactHeight)<=2,`offline card height ${width}px ${mode}: ${JSON.stringify(dimensions)}`);
+                assert.ok(Math.abs(dimensions.onlineHeight-dimensions.contactHeight)<=2,`online card height ${width}px ${mode}: ${JSON.stringify(dimensions)}`);
+                await page.close();
+              }
+            } finally {await browser.close();}
+          });
+          CHAT_TEST
+          if test -e tests/pwa-chat-compact.test.cjs && ! cmp -s tests/pwa-chat-compact.test.cjs "$RUNNER_TEMP/pwa-chat-compact.test.cjs"; then
+            echo 'SOURCE_DRIFT: chat compact test already exists with different contents' >&2
+            exit 1
+          fi
+          cp "$RUNNER_TEMP/pwa-chat-compact.test.cjs" tests/pwa-chat-compact.test.cjs
+      - name: RED - reproduce oversized offline avatar and chat row
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Fq 'CONNECT_PWA_CHAT_COMPACT_OFFLINE_V1_20261115' app/liquid-glass.css; then
+            echo 'Patch exists; exact-content guard and GREEN regression will verify it.'
+          else
+            if node --test tests/pwa-chat-compact.test.cjs > "$RUNNER_TEMP/chat-compact-red.log" 2>&1; then
+              echo 'RED failure: regression unexpectedly passes before patch' >&2
+              exit 1
+            fi
+            if ! grep -Fq 'offline avatar 320px dark' "$RUNNER_TEMP/chat-compact-red.log"; then
+              cat "$RUNNER_TEMP/chat-compact-red.log" >&2
+              echo 'RED failure: did not reproduce the expected oversized offline avatar' >&2
+              exit 1
+            fi
+            echo 'RED confirmed: offline chat avatar larger than Contacts and chat card too tall.'
+          fi
+      - name: Apply idempotent source-guarded PWA CSS patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/connect-pwa-chat-compact-patch.py" <<'PATCH_SCRIPT'
+          #!/usr/bin/env python3
+          from pathlib import Path
+
+          MARK='CONNECT_PWA_CHAT_COMPACT_OFFLINE_V1_20261115'
+          BLOCK='/* CONNECT_PWA_CHAT_COMPACT_OFFLINE_V1_20261115 — offline chats use the same 46px avatar as Contacts.\n   PresenceAvatar renders an unwrapped .person-avatar while offline; override the legacy\n   54/58px :first-child chat sizing without changing online dots or Android. */\n.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .person-avatar.avatar-md {\n  flex:0 0 46px;\n  width:46px;\n  min-width:46px;\n  height:46px;\n  border-radius:50%;\n  overflow:hidden;\n}\n'
+          path=Path('app/liquid-glass.css')
+          s=path.read_text(encoding='utf-8')
+          anchors=(
+            '/* CONNECT_PWA_LIST_PARITY_GESTURE_V1_20261114',
+            '.connect-app .chat-rows .dialog-row > :first-child {\n  width: 58px;',
+            '.connect-app[data-connect-pwa-list-parity="true"] .chat-rows .dialog-row > .connect-presence-avatar {',
+          )
+          for anchor in anchors:
+            if s.count(anchor)!=1:
+              raise SystemExit(f'SOURCE_DRIFT: expected one occurrence of {anchor!r}, found {s.count(anchor)}')
+          if MARK in s:
+            if s.count(MARK)!=1 or s.count(BLOCK)!=1:
+              raise SystemExit('SOURCE_DRIFT: existing chat compact patch is not the exact expected block')
+            print('Exact existing compact avatar patch verified; no duplication.')
+          else:
+            path.write_text(s.rstrip('\n')+'\n\n'+BLOCK,encoding='utf-8')
+            print('Scoped offline avatar sizing fixed without touching online avatars or native.')
+          PATCH_SCRIPT
+          python3 "$RUNNER_TEMP/connect-pwa-chat-compact-patch.py"
+          python3 "$RUNNER_TEMP/connect-pwa-chat-compact-patch.py"
+          git diff --check
+      - name: GREEN - browser sizes, existing lists, TypeScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/pwa-chat-compact.test.cjs
+          node --test tests/pwa-list-parity-gesture.test.cjs tests/pwa-five-ui.test.cjs tests/pwa-dock-motion.test.cjs
+          npm run typecheck
+      - name: Run full Connect regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+      - name: Verify production Next.js build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build
+      - name: Commit only after all verification is green
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          for file in $(git diff --name-only); do
+            case "$file" in
+              app/liquid-glass.css) ;;
+              *) echo "Unexpected modified file: $file" >&2; exit 1 ;;
+            esac
+          done
+          git add app/liquid-glass.css tests/pwa-chat-compact.test.cjs
+          if git diff --cached --quiet; then
+            echo 'Exact compact avatar patch already applied and verified.'
+            exit 0
+          fi
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(pwa): align offline chat avatars and row height with contacts'
+          git push origin HEAD:main
