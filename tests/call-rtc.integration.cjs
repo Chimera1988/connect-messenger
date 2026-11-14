@@ -18,7 +18,7 @@ function endpoint(userId,frequency){
  const facts={frames:0,nonzero:0,connected:0},context={console:{info(){},warn(){}},Date,Error,Promise,Set,Map,AbortController,
   setTimeout,clearTimeout,traceCall(){},userId,phase:'idle',shownName:'Test',
   RING_TIMEOUT_MS:50000,uuidPattern:/^[a-f0-9-]{36}$/i,isLive:s=>s==='ringing'||s==='active',friendlyError:e=>e.message,
-  window:{},navigator:{mediaDevices:{async getUserMedia(){
+  window:{},navigator:{userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 27_2 like Mac OS X)',audioSession:{type:'auto'},mediaDevices:{async getUserMedia(){
    if(denyMicrophone===userId){denyMicrophone=false;throw Error('test permission denied');}
    const source=new wrtc.nonstandard.RTCAudioSource(),track=source.createTrack();let frame=0;
    const timer=setInterval(()=>{if(track.readyState!=='live'){clearInterval(timer);timers.delete(timer);return;}
@@ -61,7 +61,7 @@ function endpoint(userId,frequency){
   },
  };
  vm.createContext(context);
- for(const name of ['sendIce','flushLocalIce','flushRemoteIce','receiveIce','pullIce','watchIce','cleanup','finish','connectionDeadline','createPeer','onUpdatedCall','presentIncoming','startOutgoing','acceptIncoming']){
+ for(const name of ['configureCallAudioSession','sendIce','flushLocalIce','flushRemoteIce','receiveIce','pullIce','watchIce','cleanup','finish','connectionDeadline','createPeer','onUpdatedCall','presentIncoming','startOutgoing','acceptIncoming']){
   assert.ok(functions.has(name),name);vm.runInContext(ts.transpileModule(functions.get(name),{compilerOptions:{target:99}}).outputText,context);
  }
  context.facts=facts;all.push(context);return context;
@@ -71,7 +71,7 @@ const poll=setInterval(()=>{for(const c of all)if(c.callRef.current&&c.pcRef.cur
 async function until(check,label){const end=Date.now()+10000;while(Date.now()<end){if(check())return;await wait(30);}throw Error('Timed out: '+label);}
 async function begin(){await left.startOutgoing({conversationId:chat,peerId:ids[1],peerName:'Test'});await until(()=>right.phase==='incoming','incoming');await right.acceptIncoming();}
 async function main(){
- await begin();await until(()=>left.facts.nonzero>20&&right.facts.nonzero>20,'bidirectional decoded PCM');
+ await begin();assert.equal(left.navigator.audioSession.type,'play-and-record');assert.equal(right.navigator.audioSession.type,'play-and-record');await until(()=>left.facts.nonzero>20&&right.facts.nonzero>20,'bidirectional decoded PCM');
  // In trickle ICE the initial SDP is immutable; candidates arrive as separate
  // signaling rows. Do not require localDescription.sdp to grow after setLocalDescription.
  await until(()=>ids.every(id=>ice.some(candidate=>candidate.call_id===row.id&&candidate.sender_id===id&&candidate.candidate?.candidate)),
@@ -83,7 +83,7 @@ async function main(){
  const shadow=endpoint(ids[1],880);shadow.presentIncoming({...copy(row),status:'ringing'});await shadow.acceptIncoming();
  assert.equal(row.status,'active');assert.equal(left.phase,'active');assert.equal(right.phase,'active');assert.equal(shadow.phase,'idle');
  for(const sink of sinks)sink.stop();sinks.clear();
- await right.finish('hangup');await until(()=>left.phase==='idle'&&right.phase==='idle','both ends release');
+ await right.finish('hangup');await until(()=>left.phase==='idle'&&right.phase==='idle','both ends release');assert.equal(left.navigator.audioSession.type,'auto');assert.equal(right.navigator.audioSession.type,'auto');
  denyMicrophone=ids[1];await begin();await until(()=>left.phase==='idle'&&right.phase==='idle','permission failure release');
  const oldFrames=[left.facts.nonzero,right.facts.nonzero];await begin();
  await until(()=>left.facts.nonzero>oldFrames[0]+10&&right.facts.nonzero>oldFrames[1]+10,'next call without restart');

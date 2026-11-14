@@ -31,6 +31,46 @@ const isLive = (s: Status) => s === 'ringing' || s === 'active';
 const friendlyError = (e: unknown) => e instanceof Error ? e.message : 'Неизвестная ошибка';
 const initials = (name: string) => name.trim().slice(0, 1).toLocaleUpperCase('ru-RU') || '☎';
 
+/** CONNECT_IOS_CALL_SCREEN_AWAKE_20261114
+ * Audio Session improves call audio routing, not iOS background permissions.
+ * Wake Lock prevents automatic screen off, but does not override power-button lock.
+ */
+function configureCallAudioSession(type: 'auto' | 'play-and-record') {
+  if (window.ConnectAndroid || !/iP(hone|ad|od)/.test(navigator.userAgent)) return;
+  const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  try { if (session) session.type = type; } catch { /* WebKit may reject the transition. */ }
+}
+
+function holdIosCallScreenAwake(): () => void {
+  if (window.ConnectAndroid || !/iP(hone|ad|od)/.test(navigator.userAgent) || !navigator.wakeLock) return () => {};
+  let disposed = false;
+  let pending = false;
+  let lock: WakeLockSentinel | null = null;
+  async function acquire() {
+    if (disposed || pending || lock || document.visibilityState !== 'visible') return;
+    pending = true;
+    try {
+      const next = await navigator.wakeLock.request('screen');
+      if (disposed || document.visibilityState !== 'visible') {
+        void next.release();
+        return;
+      }
+      lock = next;
+      next.addEventListener('release', () => { if (lock === next) lock = null; });
+    } catch { /* iOS may deny wake lock in the current power state. */ }
+    finally { pending = false; }
+  }
+  document.addEventListener('visibilitychange', acquire);
+  void acquire();
+  return () => {
+    disposed = true;
+    document.removeEventListener('visibilitychange', acquire);
+    const previous = lock;
+    lock = null;
+    if (previous) void previous.release();
+  };
+}
+
 function Glyph({ name }: { name: 'call' | 'end' | 'mic' | 'muted' | 'speaker' }) {
   const common = { fill: 'none', stroke: 'currentColor', strokeWidth: name === 'call' ? 2.0 : 1.9, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
   const paths = {
@@ -212,6 +252,13 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
   const soundRef = useRef<ConnectCallSound | null>(null);
   if (!soundRef.current) soundRef.current = new ConnectCallSound();
 
+  // iOS Home Screen PWA supports Screen Wake Lock from iOS 18.4.
+  const callIsOpen = phase !== 'idle';
+  useEffect(() => {
+    if (!callIsOpen) return;
+    return holdIosCallScreenAwake();
+  }, [callIsOpen]);
+
   // The call modal may open from the chat, the Calls tab, or an incoming call.
   // Resolve its image from the actual peer ID rather than guessing by display name.
   useEffect(() => {
@@ -362,6 +409,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     iceChannelRef.current = null;
     pcRef.current?.close(); pcRef.current = null;
     streamRef.current?.getTracks().forEach(track => track.stop()); streamRef.current = null;
+    configureCallAudioSession('auto');
     if (remoteAudioRef.current) { remoteAudioRef.current.pause(); remoteAudioRef.current.srcObject = null; }
     callRef.current = null;
     localIceRef.current = [];
@@ -420,6 +468,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     if (!navigator.mediaDevices?.getUserMedia || typeof RTCPeerConnection === 'undefined') {
       throw new Error('Для звонков нужен современный браузер с доступом к микрофону и HTTPS.');
     }
+    configureCallAudioSession('play-and-record');
     // On iOS request microphone access inside the original tap handler, before
     // waiting for the TURN configuration over the network.
     const stream = await navigator.mediaDevices.getUserMedia({ audio: {
@@ -442,6 +491,15 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     pcRef.current = pc;
     stream.getTracks().forEach(track => pc.addTrack(track, stream));
     const ownsPeer = () => generation === generationRef.current && pcRef.current === pc;
+    // Separate browser-level capture interruption from the user's mute button.
+    for (const track of stream.getTracks().filter(track => track.kind === 'audio')) {
+      track.addEventListener('mute', () => {
+        if (ownsPeer()) traceCall(callRef.current?.id, 'microphone', 'system-muted', document.visibilityState);
+      });
+      track.addEventListener('unmute', () => {
+        if (ownsPeer()) traceCall(callRef.current?.id, 'microphone', 'system-resumed', document.visibilityState);
+      });
+    }
     pc.oniceconnectionstatechange=()=>{if(ownsPeer())traceCall(callRef.current?.id,'ice',pc.iceConnectionState);};
     pc.onicecandidate = event => { if (ownsPeer() && event.candidate) void sendIce(event.candidate.toJSON()); };
     pc.ontrack = event => {

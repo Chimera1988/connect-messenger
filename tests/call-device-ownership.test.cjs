@@ -42,7 +42,7 @@ function harness() {
     client: { async rpc() { return { data: { ...row, status: 'active', answer: { sdp: 'this-device' } } }; } },
   };
   vm.createContext(c);
-  const load = name => { vm.runInContext(actualFunction(name), c); return c[name]; };
+  const load = name => { if (name === 'createPeer') vm.runInContext(actualFunction('configureCallAudioSession'), c); vm.runInContext(actualFunction(name), c); return c[name]; };
   return { c, pc, row, events, load };
 }
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
