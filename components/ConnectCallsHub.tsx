@@ -354,13 +354,18 @@ export default function ConnectCallsHub() {
 
   useEffect(() => {
     if (!open) return;
-    function onOtherTab(event: PointerEvent) {
+    // CONNECT_PWA_CALLS_DOCK_TAP_ORDER_20261114: closing the Calls portal on pointerdown
+    // races with the subsequent click on the destination tab in iOS PWA. Wait until
+    // the actual destination click has run. Retain the native Android behavior.
+    const nativeRuntime = Boolean(window.ConnectAndroid || window.ConnectNative);
+    const closeEvent = nativeRuntime ? 'pointerdown' : 'click';
+    function onOtherTab(event: Event) {
       const target = event.target;
       if (!(target instanceof Element)) return;
       if (target.closest('.bottom-nav .nav-tab:not(.connect-calls-tab)')) { setOpen(false); setPickerOpen(false); }
     }
-    document.addEventListener('pointerdown', onOtherTab, true);
-    return () => document.removeEventListener('pointerdown', onOtherTab, true);
+    document.addEventListener(closeEvent, onOtherTab, nativeRuntime);
+    return () => document.removeEventListener(closeEvent, onOtherTab, nativeRuntime);
   }, [open]);
 
   useEffect(() => {
