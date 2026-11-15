@@ -12,6 +12,7 @@ import { prefetchCachedMedia } from '../lib/media-cache';
 import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
 import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
 import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
+import { connectOptimizeMedia } from '../lib/connect-media-optimizer'; // CONNECT_PWA_SAFE_MEDIA_OPTIMIZATION_V1_20261115
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectPushGuardian from '../components/ConnectPushGuardian'; // CONNECT_PWA_PUSH_GUARDIAN_20261114
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
@@ -947,7 +948,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
       const formats=['video/mp4;codecs=h264,aac','video/mp4','video/webm;codecs=vp8,opus','video/webm;codecs=vp9,opus','video/webm'];
       const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
       const recordingStream=normalizedRecordingStream(stream);
-      const recorder=new MediaRecorder(recordingStream,{...(mime?{mimeType:mime}:{}),videoBitsPerSecond:800000,audioBitsPerSecond:64000});
+      const recorder=new MediaRecorder(recordingStream,{...(mime?{mimeType:mime}:{}),videoBitsPerSecond:isNativeMediaRuntime()?800000:720000,audioBitsPerSecond:isNativeMediaRuntime()?64000:56000});
       chunksRef.current=[];recorderRef.current=recorder;savedRef.current=null;
       recorder.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data)};
       recorder.onerror=()=>{setError('Ошибка записи видео');setPhase('error');clearClock();stopNormalizedFrames();stopCamera()};
@@ -2737,7 +2738,11 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       const {data:{session}}=await client.auth.getSession();
       if(!session)throw Error('Сессия завершена');
       for(let i=0;i<files.length;i++){
-        const file=files[i];let path=`${chatId}/${uid}/${crypto.randomUUID()}`;
+        let file=files[i];
+        // Reduce supported media BEFORE creating thumbnails, uploading, or recording album MIME.
+        const prepared=await connectOptimizeMedia(file,{native:isNativeMediaRuntime(),onProgress:f=>setUploadProgress(Math.round(((i+f*.35)/files.length)*100))});
+        file=prepared.file;
+        let path=`${chatId}/${uid}/${crypto.randomUUID()}`;
         let thumb:Blob|null=null,poster:Blob|null=null;
         if(file.type.startsWith('image/') && file.type!=='image/gif'){
           const size=await connectImageFileSize(file);
@@ -2791,6 +2796,10 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     let path=`${chatId}/${user.id}/${crypto.randomUUID()}`;
     setBusy(true);setUploadProgress(0);setNotice('');
     try {
+      // The same preparation is used for a single file and every item in an album.
+      // It retains the original file when iOS cannot safely encode the audio/video.
+      const prepared=await connectOptimizeMedia(file,{native:isNativeMediaRuntime(),onProgress:f=>setUploadProgress(Math.round(f*35))});
+      file=prepared.file;
       // The dimensions travel with the storage path, so the recipient can reserve
       // an accurate layout before downloading a newly sent photo.
       if (kind === 'image' && !/^sticker-\d+\.(?:png|webp|gif|jpe?g)$/i.test(file.name)) {
@@ -2886,7 +2895,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
         ? ['audio/webm;codecs=opus','audio/webm','audio/mp4;codecs=mp4a.40.2','audio/mp4']
         : ['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/webm;codecs=opus','audio/webm'];
       const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
-      const recorder=new MediaRecorder(stream,mime?{mimeType:mime}:undefined);
+      const recorder=new MediaRecorder(stream,{...(mime?{mimeType:mime}:{}),...(!isNativeMediaRuntime()?{audioBitsPerSecond:56000}:{})});
       audioChunks.current=[];recordingStream.current=stream;mediaRecorder.current=recorder;
       recordingChat.current=activeChat;recordingStarted.current=performance.now();
       let failed=false;let sendOnStop=true;
