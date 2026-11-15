@@ -1458,6 +1458,18 @@ export default function Home() {
     const {error}=await supabase.from('connect_sticker_packs').insert({name:packName.trim().slice(0,60),emoji:packEmoji.slice(0,8)||'🎨',owner_id:user.id,is_public:packPublic});
     setBusy(false);if(error)setNotice('Не удалось создать набор: '+error.message);else{setPackName('');await loadCustomStickers();setNotice('Набор создан');}
   }
+  async function convertStickerOnServer(file:File):Promise<Blob>{
+    if(!supabase)throw new Error('Нет соединения с сервером');
+    const {data,error,response}=await supabase.functions.invoke('connect-sticker-webp-convert',{
+      body:file,headers:{'Content-Type':file.type||'application/octet-stream'}
+    });
+    if(error)throw new Error('Серверная конвертация WebP: '+error.message);
+    // Supabase Functions SDK parses application/octet-stream as Blob;
+    // image/webp is otherwise parsed as text. Trust bytes only after signature check.
+    if(!(data instanceof Blob)||response?.headers.get('x-connect-media-type')!=='image/webp')
+      throw new Error('Сервер не вернул изображение WebP');
+    return new Blob([data],{type:'image/webp'});
+  }
   async function uploadCustomStickers(packId:string,files:File[]){ // CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115
     if(!supabase||!user||!packId||!files.length||busy)return;
     const pack=customPacks.find(p=>p.id===packId);
@@ -1466,7 +1478,7 @@ export default function Home() {
     setNotice('Обрабатываю '+Math.min(files.length,30)+' стикер(ов)…');
     try{
       for(const file of files.slice(0,30)){
-        const prepared=await prepareStickerFile(file);
+        const prepared=await prepareStickerFile(file,convertStickerOnServer);
         const ext=prepared.type==='image/gif'?'gif':'webp';
         const path=`${user.id}/${pack.id}/${crypto.randomUUID()}.${ext}`;
         const uploaded=await supabase.storage.from('connect-stickers')
@@ -2712,7 +2724,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       let imageBlob: Blob = await prepareStickerFile(new File(
         [source.data],m.attachment_name||'sticker.png',
         {type:(m.attachment_type||source.data.type||'image/png').toLowerCase()}
-      ));
+      ),convertStickerOnServer);
       const mime=imageBlob.type;
       const hash = await crypto.subtle.digest('SHA-256', await imageBlob.arrayBuffer());
       const fingerprint = Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, '0')).join('').slice(0, 48);
