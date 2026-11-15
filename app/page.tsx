@@ -13,6 +13,7 @@ import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerCha
 import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
 import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
 import { connectOptimizeMedia } from '../lib/connect-media-optimizer'; // CONNECT_PWA_SAFE_MEDIA_OPTIMIZATION_V1_20261115
+import { prepareStickerFile } from '../lib/sticker-webp'; // CONNECT_PWA_STICKER_WEBP_EDITOR_20261115
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectPushGuardian from '../components/ConnectPushGuardian'; // CONNECT_PWA_PUSH_GUARDIAN_20261114
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
@@ -1048,6 +1049,9 @@ export default function Home() {
   const [customStickers,setCustomStickers] = useState<CustomSticker[]>([]);
   const [customStickerUrls,setCustomStickerUrls] = useState<Record<string,string>>({});
   const [customPack,setCustomPack] = useState<string>('');
+  const [editingStickerPack,setEditingStickerPack] = useState<string|null>(null);
+  const [selectedStickerIds,setSelectedStickerIds] = useState<string[]>([]);
+  const migratedStickerAttempts=useRef<Set<string>>(new Set());
   const [packName,setPackName] = useState('');
   const [packEmoji,setPackEmoji] = useState('🎨');
   const [packPublic,setPackPublic] = useState(false);
@@ -1461,32 +1465,93 @@ export default function Home() {
     setBusy(true);
     try{
       for(const file of Array.from(files).slice(0,30)){
-        if(!['image/png','image/webp','image/gif'].includes(file.type)||file.size>2*1024*1024)throw new Error('PNG, WebP или GIF до 2 МБ');
-        const ext=file.type==='image/png'?'png':file.type==='image/gif'?'gif':'webp';
+        const prepared=await prepareStickerFile(file);
+        const ext=prepared.type==='image/gif'?'gif':'webp';
         const path=`${user.id}/${pack.id}/${crypto.randomUUID()}.${ext}`;
-        const up=await supabase.storage.from('connect-stickers').upload(path,file,{contentType:file.type,upsert:false});
-        if(up.error)throw up.error;
-        const insert=await supabase.from('connect_stickers').insert({pack_id:pack.id,name:file.name.replace(/\.[^.]+$/,'').slice(0,60),storage_path:path});
-        if(insert.error){await supabase.storage.from('connect-stickers').remove([path]);throw insert.error;}
+        const uploaded=await supabase.storage.from('connect-stickers')
+          .upload(path,prepared,{contentType:prepared.type,upsert:false});
+        if(uploaded.error)throw uploaded.error;
+        const saved=await supabase.from('connect_stickers').insert({
+          pack_id:pack.id,name:file.name.replace(/\.[^.]+$/,'').slice(0,60),storage_path:path
+        });
+        if(saved.error){await supabase.storage.from('connect-stickers').remove([path]);throw saved.error;}
       }
-      await loadCustomStickers();setNotice('Стикеры добавлены');
+      await loadCustomStickers();setNotice('Стикеры добавлены. JPG и PNG сохраняются в WebP.');
     }catch(e){setNotice('Не удалось загрузить: '+(e instanceof Error?e.message:'Ошибка'));}
     finally{setBusy(false);if(stickerFileInput.current)stickerFileInput.current.value='';}
   }
-  async function deleteCustomSticker(st:CustomSticker){
-    if(!supabase||!user||!window.confirm('Удалить этот стикер из набора?'))return;
-    const r=await supabase.from('connect_stickers').delete().eq('id',st.id);
-    if(r.error){setNotice(r.error.message);return;}
-    await supabase.storage.from('connect-stickers').remove([st.storage_path]);await loadCustomStickers();
+  function toggleStickerSelection(id:string){
+    setSelectedStickerIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
   }
+  async function deleteCustomStickers(items:CustomSticker[]){
+    if(!supabase||!user||busy||!items.length)return;
+    const ownPackIds=new Set(customPacks.filter(p=>p.owner_id===user.id).map(p=>p.id));
+    const chosen=items.filter(st=>ownPackIds.has(st.pack_id));
+    if(!chosen.length)return;
+    const question=chosen.length===1?'Удалить стикер навсегда из набора?':'Удалить выбранные стикеры навсегда ('+chosen.length+' шт.)?';
+    if(!window.confirm(question+' Файлы будут удалены с сервера. Ранее отправленные сообщения останутся в чатах как «Стикер недоступен».'))return;
+    setBusy(true);
+    try{
+      const {data,error}=await supabase.from('connect_stickers').delete()
+        .in('id',chosen.map(st=>st.id)).select('id');
+      if(error)throw error;
+      if((data||[]).length!==chosen.length)throw new Error('Некоторые стикеры не были удалены');
+      setSelectedStickerIds([]);
+      await loadCustomStickers();
+      setNotice('Удалено стикеров: '+chosen.length+'. Файлы удалит серверная очистка не позднее следующего ежедневного запуска.');
+    }catch(error){setNotice('Ошибка удаления: '+(error instanceof Error?error.message:String(error)));}
+    finally{setBusy(false);}
+  }
+  async function deleteCustomSticker(st:CustomSticker){await deleteCustomStickers([st]);}
   async function deleteCustomPack(pack:CustomPack){
-    if(!supabase||!window.confirm(`Удалить набор «${pack.name}»?`))return;
-    const stickers=customStickers.filter(st=>st.pack_id===pack.id);
-    const r=await supabase.from('connect_sticker_packs').delete().eq('id',pack.id);
-    if(r.error){setNotice(r.error.message);return;}
-    if(stickers.length)await supabase.storage.from('connect-stickers').remove(stickers.map(st=>st.storage_path));
-    setCustomPack('');await loadCustomStickers();
+    if(!supabase||!user||busy||pack.owner_id!==user.id||!window.confirm(`Удалить набор «${pack.name}» со всеми стикерами? Файлы будут очищены на сервере.`))return;
+    setBusy(true);
+    try{
+      const {data,error}=await supabase.from('connect_sticker_packs').delete()
+        .eq('id',pack.id).eq('owner_id',user.id).select('id');
+      if(error||!data?.length)throw error||new Error('Набор не удалён');
+      setEditingStickerPack(null);setSelectedStickerIds([]);setCustomPack('');
+      await loadCustomStickers();
+      setNotice('Набор удалён. Файлы поставлены в очередь безопасной очистки.');
+    }catch(error){setNotice('Ошибка удаления набора: '+(error instanceof Error?error.message:String(error)));}
+    finally{setBusy(false);}
   }
+  // Convert previously uploaded PNG/JPEG when its owner opens Settings → Stickers.
+  // Upload + download-verify + conditional DB path switch; the old path is queued
+  // by a database trigger and only removed after the new object is active.
+  useEffect(()=>{
+    if(!supabase||!user||busy||settingsPage!=='stickers')return;
+    const ownPacks=new Set(customPacks.filter(p=>p.owner_id===user.id).map(p=>p.id));
+    const candidate=customStickers.find(st=>ownPacks.has(st.pack_id)&&
+      /\.(png|jpe?g)$/i.test(st.storage_path)&&!migratedStickerAttempts.current.has(st.id));
+    if(!candidate)return;
+    migratedStickerAttempts.current.add(candidate.id);
+    void (async()=>{
+      setBusy(true);
+      let freshPath='';
+      try{
+        const old=await supabase!.storage.from('connect-stickers').download(candidate.storage_path);
+        if(old.error||!old.data)throw old.error||new Error('Исходный стикер недоступен');
+        const inputType=/\.png$/i.test(candidate.storage_path)?'image/png':'image/jpeg';
+        const next=await prepareStickerFile(new File([old.data],candidate.name+'.png',{type:inputType}));
+        if(next.type!=='image/webp')throw new Error('Конвертация не создала WebP');
+        freshPath=`${user!.id}/${candidate.pack_id}/${crypto.randomUUID()}.webp`;
+        const up=await supabase!.storage.from('connect-stickers').upload(freshPath,next,{contentType:'image/webp',upsert:false});
+        if(up.error)throw up.error;
+        const check=await supabase!.storage.from('connect-stickers').download(freshPath);
+        if(check.error||!check.data||check.data.size!==next.size)throw new Error('Не удалось проверить загруженный WebP');
+        const update=await supabase!.from('connect_stickers').update({storage_path:freshPath})
+          .eq('id',candidate.id).eq('storage_path',candidate.storage_path).select('id');
+        if(update.error||update.data?.length!==1)throw update.error||new Error('Стикер изменён на другом устройстве');
+        freshPath=''; // The new file is active. Trigger queued the old PNG for server GC.
+        await loadCustomStickers();
+        setNotice('Старый PNG преобразован в WebP.');
+      }catch(error){
+        if(freshPath)await supabase!.storage.from('connect-stickers').remove([freshPath]);
+        setNotice('Конвертация старого стикера: '+(error instanceof Error?error.message:String(error)));
+      }finally{setBusy(false);}
+    })();
+  },[settingsPage,user?.id,busy,customStickers,customPacks,loadCustomStickers]);
   function customStickerUrl(st:CustomSticker){return customStickerUrls[st.id]||''}
   async function sendCustomSticker(st:CustomSticker){
     if(!supabase||!user||!activeChat||busy)return;
@@ -2643,30 +2708,11 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     try {
       const source = await supabase.storage.from('connect-attachments').download(m.attachment_path);
       if (source.error || !source.data) throw new Error(source.error?.message || 'Файл недоступен');
-      let imageBlob: Blob = source.data;
-      let mime = (m.attachment_type || imageBlob.type || 'image/png').toLowerCase();
-      if (mime === 'image/jpeg' || mime === 'image/jpg') {
-        const url = URL.createObjectURL(imageBlob);
-        try {
-          const image = new Image();
-          await new Promise<void>((resolve, reject) => {
-            image.onload = () => resolve();
-            image.onerror = () => reject(new Error('Невозможно прочитать изображение'));
-            image.src = url;
-          });
-          const canvas = document.createElement('canvas');
-          canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
-          const context = canvas.getContext('2d');
-          if (!context) throw new Error('Невозможно обработать изображение');
-          context.drawImage(image, 0, 0);
-          imageBlob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(
-            value => value ? resolve(value) : reject(new Error('Не удалось создать PNG')), 'image/png'
-          ));
-          mime = 'image/png';
-        } finally { URL.revokeObjectURL(url); }
-      }
-      if (!['image/png','image/webp','image/gif'].includes(mime)) throw new Error('Поддерживаются PNG, WebP и GIF');
-      if (imageBlob.size < 1 || imageBlob.size > 2 * 1024 * 1024) throw new Error('Размер стикера должен быть до 2 МБ');
+      let imageBlob: Blob = await prepareStickerFile(new File(
+        [source.data],m.attachment_name||'sticker.png',
+        {type:(m.attachment_type||source.data.type||'image/png').toLowerCase()}
+      ));
+      const mime=imageBlob.type;
       const hash = await crypto.subtle.digest('SHA-256', await imageBlob.arrayBuffer());
       const fingerprint = Array.from(new Uint8Array(hash), n => n.toString(16).padStart(2, '0')).join('').slice(0, 48);
       const name = 'iOS-' + fingerprint;
@@ -3332,7 +3378,36 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                   </>}
                   {settingsPage==='notifications' && <div className="settings-group"><ConnectNotificationSettings supabase={supabase!} userId={user.id}/></div>}
                   {settingsPage==='stickers' && <><p className="settings-hint">Общие наборы доступны всем пользователям. Выбирайте, какие показывать в чате.</p><div className="settings-group">{STICKER_PACKS.map((p,i)=><div key={p.id}>{i>0&&<div className="setting-divider"/>}<label className="sticker-pack-setting"><span className="sticker-pack-emoji">{p.emoji}</span><span><strong>{p.name}</strong><small>{p.description} · {p.stickers.length} шт.</small></span><input type="checkbox" checked={enabledPacks.includes(p.id)} onChange={()=>togglePack(p.id)}/></label></div>)}</div><h3>Мои наборы</h3><div className="settings-group data-settings"><input className="field" placeholder="Название нового набора" maxLength={60} value={packName} onChange={e=>setPackName(e.target.value)}/><label className="settings-hint">Эмодзи набора <input className="field" style={{maxWidth:75}} value={packEmoji} onChange={e=>setPackEmoji(e.target.value)}/></label><label className="settings-hint"><input type="checkbox" checked={packPublic} onChange={e=>setPackPublic(e.target.checked)}/> Доступен всем участникам Connect</label><button type="button" className="settings-action" disabled={busy||!packName.trim()} onClick={()=>void createCustomPack()}>Создать набор</button></div>
-                    {customPacks.filter(p=>p.owner_id===user.id).map(p=><div key={p.id} className="settings-group data-settings"><strong>{p.emoji} {p.name} · {customStickers.filter(st=>st.pack_id===p.id).length} шт.</strong><small>{p.is_public?'Общий набор':'Личный набор'}</small><div className="connect-custom-grid">{customStickers.filter(st=>st.pack_id===p.id).map(st=><button key={st.id} type="button" onClick={()=>void deleteCustomSticker(st)} title="Удалить стикер"><img src={customStickerUrl(st)} alt="Стикер"/></button>)}</div><button className="settings-action" type="button" onClick={()=>{setCustomPack(p.id);setTimeout(()=>document.getElementById('connect-sticker-upload')?.click(),0)}}>Добавить стикеры</button><button className="settings-action secondary" type="button" onClick={()=>void deleteCustomPack(p)}>Удалить набор</button>{customPack===p.id&&<input id="connect-sticker-upload" type="file" accept="image/png,image/webp,image/gif" multiple hidden onChange={e=>void uploadCustomStickers(e.target.files)}/>}</div>)}
+                    {customPacks.filter(p=>p.owner_id===user.id).map(p=><div key={p.id} className="settings-group data-settings">
+                      <strong>{p.emoji} {p.name} · {customStickers.filter(st=>st.pack_id===p.id).length} шт.</strong>
+                      <small>{p.is_public?'Общий набор':'Личный набор'}</small>
+                      {editingStickerPack===p.id&&<p className="settings-hint">Выберите стикеры для удаления. После подтверждения они исчезнут из всех наборов и файлового хранилища.</p>}
+                      <div className={'connect-custom-grid'+(editingStickerPack===p.id?' is-editing':'')}>
+                        {customStickers.filter(st=>st.pack_id===p.id).map(st=><button key={st.id} type="button" disabled={busy}
+                          title={editingStickerPack===p.id?'Выбрать или снять выбор':'Редактировать набор'}
+                          aria-pressed={editingStickerPack===p.id?selectedStickerIds.includes(st.id):undefined}
+                          onClick={()=>{if(editingStickerPack===p.id)toggleStickerSelection(st.id);else{setEditingStickerPack(p.id);setSelectedStickerIds([st.id]);}}}>
+                          <img src={customStickerUrl(st)} alt={st.name||'Стикер'}/>
+                          {editingStickerPack===p.id&&<span className="connect-sticker-check" aria-hidden="true">{selectedStickerIds.includes(st.id)?'✓':'○'}</span>}
+                        </button>)}
+                      </div>
+                      <button className="settings-action secondary" type="button" disabled={busy} onClick={()=>{
+                        if(editingStickerPack===p.id){setEditingStickerPack(null);setSelectedStickerIds([]);}
+                        else{setEditingStickerPack(p.id);setSelectedStickerIds([]);}
+                      }}>{editingStickerPack===p.id?'Готово':'Редактировать стикеры'}</button>
+                      {editingStickerPack===p.id&&<button className="settings-action" type="button"
+                        disabled={busy||selectedStickerIds.length===0}
+                        onClick={()=>void deleteCustomStickers(customStickers.filter(st=>st.pack_id===p.id&&selectedStickerIds.includes(st.id)))}>
+                        Удалить выбранные ({selectedStickerIds.length})
+                      </button>}
+                      <button className="settings-action" type="button" disabled={busy} onClick={()=>{
+                        setCustomPack(p.id);setTimeout(()=>document.getElementById('connect-sticker-upload')?.click(),0);
+                      }}>Добавить стикеры</button>
+                      <button className="settings-action secondary" type="button" disabled={busy} onClick={()=>void deleteCustomPack(p)}>Удалить набор</button>
+                      {customPack===p.id&&<input id="connect-sticker-upload" type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg" multiple hidden
+                        onChange={e=>void uploadCustomStickers(e.target.files)}/>} 
+                    </div>)}
                     <p className="settings-hint">В чате нажмите ☺ рядом с полем сообщения. Есть избранное и недавно отправленные.</p></>}
                   {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Приглашения</strong><p className="settings-hint">Создавайте одноразовые коды для новых участников. Код действует 24 часа.</p><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-invitations'))}>Коды приглашений</button><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-hidden-invitations'))}>Коды для скрытых</button><div style={{marginTop:20}}><ConnectHiddenMembers request={authenticatedRequest} onChanged={()=>void loadDirectory()}/></div></div>}
                   {settingsPage==='data' && <><CacheSettings userId={user.id}/><div className="settings-group data-settings"><strong>Локальные данные</strong><p className="settings-hint">Сбросит тему, цвет, фон и настройки стикеров на этом устройстве. Переписки, файлы и голосовые на сервере останутся.</p><button type="button" className="settings-action secondary" onClick={clearLocalPreferences}>Очистить локальные настройки</button></div><div className="settings-group data-settings"><strong>Экспорт переписки</strong><p className="settings-hint">Экспорт всех доступных переписок в JSON (до 50 000 сообщений). Файлы вложений в архив не входят.</p><button type="button" className="settings-action" disabled={busy||conversations.length===0} onClick={()=>void exportChats()}>Экспортировать переписки</button></div></>}
