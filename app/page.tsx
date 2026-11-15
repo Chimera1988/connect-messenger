@@ -1,5 +1,6 @@
 'use client';
 // CONNECT_PWA_UNIFIED_CHAT_MEDIA_V1_20261112
+// CONNECT_PWA_CHAT_ACTIVITY_STATUS_V1_20261115
 // CONNECT_PWA_COMPACT_AUDIO_NO_TRANSCRIPTION_20261112
 // CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
 // CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
@@ -15,6 +16,7 @@ import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib
 import { connectOptimizeMedia } from '../lib/connect-media-optimizer'; // CONNECT_PWA_SAFE_MEDIA_OPTIMIZATION_V1_20261115
 import { prepareStickerFile } from '../lib/sticker-webp'; // CONNECT_PWA_STICKER_WEBP_EDITOR_20261115
 import { convertStickerWebpOnServer } from '../lib/sticker-webp-transport'; // CONNECT_PWA_STICKER_BINARY_TRANSPORT_FIX4_20261115
+import { composerActivity, visiblePeerActivity, activityTtl } from '../lib/chat-activity'; // CONNECT_PWA_CHAT_ACTIVITY_STATUS_V1_20261115
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectPushGuardian from '../components/ConnectPushGuardian'; // CONNECT_PWA_PUSH_GUARDIAN_20261114
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
@@ -864,7 +866,7 @@ function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;
 }
 
 type VideoNotePhase = 'loading'|'ready'|'recording'|'review'|'error';
-function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)=>void}) {
+function VideoNoteRecorder({onClose,onSend,onRecordingChange}:{onClose:()=>void;onSend:(file:File)=>void;onRecordingChange:(recording:boolean)=>void}) {
   const live=useRef<HTMLVideoElement|null>(null);
   const streamRef=useRef<MediaStream|null>(null);
   const recorderRef=useRef<MediaRecorder|null>(null);
@@ -926,7 +928,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
       }catch(e){if(!disposed){setError(e instanceof Error?e.message:'Не удалось открыть камеру');setPhase('error');}}
     })();
     return()=>{
-      disposed=true;clearClock();
+      disposed=true;clearClock();onRecordingChange(false);
       const recorder=recorderRef.current;
       if(recorder&&recorder.state!=='inactive')try{recorder.onstop=null;recorder.stop();}catch{}
       stopNormalizedFrames();
@@ -943,9 +945,9 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
       const recorder=new MediaRecorder(recordingStream,{...(mime?{mimeType:mime}:{}),videoBitsPerSecond:isNativeMediaRuntime()?800000:720000,audioBitsPerSecond:isNativeMediaRuntime()?64000:56000});
       chunksRef.current=[];recorderRef.current=recorder;savedRef.current=null;
       recorder.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data)};
-      recorder.onerror=()=>{setError('Ошибка записи видео');setPhase('error');clearClock();stopNormalizedFrames();stopCamera()};
+      recorder.onerror=()=>{onRecordingChange(false);setError('Ошибка записи видео');setPhase('error');clearClock();stopNormalizedFrames();stopCamera()};
       recorder.onstop=()=>{
-        clearClock();stopNormalizedFrames();stopCamera();
+        onRecordingChange(false);clearClock();stopNormalizedFrames();stopCamera();
         const type=recorder.mimeType||chunksRef.current[0]?.type||'video/webm';
         const blob=new Blob(chunksRef.current,{type});
         if(blob.size<100){setError('Видео не записалось. Попробуйте ещё раз.');setPhase('error');return;}
@@ -953,13 +955,13 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
         savedRef.current=new File([blob],`connect-video-note-${Date.now()}.${ext}`,{type});
         const url=URL.createObjectURL(blob);previewRef.current=url;setPreview(url);setPhase('review');
       };
-      recorder.start(1000);startRef.current=Date.now();setSeconds(0);setPhase('recording');
+      recorder.start(1000);startRef.current=Date.now();setSeconds(0);setPhase('recording');onRecordingChange(true);
       timerRef.current=window.setInterval(()=>{
         const time=Math.floor((Date.now()-startRef.current)/1000);
         setSeconds(Math.min(60,time));
         if(time>=60&&recorder.state==='recording')recorder.stop();
       },250);
-    }catch(e){stopNormalizedFrames();setError(e instanceof Error?e.message:'Не удалось начать запись');setPhase('error')}
+    }catch(e){onRecordingChange(false);stopNormalizedFrames();setError(e instanceof Error?e.message:'Не удалось начать запись');setPhase('error')}
   }
   function stop(){if(recorderRef.current?.state==='recording')recorderRef.current.stop()}
   async function flipCamera() {
@@ -976,7 +978,7 @@ function VideoNoteRecorder({onClose,onSend}:{onClose:()=>void;onSend:(file:File)
       setFacing(nextFacing);setError('');
     } catch(e) {setError('Не удалось переключить камеру: '+(e instanceof Error?e.message:String(e)));}
   }
-  function cancel(){onClose()}
+  function cancel(){onRecordingChange(false);onClose()}
   return <div className="connect-vnote-backdrop" role="dialog" aria-modal="true" aria-label="Запись видеокружка">
     <div className="connect-vnote-panel">
       <div className="connect-vnote-header"><strong>Видеокружок</strong><button type="button" onClick={cancel} aria-label="Закрыть">✕</button></div>
@@ -1032,6 +1034,8 @@ export default function Home() {
   const [wallpaper, setWallpaper] = useState<string | null>(null);
   const wallpaperInput = useRef<HTMLInputElement | null>(null);
   const [stickerPicker, setStickerPicker] = useState(false);
+  const [filePickerOpen,setFilePickerOpen] = useState(false);
+  const [videoNoteRecording,setVideoNoteRecording] = useState(false);
   const [stickerPack, setStickerPack] = useState<StickerPackId>('speed');
   const [enabledPacks, setEnabledPacks] = useState<StickerPackId[]>(STICKER_PACKS.map(p=>p.id));
   const [stickerFavorites, setStickerFavorites] = useState<string[]>([]);
@@ -1118,8 +1122,9 @@ export default function Home() {
   const [peerRecording, setPeerRecording] = useState(false);
   const serverDeleted=useRef(new Set<string>());
   useEffect(()=>{serverDeleted.current.clear();},[user?.id]);
-  const [peerActivity,setPeerActivity]=useState<{kind:string;until:number}|null>(null);
+  const [peerActivity,setPeerActivity]=useState<{chat:string;kind:string;until:number}|null>(null);
   const activitySupported=useRef(false),activityLast=useRef({chat:'',kind:'',at:0});
+  const activityWriteQueue=useRef<Promise<void>>(Promise.resolve());
   useEffect(()=>{let live=true;activitySupported.current=false;if(supabase&&user)void supabase.rpc('connect_unified_capabilities').then(({data})=>{if(live)activitySupported.current=data?.activity===1;});return()=>{live=false;};},[user?.id]);
   useEffect(()=>{if(!peerActivity)return;const timer=setTimeout(()=>setPeerActivity(null),Math.max(0,peerActivity.until-Date.now()));return()=>clearTimeout(timer);},[peerActivity]);
   const [peerStates, setPeerStates] = useState<Record<string,{delivered:string|null;read:string|null}>>({});
@@ -1158,6 +1163,21 @@ export default function Home() {
   },[user?.id]);
   const [recordSeconds, setRecordSeconds] = useState(0);
   const attachmentInput = useRef<HTMLInputElement | null>(null);
+  const filePickerOpenedAt=useRef(0);
+  useEffect(()=>{
+    const input=attachmentInput.current;
+    if(!input)return;
+    const cancelFileSelection=()=>setFilePickerOpen(false);
+    input.addEventListener('cancel',cancelFileSelection);
+    return()=>input.removeEventListener('cancel',cancelFileSelection);
+  },[activeChat]);
+  useEffect(()=>{
+    if(!filePickerOpen)return;
+    // Some iOS file pickers do not fire cancel. Regaining focus ends the indicator.
+    const onFocus=()=>{if(Date.now()-filePickerOpenedAt.current>800)window.setTimeout(()=>setFilePickerOpen(false),150);};
+    window.addEventListener('focus',onFocus);
+    return()=>window.removeEventListener('focus',onFocus);
+  },[filePickerOpen]);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const audioChunks = useRef<Blob[]>([]);
   const recordingStream = useRef<MediaStream | null>(null);
@@ -1749,28 +1769,40 @@ export default function Home() {
     };
   }, [activeChat, tab]);
 
-  const updateActivity=useCallback(async(id:string,kind:string|null)=>{
-    if(!supabase||!user)return;
+  const updateActivity=useCallback((id:string,kind:string|null):Promise<void>=>{
+    if(!supabase||!user)return Promise.resolve();
     const now=Date.now(),last=activityLast.current;
-    if(last.chat===id&&last.kind===(kind||'')&&now-last.at<4000)return;
+    if(last.chat===id&&last.kind===(kind||'')&&now-last.at<4000)return Promise.resolve();
     activityLast.current={chat:id,kind:kind||'',at:now};
-    const until=kind?new Date(now+8000).toISOString():null;
+    const until=kind?new Date(now+activityTtl(kind)).toISOString():null;
     const values:Record<string,unknown>={conversation_id:id,user_id:user.id,typing_until:kind==='typing'?until:null,recording_until:kind==='voice'?until:null};
     if(activitySupported.current){values.activity_kind=kind;values.activity_until=until;}
-    await supabase.from('conversation_user_state').upsert(values,{onConflict:'conversation_id,user_id'});
+    // Serialize status writes so a delayed cleanup cannot overwrite the next status.
+    const client=supabase;
+    const write=activityWriteQueue.current.then(async()=>{
+      const {error}=await client.from('conversation_user_state').upsert(values,{onConflict:'conversation_id,user_id'});
+      if(error)console.warn('Connect activity update failed:',error.message);
+    });
+    activityWriteQueue.current=write.catch(()=>{});
+    return activityWriteQueue.current;
   },[user?.id]);
   const updateTyping=useCallback((id:string,value:boolean)=>updateActivity(id,value?'typing':null),[updateActivity]);
   const updateRecording=useCallback((id:string,value:boolean)=>updateActivity(id,value?'voice':null),[updateActivity]);
   useEffect(()=>{
     if(!activeChat)return;
-    const kind=videoNoteOpen?'video':stickerPicker?'sticker':null;
+    const kind=composerActivity(videoNoteRecording,stickerPicker,filePickerOpen);
     if(!kind)return;
     void updateActivity(activeChat,kind);
     const pulse=setInterval(()=>void updateActivity(activeChat,kind),4000);
-    const hidden=()=>{if(document.visibilityState!=='visible')void updateActivity(activeChat,null);};
+    const hidden=()=>{
+      const isVisible=document.visibilityState==='visible';
+      // A system file picker can temporarily hide a mobile PWA; keep its short-lived status.
+      if(kind==='file' && !isVisible)return;
+      void updateActivity(activeChat,isVisible?kind:null);
+    };
     document.addEventListener('visibilitychange',hidden);
     return()=>{clearInterval(pulse);document.removeEventListener('visibilitychange',hidden);void updateActivity(activeChat,null);};
-  },[activeChat,videoNoteOpen,stickerPicker,updateActivity]);
+  },[activeChat,videoNoteRecording,stickerPicker,filePickerOpen,updateActivity]);
   // Realtime has a 3s polling fallback for mobile Safari when WebSockets are suspended.
   useEffect(() => {
     if (!supabase || !user) return;
@@ -1805,7 +1837,7 @@ export default function Home() {
           window.ConnectAndroid?.dismissConversationNotifications(id,at);
       const current = activeChatRef.current;
       const action=states.find(st=>st.conversation_id===current&&st.user_id!==user.id&&st.activity_kind&&Date.parse(st.activity_until)>Date.now());
-      setPeerActivity(action?{kind:action.activity_kind,until:Date.parse(action.activity_until)}:null);
+      setPeerActivity(action?{chat:current||"",kind:action.activity_kind,until:Date.parse(action.activity_until)}:null);
       setTyping(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.typing_until && new Date(st.typing_until).getTime() > Date.now())));
       setPeerRecording(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.recording_until && new Date(st.recording_until).getTime() > Date.now())));
       for (const m of recent) {
@@ -2407,7 +2439,8 @@ useEffect(()=>{
 const currentName = selected?.other?.display_name || 'Собеседник';
   const peerPresence = selected?.other ? presence[selected.other.id] : undefined;
   const activityText:Record<string,string>={typing:'Печатает…',voice:'Записывает голосовое…',video:'Записывает видео…',sticker:'Выбирает стикер…',file:'Выбирает файл…'};
-  const peerStatus = peerActivity&&peerActivity.until>Date.now()?activityText[peerActivity.kind]||formatPresence(peerPresence,clock):peerRecording?'Записывает голосовое…':typing?'Печатает…':formatPresence(peerPresence,clock);
+  const activePeerKind=visiblePeerActivity(peerActivity,activeChat,Date.now());
+  const peerStatus = activePeerKind?activityText[activePeerKind]||formatPresence(peerPresence,clock):peerRecording?'Записывает голосовое…':typing?'Печатает…':formatPresence(peerPresence,clock);
   const currentPeerState=activeChat?peerStates[activeChat]:undefined;
   const filteredChats = chats.filter(c => (c.other?.display_name || '').toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   useEffect(()=>{if(chatSearchOpen&&chatQuery.trim()&&searchMatches.length){const match=searchMatches[Math.min(searchPosition,searchMatches.length-1)];requestAnimationFrame(()=>document.getElementById('msg-'+match.id)?.scrollIntoView({behavior:'smooth',block:'center'}));}},[chatQuery,chatSearchOpen,searchMatches.length]);
@@ -2461,7 +2494,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     if (activeChat===id) exitChat();
     setNotice('Переписка скрыта на этом устройстве');
   }
-  function enterChat(id: string) { setChatDisplayReady(user?.id&&(warmedChatWindows.current.get(user.id+":"+id)||0)>Date.now()?id:null); resetChatTools(); setListActions(null); setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
+  function enterChat(id: string) { setPeerActivity(null);setTyping(false);setPeerRecording(false);setFilePickerOpen(false);setVideoNoteRecording(false);setChatDisplayReady(user?.id&&(warmedChatWindows.current.get(user.id+":"+id)||0)>Date.now()?id:null); resetChatTools(); setListActions(null); setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
   useEffect(() => {
     function openFromAndroid() {
       const chatId=window.__connectAndroidPendingChat;
@@ -2474,8 +2507,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     return ()=>window.removeEventListener('connect:android-open-chat',openFromAndroid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[conversations,user?.id]);
-  function exitChat() { captureChatAnchor(); flushVisibleRead(); resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
-  function switchTab(t: Tab) { setSettingsPage('home'); setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); setProfileMediaOpen(null); }
+  function exitChat() { setFilePickerOpen(false);setVideoNoteRecording(false);setPeerActivity(null);setPeerRecording(false);captureChatAnchor(); flushVisibleRead(); resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
+  function switchTab(t: Tab) { setSettingsPage('home'); setFilePickerOpen(false);setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); setProfileMediaOpen(null); }
   // Keep one in-memory navigation stack. Swipe restoration must not create new entries.
   useEffect(() => {
     const history = gestureHistory.current;
@@ -3378,7 +3411,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
               </div>}
               {uploadProgress!==null && <div className="upload-status">Отправка файла: {uploadProgress}%<progress max={100} value={uploadProgress}/></div>}
               {recording && <RecordingBar started={recordingStarted.current} stream={recordingStream.current} onCancel={()=>finishRecording(false)} onSend={()=>finishRecording(true)}/>}
-              <input ref={attachmentInput} type="file" multiple hidden onChange={e=>{chooseAttachments(e.currentTarget.files);e.currentTarget.value='';}}/>
+              <input ref={attachmentInput} type="file" multiple hidden onChange={e=>{setFilePickerOpen(false);chooseAttachments(e.currentTarget.files);e.currentTarget.value='';}}/>
               {stickerPicker && <div className="sticker-picker">
                 <div className="sticker-picker-tabs">
                   {STICKER_PACKS.filter(p=>enabledPacks.includes(p.id)).map(p=><button key={p.id} type="button" className={stickerPack===p.id?'active':''} onClick={()=>{setStickerPack(p.id);setCustomPack('')}}>{p.emoji} {p.name}</button>)}
@@ -3393,7 +3426,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                     <button type="button" className="sticker-fav" onClick={()=>void deleteCustomSticker(st)} aria-label="Удалить из избранного">★</button>
                   </div>)}{customPack?customStickers.filter(st=>st.pack_id===customPack).map(st=><button key={st.id} type="button" className="sticker-choice" onClick={()=>void sendCustomSticker(st)} disabled={busy}><img src={customStickerUrl(st)} alt="Стикер"/></button>):(stickerPack==='favorites'?stickerFavorites:stickerPack==='recent'?stickerRecent:STICKER_PACKS.find(p=>p.id===stickerPack)?.stickers.map(st=>stickerPack+':'+st.id)||[]).map(key=>{const [pack,id]=key.split(':');const found=STICKER_PACKS.find(p=>p.id===pack)?.stickers.find(st=>st.id===id);if(!found)return null;return <div key={key} className="sticker-choice"><button type="button" onClick={()=>void sendSticker(pack as StickerPackId,id)} disabled={busy} aria-label="Отправить стикер"><img src={stickerUrl({pack,id})} alt="Стикер"/></button><button type="button" className="sticker-fav" onClick={()=>toggleFavorite(key)} aria-label="В избранное">{stickerFavorites.includes(key)?'★':'☆'}</button></div>;})}</div>
               </div>}
-              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>setStickerPicker(x=>!x)} aria-label="Стикеры"><Icon name="smile" size={24}/></button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>{if(activeChat)void updateActivity(activeChat,'file');attachmentInput.current?.click();}} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && !recording && <button className="composer-extra" type="button" disabled={busy} onClick={()=>void openNativeVideoNote()} aria-label="Записать видеокружок"><Icon name="camera" size={22}/></button>}{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
+              <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>{setFilePickerOpen(false);setStickerPicker(x=>!x);}} aria-label="Стикеры"><Icon name="smile" size={24}/></button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>{setStickerPicker(false);filePickerOpenedAt.current=Date.now();setFilePickerOpen(true);if(activeChat)void updateActivity(activeChat,'file');attachmentInput.current?.click();}} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && !recording && <button className="composer-extra" type="button" disabled={busy} onClick={()=>void openNativeVideoNote()} aria-label="Записать видеокружок"><Icon name="camera" size={22}/></button>}{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
           </div>
             : <><div className="main-view">
@@ -3508,7 +3541,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     {crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}
     {notice && <button type="button" className="notice-toast"  role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
     {forwardIds.length>0&&<div className="forward-overlay"><div className="forward-dialog"><header><strong>Переслать сообщения</strong><button type="button" onClick={()=>setForwardIds([])}><Icon name="close" size={21}/></button></header><p>Выберите получателя · {forwardIds.length} сообщ.</p><div className="forward-contacts">{contacts.map(p=><button type="button" key={p.id} disabled={busy} onClick={()=>void forwardTo(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span>{p.display_name}</span><Icon name="chevron" size={18}/></button>)}</div></div></div>}
-    {videoNoteOpen && <VideoNoteRecorder onClose={()=>setVideoNoteOpen(false)} onSend={file=>{setVideoNoteOpen(false);void sendAttachment(file)}}/>}
+    {videoNoteOpen && <VideoNoteRecorder onClose={()=>{setVideoNoteRecording(false);setVideoNoteOpen(false)}} onRecordingChange={setVideoNoteRecording} onSend={file=>{setVideoNoteRecording(false);setVideoNoteOpen(false);void sendAttachment(file)}}/>}
     {mediaViewer && <ConnectGalleryViewer
       items={galleryIndex>=0?gallery:[...gallery,mediaViewer]}
       currentPath={mediaViewer.path}
