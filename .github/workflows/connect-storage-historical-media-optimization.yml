@@ -1,0 +1,485 @@
+name: Connect Storage | Safe historical media migration
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "audit (read-only), migrate (new copies and message links), cleanup (remove verified originals)"
+        type: choice
+        options:
+          - audit
+          - migrate
+          - cleanup
+        default: audit
+        required: true
+      max_files:
+        description: "Files per run (1 to 6); start with 1 or 2"
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+          - '5'
+          - '6'
+        default: '2'
+        required: true
+      confirm_cleanup:
+        description: "For cleanup ONLY enter DELETE_VERIFIED_ORIGINALS; leave empty for audit/migrate"
+        type: string
+        default: ''
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: connect-storage-historical-media-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  migration:
+    name: Audit and safely process existing media in Supabase
+    runs-on: ubuntu-24.04
+    timeout-minutes: 95
+    steps:
+      - name: Check Connect repository and selected branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install codecs and Python dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --quiet 'requests>=2.32,<3' 'pillow>=11.0,<14'
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          ffmpeg -hide_banner -version | head -n 1
+          python -c 'import requests,PIL;print("Python dependencies ready")'
+      - name: Prepare migration code and regression checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/connect-storage-migrate.py" <<'CONNECT_STORAGE_MIGRATION_PY'
+          #!/usr/bin/env python3
+          """Connect historical media migration. Run only with private service-role key.
+          No irreversible deletions in migrate mode. Cleanup is separately gated.
+          """
+          import io
+          import json
+          import math
+          import os
+          import re
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          from collections import defaultdict
+          from pathlib import Path
+          from urllib.parse import quote
+
+          import requests
+          from PIL import Image, ImageOps, ImageFile
+
+          Image.MAX_IMAGE_PIXELS = 45_000_000
+          ImageFile.LOAD_TRUNCATED_IMAGES = False
+          BUCKET = 'connect-attachments'
+          OPT = '__optimized_v1'
+          MB = 1024 * 1024
+          ENDPOINT = os.environ.get('SUPABASE_URL', '').rstrip('/')
+          KEY = os.environ.get('SUPABASE_SERVICE_ROLE_KEY', '')
+          MODE = os.environ.get('MIGRATION_MODE', 'audit')
+          MAX_FILES = int(os.environ.get('MAX_FILES', '3'))
+          CONFIRM = os.environ.get('CONFIRM_CLEANUP', '')
+          if ENDPOINT != 'https://tpwkmoxxzjfdsqsomhhr.supabase.co':
+              sys.exit('This migration is restricted to the Connect Messenger Supabase project')
+          if len(KEY) < 35:
+              sys.exit('Missing SUPABASE_SERVICE_ROLE_KEY. Add it to GitHub Actions repository secrets; do not print or commit it.')
+          if MODE not in ('audit', 'migrate', 'cleanup'):
+              sys.exit('Unknown mode')
+          if MAX_FILES < 1 or MAX_FILES > 15:
+              sys.exit('MAX_FILES must be 1..15')
+          if MODE == 'cleanup' and CONFIRM != 'DELETE_VERIFIED_ORIGINALS':
+              sys.exit('Cleanup requires explicit confirmation DELETE_VERIFIED_ORIGINALS')
+
+          S = requests.Session()
+          S.headers.update({'apikey': KEY, 'Authorization': 'Bearer '+KEY, 'User-Agent':'Connect-safe-media-migration/1.0'})
+
+          def request(method, api, *, data=None, obj=None, params=None, mime=None, timeout=60):
+              url = ENDPOINT+api
+              headers = {'Content-Type':mime} if mime else {}
+              res = S.request(method, url, params=params, data=data, json=obj, headers=headers, timeout=timeout)
+              if not 200 <= res.status_code < 300:
+                  # Avoid leaking object paths, JWTs, and media metadata into CI logs.
+                  raise RuntimeError(f'Supabase {method} request failed: status {res.status_code}')
+              return res
+
+          def list_storage(prefix=''):
+              offset = 0
+              while True:
+                  objects=request('POST',f'/storage/v1/object/list/{BUCKET}',obj={'prefix':prefix,'limit':1000,'offset':offset,'sortBy':{'column':'name','order':'asc'}}).json()
+                  for item in objects:
+                      rel=prefix+item['name']
+                      if item.get('id') is None:
+                          yield from list_storage(rel.rstrip('/')+'/')
+                      else:
+                          yield rel,item
+                  if len(objects)<1000: break
+                  offset+=1000
+
+          def list_messages():
+              result=[]
+              offset=0
+              while True:
+                  chunk=request('GET','/rest/v1/messages',params={'select':'id,attachment_path,attachment_name,attachment_type,attachment_size,deleted_at,body','limit':'1000','offset':str(offset),'order':'id.asc'}).json()
+                  result.extend(chunk)
+                  if len(chunk)<1000:break
+                  offset+=1000
+              return result
+
+          def fetch(path):
+              encoded=quote(path,safe='/')
+              return request('GET',f'/storage/v1/object/authenticated/{BUCKET}/{encoded}',timeout=180).content
+
+          def upload(path, bytesdata, mime):
+              return request('POST',f'/storage/v1/object/{BUCKET}/{quote(path,safe="/")}',data=bytesdata,mime=mime,timeout=180)
+
+          def delete(path):
+              request('DELETE',f'/storage/v1/object/{BUCKET}',obj={'prefixes':[path]},timeout=90)
+
+          def patch_message(row, old, new, new_name, new_type, new_size):
+              payload={'attachment_path':new,'attachment_name':new_name,'attachment_type':new_type,'attachment_size':new_size}
+              ans=request('PATCH','/rest/v1/messages',params={'id':'eq.'+row['id'],'attachment_path':'eq.'+old},obj=payload,
+                          timeout=40).text
+              # PostgREST returns an empty response without Prefer: return=representation.
+              # Verify the changed row by a follow-up read.
+              state=request('GET','/rest/v1/messages',params={'select':'attachment_path,attachment_type,attachment_size','id':'eq.'+row['id']}).json()
+              if len(state)!=1 or state[0]['attachment_path']!=new or state[0]['attachment_type']!=new_type or state[0]['attachment_size']!=new_size:
+                  raise RuntimeError('Concurrent message edit or permission failure; both objects are preserved')
+
+          def run(cmd, timeout=300):
+              p=subprocess.run(cmd,capture_output=True,timeout=timeout,check=False)
+              if p.returncode: raise RuntimeError(f'Media codec failed (exit {p.returncode}); file preserved')
+              return p.stdout
+
+          def probe(path):
+              return json.loads(run(['ffprobe','-v','error','-show_streams','-show_format','-of','json',path],timeout=40))
+
+          def streams(info, typ):
+              return [x for x in info.get('streams',[]) if x.get('codec_type')==typ]
+
+          def reported_duration(info):
+              try:return float(info['format'].get('duration',0))
+              except (ValueError,TypeError):return 0
+
+          def visual_dimensions(stream):
+              w,h=stream.get('width',0),stream.get('height',0)
+              angle=0
+              for item in stream.get('side_data_list',[]):
+                  if 'rotation' in item:angle=round(float(item['rotation']))
+              if not angle:angle=int(stream.get('tags',{}).get('rotate',0))
+              return (h,w) if abs(angle)%180==90 else (w,h)
+
+          def make_photo(source:bytes):
+              with Image.open(io.BytesIO(source)) as im:
+                  if getattr(im,'n_frames',1)!=1: return None
+                  im=ImageOps.exif_transpose(im)
+                  if im.width*im.height>40_000_000:return None
+                  im.thumbnail((2048,2048),Image.Resampling.LANCZOS)
+                  has_alpha=('A' in im.getbands() or 'transparency' in im.info)
+                  im=im.convert('RGBA' if has_alpha else 'RGB')
+                  buf=io.BytesIO()
+                  im.save(buf,format='WEBP',quality=86,method=6,exact=has_alpha)
+                  encoded=buf.getvalue()
+                  with Image.open(io.BytesIO(encoded)) as check:
+                      check.load()
+                      if check.size != im.size:return None
+                      if has_alpha and check.mode!='RGBA':return None
+                  thumb=im.copy()
+                  thumb.thumbnail((480,480),Image.Resampling.LANCZOS)
+                  tbuf=io.BytesIO()
+                  thumb.save(tbuf,format='WEBP',quality=77,method=5)
+                  return encoded,(im.width,im.height),tbuf.getvalue()
+
+          def make_video(source:bytes, wd:Path):
+              inp=wd/'input.media';out=wd/'encoded.mp4';poster=wd/'poster.jpg'
+              inp.write_bytes(source)
+              pre=probe(str(inp)); videos=streams(pre,'video');audios=streams(pre,'audio')
+              if len(videos)!=1 or not (1 <= reported_duration(pre) <= 900): return None
+              srcvid=videos[0]
+              # HDR, Dolby Vision, 10-bit or interlaced cannot safely be normalized in this pipeline.
+              if srcvid.get('color_transfer') in ('smpte2084','arib-std-b67') or srcvid.get('field_order') not in ('progressive','unknown',None):return None
+              if any(x in str(srcvid.get('pix_fmt','')) for x in ('p10','p12','p16','10le','12le','16le')):return None
+              if any('DOVI' in json.dumps(x).upper() for x in srcvid.get('side_data_list',[])):return None
+              w,h=srcvid.get('width',0),srcvid.get('height',0)
+              if not w or not h:return None
+              vf=['scale=1280:1280:force_original_aspect_ratio=decrease:force_divisible_by=2:flags=lanczos'] if max(w,h)>1280 else []
+              cmd=['ffmpeg','-nostdin','-loglevel','error','-y','-i',str(inp),'-map','0:v:0']
+              if audios:cmd+=['-map','0:a:0']
+              cmd+=['-c:v','libx264','-preset','veryfast','-crf','27','-pix_fmt','yuv420p']
+              if vf:cmd+=['-vf',vf[0]]
+              if audios:cmd+=['-c:a','aac','-b:a','96k','-ac','2']
+              cmd+=['-movflags','+faststart','-sn','-dn',str(out)]
+              run(cmd,timeout=600)
+              after=probe(str(out));av=streams(after,'video');aa=streams(after,'audio')
+              if len(av)!=1 or (bool(audios)!=bool(aa)):return None
+              duration=reported_duration(pre);newdur=reported_duration(after)
+              if abs(duration-newdur)>max(0.5,0.025*duration):return None
+              ww,hh=visual_dimensions(srcvid);nx,ny=visual_dimensions(av[0]);
+              if not all((ww,hh,nx,ny)) or abs((ww/hh)-(nx/ny))/(ww/hh)>0.045:return None
+              # Fully decode to reject corrupted/truncated output, including audio.
+              run(['ffmpeg','-nostdin','-v','error','-i',str(out),'-f','null','-'],timeout=600)
+              run(['ffmpeg','-nostdin','-loglevel','error','-y','-ss','0.3','-i',str(out),'-frames:v','1','-q:v','3',str(poster)],timeout=90)
+              return out.read_bytes(),(av[0]['width'],av[0]['height']),poster.read_bytes()
+
+          def ext_name(name,ext):
+              safe=name or 'Медиа'
+              if re.search(r'\.[^.]+$',safe):safe=re.sub(r'\.[^.]+$','',safe)
+              return safe[:190]+'.'+ext
+
+          def list_context():
+              allfiles=dict(list_storage())
+              msgs=list_messages()
+              bypath=defaultdict(list)
+              for m in msgs:
+                  if m.get('attachment_path'):bypath[m['attachment_path']].append(m)
+              return allfiles,msgs,bypath
+
+          def is_auxiliary(path):
+              return path.endswith('__thumb.webp') or path.endswith('__poster.jpg')
+
+          def base_candidates(files,msgs,bypath):
+              candidates=[]
+              for path,ob in files.items():
+                  if OPT in path or is_auxiliary(path):continue
+                  meta=ob.get('metadata') or {}
+                  mime=(meta.get('mimetype') or '').lower()
+                  size=int(meta.get('size') or 0)
+                  if not (mime in ('image/jpeg','image/png','image/webp','video/mp4','video/quicktime')):continue
+                  if size < (700*1024 if mime.startswith('image/') else 4*MB):continue
+                  active=[m for m in bypath.get(path,[]) if m.get('deleted_at') is None]
+                  # Albums and message bodies may carry additional refs: never rewrite these implicitly.
+                  if not active or any(path in (m.get('body') or '') for m in msgs):continue
+                  # Avoid video notes and stickers: already low-bitrate or special presentation.
+                  if any(re.match(r'^(?:sticker-\d+|connect-video-note-\d+)\.',m.get('attachment_name') or '') for m in active):continue
+                  # Do not mix different semantic attachment kinds with a single shared object.
+                  if any(m.get('attachment_type') not in (mime,None,'') for m in active):continue
+                  candidates.append((path,ob,active,size,mime))
+              return sorted(candidates,key=lambda x:x[3],reverse=True)
+
+          def status_summary(files,msgs,bypath,candidates):
+              eligible=sum(x[3] for x in candidates)
+              linked=set(x for x,v in bypath.items() if any(m.get('deleted_at') is None for m in v))
+              totals=defaultdict(lambda:[0,0])
+              for path,ob in files.items():
+                  if is_auxiliary(path):continue
+                  size=int((ob.get('metadata') or {}).get('size') or 0)
+                  kind=(ob.get('metadata') or {}).get('mimetype','').split('/')[0]
+                  totals[kind][0]+=1;totals[kind][1]+=size
+              print('Storage audit by MIME category (includes unlinked objects):')
+              for kind,(count,volume) in sorted(totals.items()):print(f'  {kind or "other"}: {count} objects, {volume/MB:.1f} MiB')
+              print(f'  LIVE candidate files eligible for trial: {len(candidates)}, {eligible/MB:.1f} MiB; savings not yet measured')
+              print(f'  Already migrated linked media: {sum(OPT in x for x in linked)}')
+              # This classification is a *candidate* count, not evidence a file is safe to delete.
+              state=defaultdict(lambda:[0,0])
+              for path,ob in files.items():
+                  if is_auxiliary(path):continue
+                  size=int((ob.get('metadata') or {}).get('size') or 0)
+                  refs=bypath.get(path,[])
+                  embedded=any(path in (m.get('body') or '') for m in msgs)
+                  label='linked' if embedded or any(m.get('deleted_at') is None for m in refs) else ('deleted_messages_only' if refs else 'no_known_message_reference')
+                  state[label][0]+=1;state[label][1]+=size
+              for label,(count,volume) in sorted(state.items()):
+                  print(f'  Audit {label}: {count} files, {volume/MB:.1f} MiB')
+              print('  Other files, including possible orphans, are deliberately untouched.')
+
+
+          def migrate(files,msgs,bypath,candidates):
+              done=0; saved=0; skipped=0
+              for path,ob,active,size,mime in candidates:
+                  if done>=MAX_FILES:break
+                  try:
+                      original=fetch(path)
+                      if len(original)!=size:raise RuntimeError('Source object changed since audit')
+                      if mime.startswith('image/'):
+                          result=make_photo(original)
+                          if result is None:skipped+=1;continue
+                          compressed,dims,preview=result
+                          name=ext_name(active[0].get('attachment_name'),'webp');newtype='image/webp';suffix=f'__img_{dims[0]}x{dims[1]}'
+                          sibling='__thumb.webp';sibling_bytes=preview;sibling_mime='image/webp'
+                      else:
+                          with tempfile.TemporaryDirectory() as d:result=make_video(original,Path(d))
+                          if result is None:skipped+=1;continue
+                          compressed,dims,preview=result
+                          name=ext_name(active[0].get('attachment_name'),'mp4');newtype='video/mp4';suffix=f'__vid_{dims[0]}x{dims[1]}'
+                          sibling='__poster.jpg';sibling_bytes=preview;sibling_mime='image/jpeg'
+                      # Savings threshold: minor lossy changes are not justified.
+                      if len(compressed)>=len(original)*0.82:skipped+=1;continue
+                      newpath=path+OPT+suffix
+                      if newpath in files:
+                          verified=fetch(newpath)
+                          if verified!=compressed:raise RuntimeError('Conflicting prior migration object; never overwrite')
+                      else:
+                          upload(newpath,compressed,newtype)
+                          if fetch(newpath)!=compressed:raise RuntimeError('Uploaded object failed exact verification')
+                      if newpath+sibling not in files:
+                          upload(newpath+sibling,sibling_bytes,sibling_mime)
+                      # Update each message only after verified upload. The old object remains available.
+                      for row in active:
+                          patch_message(row,path,newpath,name,newtype,len(compressed))
+                      done+=1;saved+=len(original)-len(compressed)
+                      print(f'  Validated and relinked {done} file(s); theoretical post-cleanup savings {saved/MB:.1f} MiB')
+                  except Exception as e:
+                      print('  One candidate could not be migrated safely:',str(e).split(':')[0])
+                      raise
+              print(f'Migration finished: {done} relinked; {skipped} skipped; potential savings {saved/MB:.1f} MiB')
+              print('Originals are retained. Run cleanup separately to actually release space.')
+
+
+          def cleanup(files,msgs,bypath):
+              checked=0; removed=0; freed=0
+              # Only delete originals for existing, validated, linked __optimized_v1 objects.
+              for newpath,ob in sorted(files.items()):
+                  if OPT not in newpath or is_auxiliary(newpath):continue
+                  old=newpath.split(OPT,1)[0]
+                  if old not in files:continue
+                  new_references=[m for m in bypath.get(newpath,[]) if m.get('deleted_at') is None]
+                  if not new_references:continue
+                  if any(m.get('attachment_path')==old or old in (m.get('body') or '') for m in msgs):continue
+                  # New path must be used by live messages, contain valid bytes and have matching metadata.
+                  size=int((ob.get('metadata') or {}).get('size') or 0)
+                  if size<=0:continue
+                  actualtype=(ob.get('metadata') or {}).get('mimetype')
+                  if any(x.get('attachment_size')!=size or x.get('attachment_type')!=actualtype for x in new_references):continue
+                  payload=fetch(newpath)
+                  if len(payload)!=size:continue
+                  with tempfile.TemporaryDirectory() as tmp:
+                      src=Path(tmp)/'new'
+                      src.write_bytes(payload)
+                      if (ob.get('metadata') or {}).get('mimetype')=='image/webp':
+                          with Image.open(src) as pic:pic.verify()
+                      else:
+                          info=probe(str(src))
+                          if not streams(info,'video') or not reported_duration(info):continue
+                  checked+=1
+                  old_size=int((files[old].get('metadata') or {}).get('size') or 0)
+                  # Re-read live pointers immediately before irreversible API deletion.
+                  fresh=list_messages()
+                  if any(m.get('attachment_path')==old or old in (m.get('body') or '') for m in fresh):continue
+                  delete(old)
+                  removed+=1;freed+=old_size
+                  print(f'  Cleaned {removed} fully unreferenced original(s); freed {freed/MB:.1f} MiB')
+                  if removed>=MAX_FILES:break
+              print(f'Cleanup finished: validated {checked}, removed {removed}, released {freed/MB:.1f} MiB')
+              print('This operation does not touch suspected orphaned files without a verified replacement.')
+
+
+          def main():
+              print(f'Connect media migration: mode={MODE}, max_files={MAX_FILES}')
+              files,msgs,bypath=list_context()
+              candidates=base_candidates(files,msgs,bypath)
+              status_summary(files,msgs,bypath,candidates)
+              if MODE=='migrate':migrate(files,msgs,bypath,candidates)
+              if MODE=='cleanup':cleanup(files,msgs,bypath)
+
+          if __name__=='__main__':main()
+          CONNECT_STORAGE_MIGRATION_PY
+          cat > "$RUNNER_TEMP/test-connect-storage-migrate.py" <<'CONNECT_STORAGE_TEST_PY'
+          import importlib.util,io,os,tempfile,subprocess
+          from pathlib import Path
+          from unittest.mock import patch
+          from PIL import Image,ImageDraw
+          os.environ['SUPABASE_URL']='https://tpwkmoxxzjfdsqsomhhr.supabase.co'
+          os.environ['SUPABASE_SERVICE_ROLE_KEY']='test-secret-do-not-use-000000000000000000000000'
+          os.environ['MIGRATION_MODE']='audit'
+          sp=importlib.util.spec_from_file_location('connect_storage_migrate',Path(__file__).with_name('migrate.py'))
+          m=importlib.util.module_from_spec(sp);sp.loader.exec_module(m)
+
+          # Preserve alpha and dimensions of static stickers and photos.
+          photo=Image.new('RGBA',(2000,1200),(0,0,0,0));d=ImageDraw.Draw(photo)
+          d.ellipse((120,200,1840,1000), fill=(48,120,210,255))
+          src=io.BytesIO();photo.save(src,'PNG',compress_level=0)
+          result=m.make_photo(src.getvalue());assert result
+          webp,(w,h),thumb=result
+          assert (w,h)==(2000,1200)
+          with Image.open(io.BytesIO(webp)) as check:
+           assert check.mode=='RGBA';assert check.getpixel((0,0))[3]==0
+          with Image.open(io.BytesIO(thumb)) as check:
+           assert max(check.size)<=480
+          assert len(webp)<len(src.getvalue())*.82
+          # Animated images must never be flattened.
+          a=Image.new('RGB',(16,16),'red');b=Image.new('RGB',(16,16),'blue');mem=io.BytesIO()
+          a.save(mem,format='GIF',save_all=True,append_images=[b],duration=90,loop=0)
+          assert m.make_photo(mem.getvalue()) is None
+
+          # Real H264+AAC video with audio must keep an audio track and duration.
+          with tempfile.TemporaryDirectory() as work:
+           path=Path(work)/'video.mp4';wd=Path(work)/'job';wd.mkdir()
+           subprocess.run(['ffmpeg','-nostdin','-loglevel','error','-y','-f','lavfi','-i','testsrc2=size=640x360:rate=24','-f','lavfi','-i','sine=frequency=440:sample_rate=48000','-t','2','-c:v','libx264','-preset','ultrafast','-crf','12','-c:a','aac','-b:a','128k',str(path)],check=True,capture_output=True)
+           v=m.make_video(path.read_bytes(),wd)
+           assert v is not None
+           encoded,dims,poster=v
+           assert dims==(640,360)
+           assert len(poster)>500
+           (Path(work)/'result.mp4').write_bytes(encoded)
+           p=m.probe(str(Path(work)/'result.mp4'))
+           assert len(m.streams(p,'audio'))==1
+           assert abs(m.reported_duration(p)-2)<.3
+
+          # In migrate, verified new bytes are written and linked; old source is NEVER deleted.
+          photo=Image.new('RGB',(1280,900),(255,20,25));mem=io.BytesIO();photo.save(mem,'PNG',compress_level=0)
+          raw=mem.getvalue(); source='test-chat/test-owner/test-media'
+          row={'id':'test-msg','deleted_at':None,'attachment_path':source,'attachment_name':'photo.png','attachment_type':'image/png','attachment_size':len(raw),'body':''}
+          files={source:{'metadata':{'mimetype':'image/png','size':len(raw)}}}
+          candidates=m.base_candidates(files,[row],{source:[row]})
+          assert len(candidates)==1
+          uploads=[];patches=[]
+          with patch.object(m,'fetch',side_effect=lambda name: raw if name==source else uploads_map[name]), \
+               patch.object(m,'upload',side_effect=lambda name,bits,mime: (uploads.append((name,len(bits),mime)),uploads_map.__setitem__(name,bits))), \
+               patch.object(m,'patch_message',side_effect=lambda *args:patches.append(args)), \
+               patch.object(m,'delete',side_effect=AssertionError('No deletions in migrate mode')):
+           uploads_map={}
+           m.migrate(files,[row],{source:[row]},candidates)
+          assert len(patches)==1
+          assert len(uploads)==2
+          assert uploads[0][0].endswith('__optimized_v1__img_1280x900')
+          assert uploads[1][0].endswith('__thumb.webp')
+
+          # Cleanup must never delete if an original path is referenced by any message.
+          new=source+m.OPT+'__img_1280x900'
+          newrow=dict(row,attachment_path=new)
+          files={source:{'metadata':{'size':1000000}},new:{'metadata':{'mimetype':'image/webp','size':len(webp)}}}
+          with patch.object(m,'delete',side_effect=AssertionError('Referenced originals cannot be removed')),patch.object(m,'fetch',return_value=webp), patch.object(m,'list_messages',return_value=[row,newrow]):
+           m.cleanup(files,[row,newrow],{source:[row],new:[newrow]})
+          print('PASS: static alpha, GIF frames, video audio, staged media links and guarded cleanup')
+          CONNECT_STORAGE_TEST_PY
+          python -m py_compile "$RUNNER_TEMP/connect-storage-migrate.py"
+          python -m py_compile "$RUNNER_TEMP/test-connect-storage-migrate.py"
+      - name: Test before allowing any connection to live data
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          cp connect-storage-migrate.py migrate.py
+          cp test-connect-storage-migrate.py test_migrate.py
+          python test_migrate.py
+      - name: Execute operation with protected Supabase access
+        shell: bash
+        env:
+          SUPABASE_URL: https://tpwkmoxxzjfdsqsomhhr.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MIGRATION_MODE: ${{ inputs.operation }}
+          MAX_FILES: ${{ inputs.max_files }}
+          CONFIRM_CLEANUP: ${{ inputs.confirm_cleanup }}
+        run: |
+          set -euo pipefail
+          # No plaintext credentials or media content are written to logs/artifacts.
+          python "$RUNNER_TEMP/connect-storage-migrate.py"
