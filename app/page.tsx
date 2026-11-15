@@ -14,6 +14,7 @@ import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
 import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
 import { connectOptimizeMedia } from '../lib/connect-media-optimizer'; // CONNECT_PWA_SAFE_MEDIA_OPTIMIZATION_V1_20261115
 import { prepareStickerFile } from '../lib/sticker-webp'; // CONNECT_PWA_STICKER_WEBP_EDITOR_20261115
+import { convertStickerWebpOnServer } from '../lib/sticker-webp-transport'; // CONNECT_PWA_STICKER_BINARY_TRANSPORT_FIX4_20261115
 import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
 import ConnectPushGuardian from '../components/ConnectPushGuardian'; // CONNECT_PWA_PUSH_GUARDIAN_20261114
 import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
@@ -1459,16 +1460,17 @@ export default function Home() {
     setBusy(false);if(error)setNotice('Не удалось создать набор: '+error.message);else{setPackName('');await loadCustomStickers();setNotice('Набор создан');}
   }
   async function convertStickerOnServer(file:File):Promise<Blob>{
-    if(!supabase)throw new Error('Нет соединения с сервером');
-    const {data,error,response}=await supabase.functions.invoke('connect-sticker-webp-convert',{
-      body:file,headers:{'Content-Type':file.type||'application/octet-stream'}
+    if(!supabase||!supabaseUrl||!supabaseKey)throw new Error('Нет соединения с сервером');
+    const {data:{session},error}=await supabase.auth.getSession();
+    if(error||!session?.access_token)throw new Error('Войдите в Connect для загрузки стикера');
+    // FIX4 sends the actual File bytes through the existing authenticated proxy.
+    // The previous functions.invoke({body:file}) reached Supabase as 0 bytes on iOS.
+    return convertStickerWebpOnServer(file,{
+      endpoint:supabaseUrl+'/functions/v1/connect-sticker-webp-convert',
+      accessToken:session.access_token,
+      apiKey:supabaseKey,
+      transport:supabaseFetch,
     });
-    if(error)throw new Error('Серверная конвертация WebP: '+error.message);
-    // Supabase Functions SDK parses application/octet-stream as Blob;
-    // image/webp is otherwise parsed as text. Trust bytes only after signature check.
-    if(!(data instanceof Blob)||response?.headers.get('x-connect-media-type')!=='image/webp')
-      throw new Error('Сервер не вернул изображение WebP');
-    return new Blob([data],{type:'image/webp'});
   }
   async function uploadCustomStickers(packId:string,files:File[]){ // CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115
     if(!supabase||!user||!packId||!files.length||busy)return;

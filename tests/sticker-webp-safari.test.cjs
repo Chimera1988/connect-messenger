@@ -67,9 +67,9 @@ test('animated GIF and existing WebP remain unchanged',async()=>{
   }
 });
 test('PWA passes authenticated fallback to both sticker pack and keyboard favorite uploads',()=>{
-  assert(page.includes("supabase.functions.invoke('connect-sticker-webp-convert'"));
-  assert(page.includes("response?.headers.get('x-connect-media-type')!=='image/webp'"));
-  assert(page.includes("new Blob([data],{type:'image/webp'})"));
+  assert(!page.includes("supabase.functions.invoke('connect-sticker-webp-convert'"));
+  assert(page.includes('convertStickerWebpOnServer(file,{'));
+  assert(page.includes('transport:supabaseFetch,'));
   assert(page.includes('prepareStickerFile(file,convertStickerOnServer)'));
   assert(page.includes('),convertStickerOnServer);'));
   assert(!page.includes('window.setTimeout(()=>document.getElementById(\'connect-sticker-upload\')'));
