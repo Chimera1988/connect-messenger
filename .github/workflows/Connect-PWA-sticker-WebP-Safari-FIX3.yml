@@ -1,0 +1,276 @@
+name: Connect PWA | Fix Safari sticker WebP conversion FIX3
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-sticker-webp-fix3-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  safari-webp-fix:
+    name: Fix WebP conversion, verify, commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    steps:
+      - name: Checkout Connect main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify repository and existing sticker system
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test -s app/page.tsx
+          test -s lib/sticker-webp.ts
+          test -s tests/sticker-webp.test.cjs
+          test -s package-lock.json
+          grep -q 'CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115' app/page.tsx
+      - name: Apply guarded Safari WebP fallback fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/connect_sticker_webp_fix3.py" <<'CONNECT_STICKER_WEBP_FIX3_PATCH'
+          #!/usr/bin/env python3
+          """Guarded Connect PWA Safari WebP fallback patch; only modifies current known code."""
+          from pathlib import Path
+
+          lib_path=Path('lib/sticker-webp.ts')
+          page_path=Path('app/page.tsx')
+          if not (lib_path.is_file() and page_path.is_file()):
+              raise SystemExit('Connect PWA checkout is incomplete')
+          lib=lib_path.read_text('utf8')
+          page=page_path.read_text('utf8')
+          MARK='CONNECT_PWA_STICKER_SAFARI_WEBP_FALLBACK_FIX3_20261115'
+
+          def once(source,old,new,label):
+              count=source.count(old)
+              if count != 1:
+                  raise RuntimeError(f'Unexpected source for {label}: {count} matches; refusing to edit')
+              return source.replace(old,new,1)
+
+          if MARK in lib:
+              assert 'serverFallback?: (source: File) => Promise<Blob>' in lib
+              assert 'convertStickerOnServer' in page
+              assert "connect-sticker-webp-convert" in page
+              print('Safari WebP fallback already present; nothing changed')
+          else:
+              assert 'CONNECT_PWA_STICKER_WEBP_EDITOR_20261115' in lib
+              assert 'CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115' in page
+              lib=once(lib,
+                  'export async function prepareStickerFile(file: File): Promise<File> {',
+                  'export async function prepareStickerFile(file: File, serverFallback?: (source: File) => Promise<Blob>): Promise<File> { // '+MARK,
+                  'WebP preparation signature')
+              old='''    const blob = await new Promise<Blob>((resolve, reject) => {
+                canvas.toBlob(result => result ? resolve(result) : reject(new Error('Не удалось создать WebP')),
+                  'image/webp', 0.9);
+              });
+              if (blob.type !== 'image/webp' || !blob.size || blob.size > MAX_STICKER_BYTES) {
+                throw new Error('Конвертация WebP не поддерживается или файл больше 2 МБ');
+              }
+              const filename = (file.name.replace(/\\.[^.]+$/, '') || 'sticker') + '.webp';
+              return new File([blob], filename, { type: 'image/webp', lastModified: file.lastModified });'''
+              new='''    // Safari may silently encode PNG even when toBlob was asked for WebP.
+              // Validate the actual RIFF/WEBP file signature, not only the reported MIME.
+              async function isValidWebP(value: Blob | null): Promise<boolean> {
+                if (!value || value.type !== 'image/webp' || value.size < 12 || value.size > MAX_STICKER_BYTES) return false;
+                const header = new Uint8Array(await value.slice(0, 12).arrayBuffer());
+                return String.fromCharCode(...header.slice(0, 4)) === 'RIFF' &&
+                  String.fromCharCode(...header.slice(8, 12)) === 'WEBP';
+              }
+              let blob: Blob | null = null;
+              try {
+                blob = await new Promise<Blob | null>((resolve, reject) => {
+                  try { canvas.toBlob(resolve, 'image/webp', 0.9); }
+                  catch (error) { reject(error); }
+                });
+              } catch { /* Native encoder unsupported; try the authenticated server fallback. */ }
+              if (!(await isValidWebP(blob))) {
+                if (!serverFallback) throw new Error('Браузер не поддерживает WebP: нужна серверная конвертация');
+                blob = await serverFallback(file);
+              }
+              if (!(await isValidWebP(blob))) {
+                throw new Error('Сервер не вернул корректный WebP до 2 МБ');
+              }
+              if (!blob) throw new Error('WebP файл отсутствует'); // Type-safe after validation.
+              const filename = (file.name.replace(/\\.[^.]+$/, '') || 'sticker') + '.webp';
+              return new File([blob], filename, { type: 'image/webp', lastModified: file.lastModified });'''
+              lib=once(lib,old,new,'Safari PNG response fallback')
+
+              hook='''  async function convertStickerOnServer(file:File):Promise<Blob>{
+              if(!supabase)throw new Error('Нет соединения с сервером');
+              const {data,error,response}=await supabase.functions.invoke('connect-sticker-webp-convert',{
+                body:file,headers:{'Content-Type':file.type||'application/octet-stream'}
+              });
+              if(error)throw new Error('Серверная конвертация WebP: '+error.message);
+              // Supabase Functions SDK parses application/octet-stream as Blob;
+              // image/webp is otherwise parsed as text. Trust bytes only after signature check.
+              if(!(data instanceof Blob)||response?.headers.get('x-connect-media-type')!=='image/webp')
+                throw new Error('Сервер не вернул изображение WebP');
+              return new Blob([data],{type:'image/webp'});
+            }
+          '''
+              page=once(page,
+                  '  async function uploadCustomStickers(packId:string,files:File[]){ // CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115',
+                  hook+'  async function uploadCustomStickers(packId:string,files:File[]){ // CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115',
+                  'insert authenticated conversion fallback')
+              page=once(page,
+                  '        const prepared=await prepareStickerFile(file);',
+                  '        const prepared=await prepareStickerFile(file,convertStickerOnServer);',
+                  'uploading custom JPG/PNG stickers')
+              old_favorite='''      let imageBlob: Blob = await prepareStickerFile(new File(
+                  [source.data],m.attachment_name||'sticker.png',
+                  {type:(m.attachment_type||source.data.type||'image/png').toLowerCase()}
+                ));'''
+              new_favorite='''      let imageBlob: Blob = await prepareStickerFile(new File(
+                  [source.data],m.attachment_name||'sticker.png',
+                  {type:(m.attachment_type||source.data.type||'image/png').toLowerCase()}
+                ),convertStickerOnServer);'''
+              page=once(page,old_favorite,new_favorite,'saving iOS keyboard favorites')
+              assert 'CONNECT_PWA_STICKER_SAFARI_WEBP_FALLBACK_FIX3_20261115' in lib
+              assert 'convertStickerOnServer' in page
+              lib_path.write_text(lib,'utf8')
+              page_path.write_text(page,'utf8')
+              print('Patched lib/sticker-webp.ts and app/page.tsx: verified WebP plus secure Safari fallback')
+          CONNECT_STICKER_WEBP_FIX3_PATCH
+          python3 "$RUNNER_TEMP/connect_sticker_webp_fix3.py"
+      - name: Install Node 22 and npm dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies from lockfile
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+      - name: Add automated WebP regression coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > tests/sticker-webp-safari.test.cjs <<'CONNECT_STICKER_WEBP_FIX3_TEST'
+          const {test}=require('node:test');
+          const assert=require('node:assert/strict');
+          const fs=require('node:fs');
+          const ts=require('typescript');
+          const vm=require('node:vm');
+
+          const source=fs.readFileSync('lib/sticker-webp.ts','utf8');
+          const page=fs.readFileSync('app/page.tsx','utf8');
+          const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText;
+          const fakeWebp=Buffer.from('RIFF1234WEBP111');
+          const fakePng=Buffer.from([137,80,78,71,13,10,26,10,33,44,55,66,77]);
+          class BrowserFile extends Blob {constructor(parts,name,opts={}){super(parts,opts);this.name=name;this.lastModified=opts.lastModified||0;}}
+          function setup(mime='image/png',bytes=fakePng){
+            const observed={dimensions:[],fallback:0,revoked:0};
+            class FakeImage {constructor(){this.naturalWidth=1200;this.naturalHeight=600;}
+              set src(_url){queueMicrotask(()=>this.onload?.());}}
+            const canvas={width:0,height:0,
+              getContext:()=>({drawImage:()=>observed.dimensions.push([canvas.width,canvas.height])}),
+              toBlob:callback=>callback(new Blob([bytes],{type:mime}))};
+            const context={exports:{},Blob,File:BrowserFile,Image:FakeImage,
+              URL:{createObjectURL:()=> 'blob:sticker',revokeObjectURL:()=>{observed.revoked++;}},
+              document:{createElement:kind=>{assert.equal(kind,'canvas');return canvas;}}};
+            vm.runInNewContext(compiled,context);
+            return {fn:context.exports.prepareStickerFile,observed};
+          }
+          function sourceJpg(){return new BrowserFile([fakePng],'cat.jpg',{type:'image/jpeg',lastModified:77});}
+
+          test('REGRESSION: Safari returns PNG from canvas.toBlob(image/webp), fallback returns genuine WebP',async()=>{
+            for(const [name,mime] of [['cat.jpg','image/jpeg'],['cat.png','image/png']]){
+              const {fn,observed}=setup('image/png',fakePng);
+              const f=new BrowserFile([fakePng],name,{type:mime,lastModified:77});
+              const answer=await fn(f,async src=>{
+                assert.equal(src,f);observed.fallback++;return new Blob([fakeWebp],{type:'image/webp'});
+              });
+              assert.equal(observed.fallback,1);
+              assert.equal(answer.type,'image/webp');
+              assert.equal(answer.name,'cat.webp');
+              assert.equal(answer.lastModified,77);
+              assert.deepEqual(observed.dimensions,[[512,256]]);
+              assert.equal(observed.revoked,1);
+              assert.deepEqual(Buffer.from(await answer.arrayBuffer()),fakeWebp);
+            }
+          });
+          test('PNG bytes with mislabeled image/webp are never uploaded',async()=>{
+            const {fn}=setup('image/webp',fakePng);
+            let calls=0;
+            const f=sourceJpg();
+            const answer=await fn(f,async()=>{calls++;return new Blob([fakeWebp],{type:'image/webp'});});
+            assert.equal(calls,1);
+            assert.equal(answer.type,'image/webp');
+          });
+          test('server must return actual WebP, not a PNG or 2MB-plus file',async()=>{
+            const {fn}=setup();
+            await assert.rejects(fn(sourceJpg(),async()=>new Blob([fakePng],{type:'image/png'})),/Сервер не вернул корректный WebP/);
+          });
+          test('native WebP succeeds without a network fallback',async()=>{
+            const {fn,observed}=setup('image/webp',fakeWebp);
+            const answer=await fn(sourceJpg(),async()=>{throw Error('Unexpected fallback request');});
+            assert.equal(answer.type,'image/webp');
+            assert.equal(observed.fallback,0);
+          });
+          test('animated GIF and existing WebP remain unchanged',async()=>{
+            const {fn}=setup();
+            for(const [name,type] of [['animation.gif','image/gif'],['image.webp','image/webp']]){
+              const file=new BrowserFile(['data'],name,{type});
+              assert.equal(await fn(file),file);
+            }
+          });
+          test('PWA passes authenticated fallback to both sticker pack and keyboard favorite uploads',()=>{
+            assert(page.includes("supabase.functions.invoke('connect-sticker-webp-convert'"));
+            assert(page.includes("response?.headers.get('x-connect-media-type')!=='image/webp'"));
+            assert(page.includes("new Blob([data],{type:'image/webp'})"));
+            assert(page.includes('prepareStickerFile(file,convertStickerOnServer)'));
+            assert(page.includes('),convertStickerOnServer);'));
+            assert(!page.includes('window.setTimeout(()=>document.getElementById(\'connect-sticker-upload\')'));
+            const program=ts.createSourceFile('page.tsx',page,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+            assert.equal(program.parseDiagnostics.length,0,program.parseDiagnostics.map(x=>x.messageText).join('\n'));
+          });
+          CONNECT_STICKER_WEBP_FIX3_TEST
+          node --test tests/sticker-webp-safari.test.cjs
+          node --test tests/sticker-webp.test.cjs
+      - name: Verify secured Supabase fallback exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 30 -X POST 'https://tpwkmoxxzjfdsqsomhhr.supabase.co/functions/v1/connect-sticker-webp-convert' -H 'Content-Type: application/octet-stream' --data-binary 'unauthenticated-check')"
+          test "$code" = '401' || { echo "Unexpected WebP endpoint status: $code" >&2; exit 1; }
+          echo 'Supabase WebP fallback endpoint is live and refuses anonymous requests'
+      - name: Install Chromium required by existing browser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install playwright-core install --with-deps chromium
+          node - <<'CONNECT_STICKER_CHROMIUM_VERIFY'
+          const fs=require('node:fs');
+          const exe=require('playwright-core').chromium.executablePath();
+          if(!fs.existsSync(exe)) throw Error('Missing Chromium executable: '+exe);
+          console.log('Chromium verified:',exe);
+          CONNECT_STICKER_CHROMIUM_VERIFY
+      - name: Typecheck, regression suite and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Commit verified fix on main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add lib/sticker-webp.ts app/page.tsx tests/sticker-webp-safari.test.cjs
+          if git diff --cached --quiet; then
+            echo 'FIX3 already present; no new commit needed'
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Connect PWA: fallback to server WebP conversion on Safari'
+            git push origin HEAD:main
+          fi
