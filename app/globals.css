@@ -698,3 +698,12 @@
 .connect-custom-grid.is-editing button[aria-pressed="true"]{border-color:var(--accent);background:rgba(90,166,255,.14)}
 .connect-sticker-check{position:absolute;right:2px;top:2px;display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:var(--panel2);border:1px solid var(--border);font-size:13px;color:var(--accent2);line-height:1}
 .connect-custom-grid.is-editing button[aria-pressed="true"] .connect-sticker-check{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+/* CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115
+ * Invisible native input covers its label, so iOS Safari receives a real touch.
+ * display:none/hidden plus delayed .click() can lose the user activation.
+ */
+.connect-sticker-upload-action{display:inline-flex;position:relative;align-items:center;justify-content:center;overflow:hidden;max-width:100%;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.connect-sticker-upload-action.is-busy{opacity:.55;cursor:default;}
+.connect-sticker-upload-input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;cursor:pointer;z-index:1;}
+.connect-sticker-upload-input:focus-visible{opacity:.01;outline:2px solid var(--accent);outline-offset:-3px;}

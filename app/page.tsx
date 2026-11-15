@@ -1058,7 +1058,7 @@ export default function Home() {
   const [inviteEmail,setInviteEmail] = useState('');
   const [inviteLink,setInviteLink] = useState('');
   const [admin,setAdmin] = useState(false);
-  const stickerFileInput=useRef<HTMLInputElement|null>(null);
+  // Sticker input lives inside each pack's label; native iOS picker retains the tap gesture.
 
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1458,13 +1458,14 @@ export default function Home() {
     const {error}=await supabase.from('connect_sticker_packs').insert({name:packName.trim().slice(0,60),emoji:packEmoji.slice(0,8)||'🎨',owner_id:user.id,is_public:packPublic});
     setBusy(false);if(error)setNotice('Не удалось создать набор: '+error.message);else{setPackName('');await loadCustomStickers();setNotice('Набор создан');}
   }
-  async function uploadCustomStickers(files:FileList|null){
-    if(!supabase||!user||!customPack||!files?.length||busy)return;
-    const pack=customPacks.find(p=>p.id===customPack);
+  async function uploadCustomStickers(packId:string,files:File[]){ // CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115
+    if(!supabase||!user||!packId||!files.length||busy)return;
+    const pack=customPacks.find(p=>p.id===packId);
     if(!pack||pack.owner_id!==user.id)return;
     setBusy(true);
+    setNotice('Обрабатываю '+Math.min(files.length,30)+' стикер(ов)…');
     try{
-      for(const file of Array.from(files).slice(0,30)){
+      for(const file of files.slice(0,30)){
         const prepared=await prepareStickerFile(file);
         const ext=prepared.type==='image/gif'?'gif':'webp';
         const path=`${user.id}/${pack.id}/${crypto.randomUUID()}.${ext}`;
@@ -1478,7 +1479,7 @@ export default function Home() {
       }
       await loadCustomStickers();setNotice('Стикеры добавлены. JPG и PNG сохраняются в WebP.');
     }catch(e){setNotice('Не удалось загрузить: '+(e instanceof Error?e.message:'Ошибка'));}
-    finally{setBusy(false);if(stickerFileInput.current)stickerFileInput.current.value='';}
+    finally{setBusy(false);}
   }
   function toggleStickerSelection(id:string){
     setSelectedStickerIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);
@@ -3400,13 +3401,21 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                         onClick={()=>void deleteCustomStickers(customStickers.filter(st=>st.pack_id===p.id&&selectedStickerIds.includes(st.id)))}>
                         Удалить выбранные ({selectedStickerIds.length})
                       </button>}
-                      <button className="settings-action" type="button" disabled={busy} onClick={()=>{
-                        setCustomPack(p.id);setTimeout(()=>document.getElementById('connect-sticker-upload')?.click(),0);
-                      }}>Добавить стикеры</button>
+                      <label className={'settings-action connect-sticker-upload-action'+(busy?' is-busy':'')}>
+                        <span>Добавить стикеры</span>
+                        <input type="file" className="connect-sticker-upload-input"
+                          accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg,.png,.webp,.gif"
+                          multiple disabled={busy} aria-label={'Добавить стикеры в набор '+p.name}
+                          onChange={e=>{
+                            // Snapshot FileList BEFORE clearing the native input: it is a live collection.
+                            const input=e.currentTarget;
+                            const selected=Array.from(input.files||[]);
+                            input.value='';
+                            if(selected.length)void uploadCustomStickers(p.id,selected);
+                          }}/>
+                      </label>
                       <button className="settings-action secondary" type="button" disabled={busy} onClick={()=>void deleteCustomPack(p)}>Удалить набор</button>
-                      {customPack===p.id&&<input id="connect-sticker-upload" type="file"
-                        accept="image/jpeg,image/png,image/webp,image/gif,.jpg,.jpeg" multiple hidden
-                        onChange={e=>void uploadCustomStickers(e.target.files)}/>} 
+                       
                     </div>)}
                     <p className="settings-hint">В чате нажмите ☺ рядом с полем сообщения. Есть избранное и недавно отправленные.</p></>}
                   {settingsPage==='members' && admin && <div className="settings-group data-settings"><strong>Приглашения</strong><p className="settings-hint">Создавайте одноразовые коды для новых участников. Код действует 24 часа.</p><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-invitations'))}>Коды приглашений</button><button type="button" className="settings-action" onClick={()=>window.dispatchEvent(new Event('connect:open-hidden-invitations'))}>Коды для скрытых</button><div style={{marginTop:20}}><ConnectHiddenMembers request={authenticatedRequest} onChanged={()=>void loadDirectory()}/></div></div>}
