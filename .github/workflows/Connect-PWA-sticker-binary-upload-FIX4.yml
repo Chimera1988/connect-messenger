@@ -1,0 +1,317 @@
+name: Connect PWA | Fix iOS sticker binary upload FIX4
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-sticker-binary-fix4-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  sticker-binary:
+    name: Repair iOS binary upload, test and commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Verify expected Connect project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test -s app/page.tsx
+          test -s lib/sticker-webp.ts
+          test -s package-lock.json
+          grep -q CONNECT_PWA_STICKER_SAFARI_WEBP_FALLBACK_FIX3_20261115 lib/sticker-webp.ts
+      - name: Install reliable binary WebP transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > lib/sticker-webp-transport.ts <<'CONNECT_STICKER_FIX4_TRANSPORT'
+          /** CONNECT_PWA_STICKER_BINARY_TRANSPORT_FIX4_20261115
+           * Safari File -> Supabase Functions invoke may result in an empty request body.
+           * Send a copied ArrayBuffer over fetch, then verify the returned WebP signature.
+           * Credentials stay in memory and are supplied only to the authenticated endpoint.
+           */
+          const SOURCE_LIMIT = 12 * 1024 * 1024;
+          const OUTPUT_LIMIT = 2 * 1024 * 1024;
+
+          type StickerConversionSettings = {
+            endpoint: string;
+            accessToken: string;
+            apiKey: string;
+            transport?: typeof fetch;
+          };
+
+          export async function convertStickerWebpOnServer(
+            source: File,
+            settings: StickerConversionSettings
+          ): Promise<Blob> {
+            if (!settings.accessToken || !settings.apiKey) {
+              throw new Error('Войдите в Connect, чтобы добавить стикер');
+            }
+            if (source.size <= 0 || source.size > SOURCE_LIMIT) {
+              throw new Error('Файл пуст или его размер превышает 12 МБ');
+            }
+            // Do not send a File object via functions.invoke(): in the iOS PWA logs,
+            // requests arrived with zero bytes. ArrayBuffer is a standard BodyInit.
+            const payload = await source.arrayBuffer();
+            if (!payload.byteLength || payload.byteLength !== source.size) {
+              throw new Error('Не удалось прочитать файл для отправки');
+            }
+            const send = settings.transport ?? fetch;
+            const response = await send(settings.endpoint, {
+              method: 'POST',
+              headers: {
+                Authorization: 'Bearer ' + settings.accessToken,
+                apikey: settings.apiKey,
+                'Content-Type': 'application/octet-stream',
+              },
+              body: payload,
+            });
+            if (!response.ok) {
+              let details = '';
+              if ((response.headers.get('Content-Type') || '').includes('application/json')) {
+                try {
+                  const json: unknown = await response.json();
+                  if (json && typeof json === 'object' && 'error' in json &&
+                      typeof (json as { error?: unknown }).error === 'string') {
+                    details = (json as { error: string }).error.slice(0, 180);
+                  }
+                } catch { /* Preserve status and avoid assuming an error response format. */ }
+              }
+              throw new Error('Серверная конвертация WebP: HTTP ' + response.status +
+                (details ? ' — ' + details : ''));
+            }
+            if (response.headers.get('X-Connect-Media-Type') !== 'image/webp') {
+              throw new Error('Сервер не указал корректный формат WebP');
+            }
+            const output = await response.arrayBuffer();
+            if (output.byteLength < 12 || output.byteLength > OUTPUT_LIMIT) {
+              throw new Error('Сервер вернул пустой или слишком большой WebP');
+            }
+            const header = new Uint8Array(output, 0, 12);
+            const magic = String.fromCharCode(...header);
+            if (!magic.startsWith('RIFF') || magic.slice(8, 12) !== 'WEBP') {
+              throw new Error('Сервер вернул повреждённый WebP');
+            }
+            return new Blob([output], { type: 'image/webp' });
+          }
+          CONNECT_STICKER_FIX4_TRANSPORT
+          cat > "$RUNNER_TEMP/connect_sticker_fix4_patch.py" <<'CONNECT_STICKER_FIX4_PATCH'
+          #!/usr/bin/env python3
+          """Guarded fix for iOS Safari zero-byte Supabase Edge requests.
+
+          Only patches the exact current FIX3 PWA implementation. Refuse to edit
+          unrecognized versions to avoid overwriting user changes.
+          """
+          from pathlib import Path
+
+          page_path = Path('app/page.tsx')
+          helper_path = Path('lib/sticker-webp-transport.ts')
+          assert page_path.is_file(), 'app/page.tsx not found'
+          assert helper_path.is_file(), 'Transport helper not installed'
+          page = page_path.read_text('utf8')
+          MARK = 'CONNECT_PWA_STICKER_BINARY_TRANSPORT_FIX4_20261115'
+
+          def once(source: str, old: str, new: str, label: str) -> str:
+              count = source.count(old)
+              if count != 1:
+                  raise RuntimeError(f'Source drift in {label}: expected 1 occurrence, got {count}')
+              return source.replace(old, new, 1)
+
+          if MARK in page:
+              assert "supabase.functions.invoke('connect-sticker-webp-convert'" not in page
+              assert 'convertStickerWebpOnServer(' in page
+              print('FIX4 already applied. Source changes not required.')
+          else:
+              assert "CONNECT_PWA_STICKER_SAFARI_WEBP_FALLBACK_FIX3_20261115" in Path('lib/sticker-webp.ts').read_text('utf8')
+              assert 'CONNECT_PWA_STICKER_PICKER_IOS_FIX_20261115' in page
+              page = once(page,
+                  "import { prepareStickerFile } from '../lib/sticker-webp'; // CONNECT_PWA_STICKER_WEBP_EDITOR_20261115",
+                  "import { prepareStickerFile } from '../lib/sticker-webp'; // CONNECT_PWA_STICKER_WEBP_EDITOR_20261115\n"+
+                  "import { convertStickerWebpOnServer } from '../lib/sticker-webp-transport'; // "+MARK,
+                  'transport helper import')
+              old = '''  async function convertStickerOnServer(file:File):Promise<Blob>{
+              if(!supabase)throw new Error('Нет соединения с сервером');
+              const {data,error,response}=await supabase.functions.invoke('connect-sticker-webp-convert',{
+                body:file,headers:{'Content-Type':file.type||'application/octet-stream'}
+              });
+              if(error)throw new Error('Серверная конвертация WebP: '+error.message);
+              // Supabase Functions SDK parses application/octet-stream as Blob;
+              // image/webp is otherwise parsed as text. Trust bytes only after signature check.
+              if(!(data instanceof Blob)||response?.headers.get('x-connect-media-type')!=='image/webp')
+                throw new Error('Сервер не вернул изображение WebP');
+              return new Blob([data],{type:'image/webp'});
+            }'''
+              new = '''  async function convertStickerOnServer(file:File):Promise<Blob>{
+              if(!supabase||!supabaseUrl||!supabaseKey)throw new Error('Нет соединения с сервером');
+              const {data:{session},error}=await supabase.auth.getSession();
+              if(error||!session?.access_token)throw new Error('Войдите в Connect для загрузки стикера');
+              // FIX4 sends the actual File bytes through the existing authenticated proxy.
+              // The previous functions.invoke({body:file}) reached Supabase as 0 bytes on iOS.
+              return convertStickerWebpOnServer(file,{
+                endpoint:supabaseUrl+'/functions/v1/connect-sticker-webp-convert',
+                accessToken:session.access_token,
+                apiKey:supabaseKey,
+                transport:supabaseFetch,
+              });
+            }'''
+              page = once(page,old,new,'Safari Edge Function binary request')
+              assert "supabase.functions.invoke('connect-sticker-webp-convert'" not in page
+              assert "prepareStickerFile(file,convertStickerOnServer)" in page
+              assert "),convertStickerOnServer);" in page
+              page_path.write_text(page,'utf8')
+              print('Patched app/page.tsx: direct authenticated binary fetch, copied ArrayBuffer')
+
+          # FIX3 regression assertions must be updated: their old expectations
+          # codified the exact bug (passing File directly to functions.invoke).
+          test_path = Path('tests/sticker-webp-safari.test.cjs')
+          assert test_path.is_file(), 'Existing Safari regression tests not found'
+          test = test_path.read_text('utf8')
+          old_assertions = '''  assert(page.includes("supabase.functions.invoke('connect-sticker-webp-convert'"));
+            assert(page.includes("response?.headers.get('x-connect-media-type')!=='image/webp'"));
+            assert(page.includes("new Blob([data],{type:'image/webp'})"));'''
+          new_assertions = '''  assert(!page.includes("supabase.functions.invoke('connect-sticker-webp-convert'"));
+            assert(page.includes('convertStickerWebpOnServer(file,{'));
+            assert(page.includes('transport:supabaseFetch,'));'''
+          if old_assertions in test:
+              test = once(test,old_assertions,new_assertions,'obsolete Safari transport assertions')
+              test_path.write_text(test,'utf8')
+              print('Updated stale FIX3 tests to assert nonempty binary transport')
+          else:
+              assert new_assertions in test, 'Unrecognized Safari regression tests; refusing to change'
+              print('Safari transport assertions already up to date')
+          CONNECT_STICKER_FIX4_PATCH
+          python3 "$RUNNER_TEMP/connect_sticker_fix4_patch.py"
+      - name: Configure Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+      - name: Test real request body encoding, auth, HTTP responses and PWA integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > tests/sticker-webp-transport.test.cjs <<'CONNECT_STICKER_FIX4_TEST'
+          // CONNECT_PWA_STICKER_BINARY_TRANSPORT_FIX4_20261115
+          const {test} = require('node:test');
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const vm = require('node:vm');
+          const ts = require('typescript');
+          const root=path.join(__dirname,'..');
+          const code=fs.readFileSync(path.join(root,'lib/sticker-webp-transport.ts'),'utf8');
+          const compiled=ts.transpileModule(code,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+          const sandbox={exports:{},Blob,File,Uint8Array,ArrayBuffer,Response,fetch,console};
+          vm.runInNewContext(compiled,sandbox,{filename:'sticker-webp-transport.js'});
+          const convert=sandbox.exports.convertStickerWebpOnServer;
+          const url='https://project.supabase.co/functions/v1/connect-sticker-webp-convert';
+          const config={endpoint:url,accessToken:'test-session-token',apiKey:'test-publishable',transport:undefined};
+          const goodWebP=Uint8Array.from([82,73,70,70,12,0,0,0,87,69,66,80,86,80,56,76,1,2,3,4]);
+          const file=(name,bytes,mime)=>new File([Uint8Array.from(bytes)],name,{type:mime});
+          function okResponse(){return new Response(goodWebP,{status:200,headers:{'Content-Type':'application/octet-stream','X-Connect-Media-Type':'image/webp'}});}
+          for(const [name,signature,mime] of [
+            ['cat.jpg',[255,216,255,224,0,16,74,70,73,70,0,1,0,0,1],'image/jpeg'],
+            ['cat.png',[137,80,78,71,13,10,26,10,0,0,0,0,73,72,68,82],'image/png']
+          ])test('transmits all binary bytes for '+name+' (never an empty request)',async()=>{
+            const source=file(name,signature,mime);
+            let calls=0;
+            const result=await convert(source,{...config,transport:async(input,options)=>{
+              calls++;
+              assert.equal(input,url);
+              assert.equal(options.method,'POST');
+              assert.equal(options.headers.Authorization,'Bearer test-session-token');
+              assert.equal(options.headers.apikey,'test-publishable');
+              assert.equal(options.headers['Content-Type'],'application/octet-stream');
+              assert.ok(options.body instanceof ArrayBuffer,'A copied ArrayBuffer is required for Safari');
+              assert.equal(options.body.byteLength,source.size,'payload size must equal file size');
+              assert.deepEqual(Buffer.from(options.body),Buffer.from(signature));
+              // Prove browser fetch Request can consume these same exact bytes.
+              const request=new Request(input, options);
+              assert.deepEqual(Buffer.from(await request.arrayBuffer()),Buffer.from(signature));
+              return okResponse();
+            }});
+            assert.equal(calls,1);
+            assert.equal(result.type,'image/webp');
+            assert.deepEqual(Buffer.from(await result.arrayBuffer()),Buffer.from(goodWebP));
+          });
+          test('rejects an empty file before making a network request',async()=>{
+            let called=false;
+            await assert.rejects(convert(new File([],'empty.png',{type:'image/png'}),{...config,transport:async()=>{called=true;return okResponse();}}),/пуст|размер|12 МБ/i);
+            assert.equal(called,false);
+          });
+          test('rejects missing user session instead of silently sending invalid auth',async()=>{
+            await assert.rejects(convert(file('cat.jpg',[255,216,255],'image/jpeg'),{...config,accessToken:''}),/авториз|войдите/i);
+          });
+          test('reports HTTP 413 and a server-provided error rather than generic non-2xx',async()=>{
+            await assert.rejects(convert(file('cat.jpg',[255,216,255],'image/jpeg'),{...config,transport:async()=>new Response(JSON.stringify({error:'Image payload is empty'}),{status:413,headers:{'content-type':'application/json'}})}),/413.*Image payload is empty/);
+          });
+          test('does not accept a renamed fake WebP or a missing media header',async()=>{
+            const badData=new Response(new Blob([new Uint8Array([1,2,3,4,5,6,7,8,9,10,11,12])]),{status:200,headers:{'Content-Type':'application/octet-stream','X-Connect-Media-Type':'image/webp'}});
+            await assert.rejects(convert(file('cat.png',[1,2,3],'image/png'),{...config,transport:async()=>badData}),/WebP/i);
+            await assert.rejects(convert(file('cat.png',[1,2,3],'image/png'),{...config,transport:async()=>new Response(goodWebP,{status:200,headers:{'Content-Type':'application/octet-stream'}})}),/WebP/i);
+          });
+          test('page integrates the binary transport rather than invoking Supabase Functions with File',()=>{
+            const page=fs.readFileSync(path.join(root,'app/page.tsx'),'utf8');
+            assert(page.includes('convertStickerWebpOnServer('),'Page must call verified transport helper');
+            assert(!page.includes("supabase.functions.invoke('connect-sticker-webp-convert'"),'Old zero-byte invoke must not remain');
+            assert(page.includes('prepareStickerFile(file,convertStickerOnServer)'),'Upload fallback still wired');
+            assert(page.includes('),convertStickerOnServer);'),'iOS favorites fallback still wired');
+          });
+          CONNECT_STICKER_FIX4_TEST
+          node --test tests/sticker-webp-transport.test.cjs
+          node --test tests/sticker-webp.test.cjs
+          node --test tests/sticker-webp-safari.test.cjs
+          node - <<'CONNECT_STICKER_FIX4_TSX_PARSE'
+          const fs=require('node:fs'),ts=require('typescript');
+          const source=fs.readFileSync('app/page.tsx','utf8');
+          const ast=ts.createSourceFile('page.tsx',source,ts.ScriptTarget.Latest,true,ts.ScriptKind.TSX);
+          if(ast.parseDiagnostics.length)throw Error(ast.parseDiagnostics.map(d=>d.messageText).join('; '));
+          console.log('TSX parser verified');
+          CONNECT_STICKER_FIX4_TSX_PARSE
+      - name: Install Chromium required by existing browser tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --no-install playwright-core install --with-deps chromium
+          node - <<'CONNECT_STICKER_FIX4_BROWSER_CHECK'
+          const fs=require('node:fs');
+          const executable=require('playwright-core').chromium.executablePath();
+          if(!fs.existsSync(executable))throw Error('Chromium missing: '+executable);
+          console.log('Chromium verified:',executable);
+          CONNECT_STICKER_FIX4_BROWSER_CHECK
+      - name: Typecheck, full tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Commit verified fix to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/page.tsx lib/sticker-webp-transport.ts tests/sticker-webp-transport.test.cjs tests/sticker-webp-safari.test.cjs
+          if git diff --cached --quiet; then
+            echo 'FIX4 already present: no additional commit'
+          else
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git commit -m 'Connect PWA: fix empty iOS sticker image body sent to Edge Function'
+            git push origin HEAD:main
+          fi
