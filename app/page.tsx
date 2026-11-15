@@ -247,7 +247,19 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, sentAt, mine, deliver
   const [buffering,setBuffering] = useState(false);
   const [playSrc,setPlaySrc] = useState(src||'');
   const seeking = useRef(false);
-  useEffect(()=>{setPlaySrc(src||'');setError(false);},[src,path]);
+  useEffect(()=>{
+    let current=true;
+    setPlaySrc(src||'');setError(false);
+    // Resolve a previously warmed IndexedDB copy before the user presses play.
+    // Do not await anything inside the click handler: iOS needs user activation.
+    if(waveOwner&&path){
+      const identity='/storage/v1/object/sign/connect-attachments/'+path;
+      void resolveCachedMedia(identity,waveOwner).then(local=>{
+        if(current&&local.startsWith('blob:')&&(!audioRef.current||(audioRef.current.paused&&audioRef.current.currentTime===0)))setPlaySrc(local);
+      }).catch(()=>{});
+    }
+    return()=>{current=false;};
+  },[src,path,waveOwner]);
   const wavePointer=useRef<{x:number;y:number;started:number}|null>(null);
 
   useEffect(() => {

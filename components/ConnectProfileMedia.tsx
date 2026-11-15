@@ -186,7 +186,7 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
         const count=kind==='photos'?12:kind==='music'?3:2;
         for(const entry of rows.slice(0,count)){
           const url=signed.get(entry.path);
-          if(url)void prefetchProfileFile(url,viewerId,kind);
+          if(url&&kind!=='videos')void prefetchProfileFile(url,viewerId,kind);
           const thumbnail=profileThumbnailPath(entry.path,kind);
           if(thumbnail&&signed.get(thumbnail))void prefetchCachedMedia(signed.get(thumbnail)!,viewerId);
         }

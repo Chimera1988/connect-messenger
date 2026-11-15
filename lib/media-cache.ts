@@ -213,18 +213,23 @@ export function installMediaCache(user: string, refreshUrl?: (source: string) =>
             }
         })();
     };
-    const loaded = (event: Event) => { const el = event.target; if (el instanceof HTMLImageElement && el.getBoundingClientRect().bottom >= 0 && el.getBoundingClientRect().top <= innerHeight)
-        void remember(originals.get(el.src) || el.currentSrc || el.src, user); if (el instanceof HTMLMediaElement && event.type === 'play')
-        void remember(originals.get(el.src) || el.currentSrc || el.src, user); };
+    // CONNECT_PWA_MEDIA_EGRESS_FIX_20261115
+    // Audio/video can use HTTP Range requests while playing. A parallel fetch()
+    // on every play event doubles network egress, particularly for videos.
+    // Keep image caching and bounded, explicit audio/thumbnail prefetch only.
+    const loaded = (event: Event) => {
+        const el = event.target;
+        if (el instanceof HTMLImageElement && el.getBoundingClientRect().bottom >= 0 && el.getBoundingClientRect().top <= innerHeight)
+            void remember(originals.get(el.src) || el.currentSrc || el.src, user);
+    };
     const observer = new MutationObserver(scan);
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
     document.addEventListener('load', loaded, true);
-    document.addEventListener('play', loaded, true);
     document.addEventListener('error', failed, true);
     scan();
     void trimCache().catch(() => { });
     void navigator.storage?.persist?.().catch(() => { });
-    return () => { alive = false; observer.disconnect(); visible.disconnect(); document.removeEventListener('load', loaded, true); document.removeEventListener('play', loaded, true); document.removeEventListener('error', failed, true); if (owner === user)
+    return () => { alive = false; observer.disconnect(); visible.disconnect(); document.removeEventListener('load', loaded, true); document.removeEventListener('error', failed, true); if (owner === user)
         owner = ''; for (const url of objectUrls.values())
         restoreUrl(url); objectUrls.clear(); bindings.clear(); };
 }
@@ -310,6 +315,8 @@ export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'
   if(!id?.startsWith('connect-profile-media/')||!viewer)return;
   const category=mediaCategory(id);
   if((kind==='photos'&&category!=='photos')||(kind==='music'&&category!=='audio')||(kind==='videos'&&category!=='videos'))return;
+  // Video posters are fetched separately; originals stream only on playback.
+  if(kind==='videos')return;
   const connection=(navigator as Navigator&{connection?:{saveData?:boolean;effectiveType?:string}}).connection;
   if(connection?.saveData||connection?.effectiveType==='2g')return;
   const defaultMax=kind==='photos'?8*1024**2:kind==='music'?24*1024**2:16*1024**2;

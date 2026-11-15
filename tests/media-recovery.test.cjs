@@ -55,7 +55,7 @@ for(const browserName of names)test(browserName+': actual image/audio decoding, 
 });
  await page.waitForFunction(()=>avatar.naturalWidth>0&&photo.naturalWidth>0);
  assert.equal(await page.evaluate(()=>avatar.naturalWidth),192);
- await page.evaluate(()=>sound.play());await page.waitForFunction(async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());
+ await page.evaluate(async size=>{await cache.prefetchChatAudio(sound.src,'a',size);await sound.play();},wav.length);await page.waitForFunction(async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());
  await page.evaluate(async()=>{const el=document.createElement('audio');el.id='cachedSound';el.preload='auto';el.src=await cache.resolveCachedMedia(sound.src);fixtures.append(el);});
  await page.waitForFunction(()=>Number.isFinite(cachedSound.duration));assert.equal(await page.evaluate(()=>cachedSound.duration),1);
  await page.reload({waitUntil:'domcontentloaded'});

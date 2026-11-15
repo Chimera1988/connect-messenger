@@ -107,7 +107,8 @@ export async function warmPeerProfileLibraries(
         }
         if(!allowBytes)return;
         const cap=budget[kind];
-        const selected=rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);
+        // The gallery index is warmed, but video bytes stay on-demand.
+        const selected=kind==='videos'?[]:rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);
         if(!selected.length)return;
         const result=await client.storage.from('connect-profile-media').createSignedUrls(selected.map(x=>x.path),3600);
         if(result.error)return;
