@@ -1,0 +1,283 @@
+name: Connect PWA | Media egress optimization and verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-media-egress-main
+  cancel-in-progress: false
+
+jobs:
+  optimize-pwa:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Checkout latest PWA main only
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Guard correct repository and sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          for file in AGENTS.md app/page.tsx lib/media-cache.ts lib/profile-media-index.ts components/ConnectProfileMedia.tsx tests/media-recovery.test.cjs tests/cache-browser.test.cjs package.json package-lock.json; do test -s "$file" || { echo "Missing $file"; exit 1; }; done
+          git status --porcelain
+
+      - name: Setup Node 22 and npm lockfile
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Install matching Chromium for Playwright 1.58.2
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Verify Chromium actually exists
+        run: node -e "const fs=require('fs');const p=require('playwright-core').chromium.executablePath();if(!fs.existsSync(p))process.exit(1)"
+
+      - name: Create focused real-browser egress regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          if test -f tests/pwa-media-egress.test.cjs; then
+            grep -q 'CONNECT_PWA_MEDIA_EGRESS_TEST_20261115' tests/pwa-media-egress.test.cjs || { echo 'SOURCE_DRIFT: existing test path is occupied'; exit 1; }
+          else
+            cat > tests/pwa-media-egress.test.cjs <<'JS_TEST'
+            // CONNECT_PWA_MEDIA_EGRESS_TEST_20261115
+            const test=require('node:test');
+            const assert=require('node:assert/strict');
+            const fs=require('node:fs');
+            const http=require('node:http');
+            const path=require('node:path');
+            const ts=require('typescript');
+            const {chromium}=require(process.env.CONNECT_PLAYWRIGHT_MODULE||'playwright-core');
+
+            const source=fs.readFileSync(path.join(__dirname,'../lib/media-cache.ts'),'utf8');
+            const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+
+            test('streaming audio and video never trigger parallel original downloads; explicit small audio warmup is deduplicated',{timeout:45000},async()=>{
+              const hits=[];
+              const media=Buffer.alloc(128,0);
+              const server=http.createServer((req,res)=>{
+                if(req.url.startsWith('/storage/v1/object/sign/')){
+                  hits.push({url:req.url,range:req.headers.range||''});
+                  const type=req.url.includes('.m4a')?'audio/mp4':'video/mp4';
+                  res.writeHead(200,{'content-type':type,'content-length':media.length,'cache-control':'no-store','accept-ranges':'bytes'});
+                  res.end(media);return;
+                }
+                res.writeHead(200,{'content-type':'text/html'});
+                res.end('<!doctype html><body><div id="root"></div><script>var exports={};'+compiled+';window.cache=exports;window.release=cache.installMediaCache("viewer-1");</script></body>');
+              });
+              await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+              let browser;
+              try{
+                browser=await chromium.launch({executablePath:process.env.CONNECT_CHROMIUM_PATH||undefined,args:['--no-sandbox']});
+                const page=await browser.newPage();
+                const origin='http://127.0.0.1:'+server.address().port;
+                await page.goto(origin);
+                await page.evaluate(()=>{
+                  for(const [tag,filename] of [['audio','autoplay.m4a'],['video','autoplay.mp4']]){
+                    const element=document.createElement(tag);
+                    element.preload='none';
+                    element.src='/storage/v1/object/sign/connect-attachments/'+filename;
+                    document.body.append(element);
+                  }
+                });
+                await page.waitForTimeout(100);
+                const streamHits=()=>hits.filter(item=>/\/autoplay\.(?:m4a|mp4)/.test(item.url)&&!item.range).length;
+                const before=streamHits();
+                await page.evaluate(()=>{
+                  for(const el of document.querySelectorAll('audio,video'))el.dispatchEvent(new Event('play'));
+                });
+                await page.waitForTimeout(550);
+                assert.equal(streamHits()-before,0,'PLAYBACK_PREFETCH_DUPLICATION: play generated an extra full-object GET');
+
+                const profile='/storage/v1/object/sign/connect-profile-media/user/videos/preview.mp4';
+                const videoBefore=hits.filter(x=>x.url.startsWith(profile)).length;
+                await page.evaluate(url=>cache.prefetchProfileFile(url,'viewer-1','videos',4*1024*1024),origin+profile);
+                assert.equal(hits.filter(x=>x.url.startsWith(profile)).length,videoBefore,'BACKGROUND_VIDEO_DOWNLOAD: video warmup fetched the full original');
+
+                const voice='/storage/v1/object/sign/connect-attachments/manual.m4a';
+                await page.evaluate(url=>Promise.all([
+                  cache.prefetchChatAudio(url,'viewer-1',128),
+                  cache.prefetchChatAudio(url,'viewer-1',128),
+                ]),origin+voice);
+                assert.equal(hits.filter(x=>x.url.startsWith(voice)).length,1,'Small audio warmup must fetch each unique file once');
+                assert.match(await page.evaluate(url=>cache.resolveCachedMedia(url,'viewer-1'),origin+voice),/^blob:/);
+                await page.close();
+              }finally{
+                if(browser)await browser.close();
+                await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+              }
+            });
+          JS_TEST
+          fi
+
+      - name: RED stage - prove regression exists before modifying source
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -q 'CONNECT_PWA_MEDIA_EGRESS_FIX_20261115' lib/media-cache.ts; then
+            echo 'Patch marker exists: RED stage not applicable to idempotent rerun'
+          elif node --test tests/pwa-media-egress.test.cjs > /tmp/connect-media-egress-red.log 2>&1; then
+            cat /tmp/connect-media-egress-red.log
+            echo 'RED stage unexpected pass: inspect source drift' >&2
+            exit 1
+          elif ! grep -q PLAYBACK_PREFETCH_DUPLICATION /tmp/connect-media-egress-red.log; then
+            cat /tmp/connect-media-egress-red.log
+            echo 'RED stage failed for a reason other than the expected regression' >&2
+            exit 1
+          else
+            echo 'RED verified: play causes an extra GET in old source'
+          fi
+
+      - name: Apply guarded PWA-only source and test updates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_PATCH'
+          from pathlib import Path
+
+          MARKER='CONNECT_PWA_MEDIA_EGRESS_FIX_20261115'
+
+          def edit(path, edits):
+              file=Path(path)
+              if not file.is_file():
+                  raise RuntimeError('SOURCE_DRIFT missing file: '+path)
+              text=file.read_text(encoding='utf-8')
+              for description, old, new in edits:
+                  count=text.count(old)
+                  if count == 1:
+                      text=text.replace(old,new,1)
+                  elif count == 0 and new in text:
+                      # Idempotent execution: accept the exact desired fragment only.
+                      continue
+                  else:
+                      raise RuntimeError(f'SOURCE_DRIFT {path} {description}: old={count} new={text.count(new)}')
+              if file.read_text(encoding='utf-8')!=text:
+                  file.write_text(text,encoding='utf-8')
+                  print('Updated:',path)
+              else:
+                  print('Already correct:',path)
+
+          edit('lib/media-cache.ts',[
+           ('Do not start duplicate full-file fetch on media play',
+            """    const loaded = (event: Event) => { const el = event.target; if (el instanceof HTMLImageElement && el.getBoundingClientRect().bottom >= 0 && el.getBoundingClientRect().top <= innerHeight)
+                  void remember(originals.get(el.src) || el.currentSrc || el.src, user); if (el instanceof HTMLMediaElement && event.type === 'play')
+                  void remember(originals.get(el.src) || el.currentSrc || el.src, user); };""",
+            """    // CONNECT_PWA_MEDIA_EGRESS_FIX_20261115
+              // Audio/video can use HTTP Range requests while playing. A parallel fetch()
+              // on every play event doubles network egress, particularly for videos.
+              // Keep image caching and bounded, explicit audio/thumbnail prefetch only.
+              const loaded = (event: Event) => {
+                  const el = event.target;
+                  if (el instanceof HTMLImageElement && el.getBoundingClientRect().bottom >= 0 && el.getBoundingClientRect().top <= innerHeight)
+                      void remember(originals.get(el.src) || el.currentSrc || el.src, user);
+              };"""),
+           ('No media play event listener',"    document.addEventListener('play', loaded, true);\n",''),
+           ('No media play event teardown',"document.removeEventListener('play', loaded, true); ",''),
+           ('Never prefetch full video originals in the background',
+            """  if((kind==='photos'&&category!=='photos')||(kind==='music'&&category!=='audio')||(kind==='videos'&&category!=='videos'))return;
+            const connection=""",
+            """  if((kind==='photos'&&category!=='photos')||(kind==='music'&&category!=='audio')||(kind==='videos'&&category!=='videos'))return;
+            // Video posters are fetched separately; originals stream only on playback.
+            if(kind==='videos')return;
+            const connection="""),
+          ])
+          edit('app/page.tsx',[
+           ('Prime pre-existing audio blobs without awaiting inside a click gesture',
+            """  useEffect(()=>{setPlaySrc(src||'');setError(false);},[src,path]);""",
+            """  useEffect(()=>{
+              let current=true;
+              setPlaySrc(src||'');setError(false);
+              // Resolve a previously warmed IndexedDB copy before the user presses play.
+              // Do not await anything inside the click handler: iOS needs user activation.
+              if(waveOwner&&path){
+                const identity='/storage/v1/object/sign/connect-attachments/'+path;
+                void resolveCachedMedia(identity,waveOwner).then(local=>{
+                  if(current&&local.startsWith('blob:')&&(!audioRef.current||(audioRef.current.paused&&audioRef.current.currentTime===0)))setPlaySrc(local);
+                }).catch(()=>{});
+              }
+              return()=>{current=false;};
+            },[src,path,waveOwner]);"""),
+          ])
+          edit('components/ConnectProfileMedia.tsx',[
+           ('Warm video posters only, not original videos',
+            """          if(url)void prefetchProfileFile(url,viewerId,kind);""",
+            """          if(url&&kind!=='videos')void prefetchProfileFile(url,viewerId,kind);"""),
+          ])
+          edit('lib/profile-media-index.ts',[
+           ('Skip background signing of full peer video originals',
+            """        const selected=rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);""",
+            """        // The gallery index is warmed, but video bytes stay on-demand.
+                  const selected=kind==='videos'?[]:rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);"""),
+          ])
+          edit('tests/media-recovery.test.cjs',[
+           ('Existing decoding test explicitly warms short audio instead of forcing duplicate play fetch',
+            """ await page.evaluate(()=>sound.play());await page.waitForFunction(async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());""",
+            """ await page.evaluate(async size=>{await cache.prefetchChatAudio(sound.src,'a',size);await sound.play();},wav.length);await page.waitForFunction(async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());"""),
+          ])
+          edit('package.json',[
+           ('Run the new real browser egress regression inside the existing full test suite',
+            'node tests/cache-browser.test.cjs && node tests/media-recovery.test.cjs',
+            'node tests/cache-browser.test.cjs && node tests/pwa-media-egress.test.cjs && node tests/media-recovery.test.cjs'),
+          ])
+
+          cache=Path('lib/media-cache.ts').read_text(encoding='utf-8')
+          assert cache.count(MARKER)==1
+          assert "document.addEventListener('play', loaded, true)" not in cache
+          assert "if(kind==='videos')return" in cache
+          assert "node tests/pwa-media-egress.test.cjs" in Path('package.json').read_text(encoding='utf-8')
+          print('PWA-only egress patch verified against guarded source anchors')
+          PY_PATCH
+
+      - name: GREEN stage - verify network requests, audio and video policies
+        run: node --test tests/pwa-media-egress.test.cjs
+
+      - name: Check whitespace and TypeScript
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          npm run typecheck
+
+      - name: Full existing PWA regression suite
+        run: npm test
+
+      - name: Production build
+        run: npm run build
+
+      - name: Verify remote main did not change during tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || { echo 'Main changed: refusing to push stale code' >&2; exit 1; }
+          git diff --stat
+          git status --short
+
+      - name: Commit only verified PWA changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add app/page.tsx lib/media-cache.ts lib/profile-media-index.ts components/ConnectProfileMedia.tsx tests/media-recovery.test.cjs tests/pwa-media-egress.test.cjs package.json
+          if git diff --cached --quiet; then
+            echo 'Already applied; nothing to commit'
+            exit 0
+          fi
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'PWA: prevent duplicate media fetches and background video egress'
+          git push origin HEAD:main
