@@ -1,3 +1,4 @@
+// CONNECT_PWA_UNIFIED_MEDIA_QUALITY_20261115
 /** CONNECT_PWA_SAFE_MEDIA_OPTIMIZATION_V1_20261115
  * Best-effort, local and bounded. The original File is never mutated.
  * No encoding occurs in the native Android wrapper.
@@ -8,7 +9,7 @@ const KB = 1024;
 const MB = 1024 * KB;
 const IMAGE_MIN = 700 * KB;
 const WAV_MIN = 1024 * KB;
-const VIDEO_MIN = 12 * MB;
+const VIDEO_MIN = 4 * MB;
 const MAX_UPLOAD = 100 * MB;
 const MAX_CANVAS_SIDE = 2048;
 const WAV_MAX = 24 * MB;
@@ -62,10 +63,10 @@ async function optimizeImage(original: File): Promise<File> {
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     // WebP preserves PNG transparency, while JPEG remains widely compatible.
-    const mime = original.type === 'image/jpeg' ? 'image/jpeg' : 'image/webp';
-    const blob = await bounded(toBlob(canvas, mime, mime === 'image/jpeg' ? .83 : .82), 12000);
+    const mime = 'image/webp';
+    const blob = await bounded(toBlob(canvas, mime, .86), 12000);
     if (!blob || blob.type !== mime || !useful(blob, original)) return original;
-    return new File([blob], mediaFilename(original.name, mime === 'image/jpeg' ? 'jpg' : 'webp'), {type:mime,lastModified:original.lastModified});
+    return new File([blob], mediaFilename(original.name, 'webp'), {type:mime,lastModified:original.lastModified});
   } finally { URL.revokeObjectURL(url); }
 }
 
@@ -160,7 +161,7 @@ async function optimizeVideo(original: File, onProgress?: (fraction:number)=>voi
     await waitMetadata(video);
     const duration=video.duration;
     if (!Number.isFinite(duration) || duration<1 || duration>VIDEO_MAX_SECONDS || !video.videoWidth || !video.videoHeight) return original;
-    const scale=Math.min(1,1280/video.videoWidth,720/video.videoHeight);
+    const scale=Math.min(1,1600/Math.max(video.videoWidth,video.videoHeight));
     const canvas=document.createElement('canvas');
     canvas.width=Math.max(2,2*Math.floor(video.videoWidth*scale/2));
     canvas.height=Math.max(2,2*Math.floor(video.videoHeight*scale/2));
@@ -181,7 +182,8 @@ async function optimizeVideo(original: File, onProgress?: (fraction:number)=>voi
     const expectedSize=duration*(1_100_000+96_000)/8;
     if(expectedSize>=original.size*.86)return original;
     const chunks:Blob[]=[];
-    recorder=new MediaRecorder(media,{mimeType:mime,videoBitsPerSecond:1_100_000,audioBitsPerSecond:96_000});
+    const targetBitrate=Math.round(Math.min(3_200_000,Math.max(900_000,2_600_000*Math.pow((canvas.width*canvas.height)/(1600*900),.7))));
+    recorder=new MediaRecorder(media,{mimeType:mime,videoBitsPerSecond:targetBitrate,audioBitsPerSecond:96_000});
     const rec=recorder;
     const finished=new Promise<Blob>((resolve,reject)=>{
       const stop=()=>resolve(new Blob(chunks,{type:'video/mp4'}));

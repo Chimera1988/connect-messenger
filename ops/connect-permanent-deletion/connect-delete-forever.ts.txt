@@ -1,0 +1,107 @@
+import { createClient } from 'npm:@supabase/supabase-js@2.57.0';
+
+/** Connect server-only deletion. No message content is returned or logged.
+ * Real message rows are physically deleted, while ID-only tombstones remain
+ * to prevent old device caches from resurrecting the message.
+ */
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const respond = (value: Record<string, unknown>, status = 200) =>
+  new Response(JSON.stringify(value), {status, headers:{...CORS,'Content-Type':'application/json'}});
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return new Response(null, {status:204,headers:CORS});
+  if (req.method !== 'POST') return respond({error:'Method not allowed'},405);
+  const url=Deno.env.get('SUPABASE_URL');
+  const anon=Deno.env.get('SUPABASE_ANON_KEY');
+  const secret=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !anon || !secret) return respond({error:'Backend not configured'},503);
+  const bearer=/^Bearer\s+(.+)$/i.exec(req.headers.get('Authorization')??'')?.[1];
+  if (!bearer) return respond({error:'Unauthorized'},401);
+  const auth=createClient(url,anon,{auth:{persistSession:false,autoRefreshToken:false}});
+  const {data:identity,error:authError}=await auth.auth.getUser(bearer);
+  const userId=identity.user?.id;
+  if (authError || !userId) return respond({error:'Unauthorized'},401);
+  let payload:{message_id?:unknown;cleanup_pending?:unknown};
+  try {payload=await req.json();} catch {return respond({error:'Invalid JSON'},400);}
+  if (!payload || typeof payload!=='object') return respond({error:'Invalid body'},400);
+  const drain=payload.cleanup_pending===true;
+  const messageId=payload.message_id;
+  if (!drain && (typeof messageId!=='string' || !UUID.test(messageId))) return respond({error:'Invalid message ID'},400);
+  const db=createClient(url,secret,{auth:{persistSession:false,autoRefreshToken:false}});
+  try {
+    let removedNow=false;
+    if (!drain && typeof messageId==='string') {
+      const {data:row,error:readError}=await db.from('messages').select('id,sender_id').eq('id',messageId).maybeSingle();
+      if (readError) throw readError;
+      if (row) {
+        if (row.sender_id!==userId) return respond({error:'Forbidden'},403);
+        // Existing AFTER DELETE trigger writes the ID-only tombstone. The new
+        // AFTER DELETE trigger atomically queues only owned attachment paths.
+        const {data:deleted,error:deleteError}=await db.from('messages')
+          .delete().eq('id',messageId).eq('sender_id',userId).select('id');
+        if (deleteError) throw deleteError;
+        removedNow=Array.isArray(deleted)&&deleted.length===1;
+      }
+    }
+    let query=db.from('connect_media_deletion_jobs')
+      .select('message_id,path,conversation_id,sender_id').eq('sender_id',userId)
+      .order('queued_at',{ascending:true}).limit(100);
+    if (!drain && typeof messageId==='string') query=query.eq('message_id',messageId);
+    const {data:jobs,error:queueError}=await query;
+    if (queueError) throw queueError;
+    if (!drain && !removedNow && !(jobs?.length)) return respond({deleted:false,error:'Message not found'},404);
+
+    const referenced=async(path:string):Promise<boolean>=>{
+      // Protect real links in ALL chats, including album JSON embedded in body.
+      const direct=await db.from('messages').select('id').eq('attachment_path',path).is('deleted_at',null).limit(1);
+      if (direct.error) throw direct.error;
+      if (direct.data?.length) return true;
+      const escaped=path.replace(/[\\%_]/g,(char:string)=>'\\'+char);
+      const album=await db.from('messages').select('id').ilike('body','%'+escaped+'%').is('deleted_at',null).limit(1);
+      if (album.error) throw album.error;
+      if (album.data?.length) return true;
+      const avatar=await db.from('profiles').select('id').eq('avatar_path',path).limit(1);
+      if (avatar.error) throw avatar.error;
+      if (avatar.data?.length) return true;
+      const sticker=await db.from('connect_stickers').select('id').eq('storage_path',path).limit(1);
+      if (sticker.error) throw sticker.error;
+      return Boolean(sticker.data?.length);
+    };
+    let deletedFiles=0,pendingFiles=0;
+    for (const job of jobs??[]) {
+      const path=job.path;
+      // No arbitrary delete: path must have belonged to the sender and chat
+      // when its message was deleted. Queue entries come only from DB triggers.
+      if(typeof path!=='string' || path.length>900 ||
+         !path.startsWith(`${job.conversation_id}/${userId}/`)){
+        pendingFiles++;continue;
+      }
+      try {
+        if (await referenced(path)) {pendingFiles++;continue;}
+        const paths=[path];
+        for (const sibling of [path+'__thumb.webp',path+'__poster.jpg']) {
+          if (!(await referenced(sibling))) paths.push(sibling);
+        }
+        const {error:storageError}=await db.storage.from('connect-attachments').remove(paths);
+        if (storageError) throw storageError;
+        const {error:dequeueError}=await db.from('connect_media_deletion_jobs')
+          .delete().eq('message_id',job.message_id).eq('path',path).eq('sender_id',userId);
+        if (dequeueError) throw dequeueError;
+        deletedFiles++;
+      } catch(e) {
+        // Durable jobs remain in the table and retry on future app sessions.
+        console.error('Connect media GC pending:',e instanceof Error?e.name:'error');
+        pendingFiles++;
+      }
+    }
+    return respond({deleted:!drain || removedNow,deleted_files:deletedFiles,pending_files:pendingFiles});
+  }catch(e){
+    console.error('Connect hard-delete unavailable:',e instanceof Error?e.name:'error');
+    return respond({error:'Server deletion unavailable; retry'},503);
+  }
+});

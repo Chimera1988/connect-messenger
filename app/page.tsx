@@ -2137,6 +2137,11 @@ export default function Home() {
   useEffect(()=>{
     if(!user)return;for(const m of messages)if(!serverDeleted.current.has(m.id)&&!m.deleted_at)void linkMessageMedia(user.id,m.id,[...(m.attachment_path?[m.attachment_path]:[]),...parseAlbum(m.body).map(x=>x.path)]).catch(()=>{});
   },[messages,user?.id]);
+  // Retried private storage cleanups contain only object paths, never message text.
+  useEffect(()=>{
+    if(!supabase||!user)return;
+    void supabase.functions.invoke('connect-delete-forever',{body:{cleanup_pending:true}}).catch(()=>{});
+  },[user?.id]);
   useEffect(()=>{
     if(!supabase||!user)return;let active=true,running=false;
     const key='connect-deletion-cursor:'+user.id;
@@ -2242,12 +2247,22 @@ export default function Home() {
       setNotice('Не удалось переслать: ' + (error instanceof Error ? error.message : String(error)));
     } finally { setBusy(false); }
   }
+  // CONNECT_PWA_HARD_DELETE_UNIFIED_QUALITY_20261115
   async function eraseMessage(m:Message){
-    if(!supabase)return {error:{message:'Нет соединения'}};
-    let result=await supabase.rpc('connect_delete_message',{p_message_id:m.id});
-    if(result.error?.code==='PGRST202')result=await supabase.from('messages').update({deleted_at:new Date().toISOString(),body:'',attachment_path:null,attachment_name:null,attachment_type:null,attachment_size:null,attachment_kind:null}).eq('id',m.id).eq('sender_id',user!.id) as typeof result;
-    if(!result.error){await dropCachedMessage(user!.id,m.conversation_id,m.id).catch(()=>{});for(const path of [m.attachment_path,...parseAlbum(m.body).map(x=>x.path)])if(path)await clearCachedMedia('temporary','connect-attachments/'+path);}
-    return result;
+    if(!supabase||!user)return {error:new Error('Нет соединения')};
+    // The server verifies the sender, physically deletes the message row,
+    // writes a content-free tombstone, and removes unreferenced media.
+    // No fallback to a soft-delete: do not claim success if the server fails.
+    const {data,error}=await supabase.functions.invoke<{deleted:boolean;pending_files?:number}>(
+      'connect-delete-forever',{body:{message_id:m.id}}
+    );
+    if(error||!data?.deleted)return {error:error||new Error('Удаление не подтверждено сервером')};
+    await dropCachedMessage(user.id,m.conversation_id,m.id).catch(()=>{});
+    for(const path of [m.attachment_path,...parseAlbum(m.body).map(x=>x.path)]){
+      if(path)await clearCachedMedia('temporary','connect-attachments/'+path);
+    }
+    if((data.pending_files||0)>0)setNotice('Сообщение удалено. Вложение ожидает очистки на сервере.');
+    return {error:null};
   }
   async function removeForEveryone(ids:string[]){if(!supabase||!user||busy)return;const own=visibleMessages.filter(m=>ids.includes(m.id)&&m.sender_id===user.id);if(!own.length){setNotice('Можно удалить у всех только свои сообщения');return;}if(!window.confirm('Удалить '+own.length+' сообщ. у обоих участников?'))return;setBusy(true);let failed='';for(const m of own){const r=await eraseMessage(m);if(r.error){failed=r.error.message;break;}}setBusy(false);if(failed)setNotice('Не удалось удалить: '+failed);else{setMessages(prev=>prev.filter(m=>!own.some(x=>x.id===m.id)));setSelectedIds([]);setSelectionMode(false);setMenuMessage(null);}}
   function selectOne(id:string){setSelectedIds(prev=>prev.includes(id)?prev.filter(x=>x!==id):[...prev,id]);}
