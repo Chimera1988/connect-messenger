@@ -181,9 +181,10 @@ export function installMediaCache(user: string, refreshUrl?: (source: string) =>
                         binding.current = local;
                         el.src = local;
                     }
-                    if (alive && bindings.get(el) === binding && el instanceof HTMLImageElement && el.complete && !el.naturalWidth) {
-                        el.dispatchEvent(new Event('error'));
-                    }
+                    // CONNECT_PWA_MEDIA_CACHE_NATIVE_IMAGE_ERRORS_FIX3_20261115
+                    // A new blob: src may be complete with zero naturalWidth while
+                    // decode is pending. Wait for the browser's native error event;
+                    // synthesizing one here evicts a valid persistent cache entry.
                 });
             }
             if (el instanceof HTMLImageElement) visible.observe(el);
@@ -335,4 +336,23 @@ export async function storeGeneratedChatPoster(viewer:string,path:string,image:B
     });
     return await resolveCachedMedia('/storage/v1/object/sign/'+identity,viewer);
   }catch{return null;}
+}
+
+/** CONNECT_PWA_CHAT_STICKER_CACHE_V1_20261115
+ * Cache WebP by its stable authenticated Storage path, not signed URL tokens.
+ */
+export async function prefetchStickerWebp(url:string,user:string):Promise<void>{
+  const id=mediaIdentity(url);
+  if(!url||!user||!id?.startsWith('connect-stickers/'))return;
+  await remember(url,user,2*1024*1024,false);
+}
+
+/** CONNECT_PWA_CHAT_AUDIO_LAZY_CACHE_V1_20261115
+ * Warm a couple of small voice messages without blocking chat rendering.
+ * Persist by stable storage path, not by expiring signed URL.
+ */
+export async function prefetchChatAudio(url:string,user:string,declaredSize:number):Promise<void>{
+  const id=mediaIdentity(url);
+  if(!url||!user||!id?.startsWith('connect-attachments/')||!declaredSize||declaredSize>1024*1024)return;
+  await remember(url,user,1024*1024,false);
 }

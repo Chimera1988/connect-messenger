@@ -8,7 +8,7 @@ import RecordingBar from '../components/ConnectRecordingBar';
 import CacheSettings from '../components/ConnectCacheSettings';
 import {mediaIdentity, mediaCacheOwner, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia, storeGeneratedChatPoster} from '../lib/media-cache';
 import {readChatWave, rememberChatWave, prewarmChatWave, getHotChatPoster, rememberChatPoster, forgetUserChatPresentation, isNativeMediaRuntime} from '../lib/chat-media-presentation';
-import { prefetchCachedMedia } from '../lib/media-cache';
+import { prefetchCachedMedia, prefetchChatAudio, prefetchStickerWebp } from '../lib/media-cache'; // CONNECT_PWA_CHAT_SPEED_STICKER_VOICE_V1_20261115
 import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
 import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
 import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
@@ -242,60 +242,50 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, sentAt, mine, deliver
   const [position, setPosition] = useState(0);
   const [bars, setBars] = useState<number[]>(()=>savedWave?.bars||Array(43).fill(0.28));
   const [error, setError] = useState(false);
+  const [buffering,setBuffering] = useState(false);
+  const [playSrc,setPlaySrc] = useState(src||'');
   const seeking = useRef(false);
+  useEffect(()=>{setPlaySrc(src||'');setError(false);},[src,path]);
   const wavePointer=useRef<{x:number;y:number;started:number}|null>(null);
 
   useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-    let context: AudioContext | null = null;
-    const cached = isNativeMediaRuntime()?voiceWaveformCache.get(src):readChatWave(waveOwner,path);
-    if (cached) { setBars(cached.bars); setDuration(cached.duration); return; }
-    // Decode only near the viewport. A long chat must not download and decode
-    // every recording at once just to render the first screen.
-    const decode = async () => {
-      try {
-        const response = await fetch(src, { signal: controller.signal });
-        if (!response.ok) throw new Error('Audio unavailable');
-        const bytes = await response.arrayBuffer();
-        if (cancelled) return;
-        context = new AudioContext();
-        const decoded = await context.decodeAudioData(bytes);
-        if (cancelled) return;
-        const samples = decoded.getChannelData(0);
-        const count = 43;
-        const result = Array.from({ length: count }, (_, i) => {
-          const start = Math.floor(i * samples.length / count);
-          const end = Math.max(start + 1, Math.floor((i + 1) * samples.length / count));
-          const stride = Math.max(1, Math.floor((end - start) / 140));
-          let peak = 0;
-          for (let j = start; j < end; j += stride) peak = Math.max(peak, Math.abs(samples[j] || 0));
-          return peak;
-        });
-        const max = Math.max(0.001, ...result);
-        const waveform = result.map(value => Math.max(0.14, Math.min(1, Math.pow(value / max, 0.72))));
-        if(isNativeMediaRuntime()){voiceWaveformCache.set(src,{bars:waveform,duration:decoded.duration});if(voiceWaveformCache.size>100)voiceWaveformCache.delete(voiceWaveformCache.keys().next().value!); }
-        else rememberChatWave(waveOwner,path,{bars:waveform,duration:decoded.duration});
-        setBars(waveform); setDuration(current => current || decoded.duration);
-      } catch { /* Browser may reject decoding; playback remains available. */ }
-      finally { if (context) void context.close().catch(() => {}); }
-    };
-    const observer = new IntersectionObserver(entries => {
-      if (entries.some(entry => entry.isIntersecting)) { observer.disconnect(); void decode(); }
-    }, {root:audioRef.current?.closest('.message-scroll'),rootMargin:'120px'});
-    if (audioRef.current?.parentElement) observer.observe(audioRef.current.parentElement);
-    return () => { cancelled = true; observer.disconnect(); controller.abort(); if (context) void context.close().catch(() => {}); };
-  }, [src,path,waveOwner]);
+    const cached = isNativeMediaRuntime()?voiceWaveformCache.get(path):readChatWave(waveOwner,path);
+    if (cached) { setBars(cached.bars); setDuration(cached.duration); }
+    else { setBars(Array(43).fill(0.28)); setDuration(0); }
+    // Never fetch or decode an audio file during initial chat render.
+    // Decoding 80 recordings at once blocked the very first play and text send.
+  }, [path,waveOwner]);
 
   async function toggle() {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (!audio.paused) { audio.pause(); return; }
-    // Only one voice message should play at a time.
-    document.querySelectorAll<HTMLAudioElement>('audio[data-connect-voice]').forEach(other => {
-      if (other !== audio) other.pause();
+    const audio=audioRef.current;
+    if(!audio||buffering)return;
+    if(!audio.paused){audio.pause();return;}
+    document.querySelectorAll<HTMLAudioElement>('audio[data-connect-voice]').forEach(other=>{
+      if(other!==audio)other.pause();
     });
-    try { setError(false); await audio.play(); } catch { setError(true); }
+    setError(false);
+    setBuffering(true);
+    try {
+      const identity='/storage/v1/object/sign/connect-attachments/'+path;
+      let current=playSrc||src||'';
+      if(!current){
+        const cached=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
+        current=cached.startsWith('blob:')?cached:(await refreshMediaUrl(identity)||'');
+        if(!current)throw new Error('Voice message URL is not ready');
+        audio.src=current;setPlaySrc(current);
+      }
+      try {
+        // For normal, already-signed files play() runs in the user click gesture.
+        await audio.play();
+      } catch(firstError) {
+        if(!navigator.onLine||audio.error?.code===3||audio.error?.code===4)throw firstError;
+        const renewed=await refreshMediaUrl(identity);
+        if(!renewed||renewed===current)throw firstError;
+        audio.src=renewed;setPlaySrc(renewed);audio.load();
+        await audio.play();
+      }
+    } catch {setError(true);}
+    finally {setBuffering(false);}
   }
   function seek(e: React.PointerEvent<HTMLDivElement>) {
     const audio = audioRef.current;
@@ -307,13 +297,13 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, sentAt, mine, deliver
   }
   const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
   return <div className="voice-player">
-    <audio ref={audioRef} data-connect-voice src={src} preload="metadata"
+    <audio ref={audioRef} data-connect-voice src={playSrc||undefined} preload="none"
       onLoadedMetadata={e => { setError(false); const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
       onDurationChange={e => { const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
       onTimeUpdate={e => setPosition(e.currentTarget.currentTime)}
-      onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
-      onEnded={() => {setPlaying(false);setPosition(0);}} onError={() => setError(true)}/>
-    <button type="button" className="voice-play" onClick={e => {e.stopPropagation();void toggle();}} aria-label={playing ? 'Пауза' : 'Воспроизвести голосовое'}>
+      onPlay={() => {setPlaying(true);setError(false);setBuffering(false);}} onPause={() => setPlaying(false)}
+      onEnded={() => {setPlaying(false);setPosition(0);}} onError={() => {setError(true);setBuffering(false);}}/>
+    <button type="button" className="voice-play" onClick={e => {e.stopPropagation();void toggle();}} aria-label={playing ? 'Пауза' : 'Воспроизвести голосовое'} disabled={buffering}>
       {playing ? <span className="voice-pause-icon"/> : <Icon name="play" size={21}/>}
     </button>
     <div className="voice-content connect-voice-v4-content">
@@ -328,7 +318,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, sentAt, mine, deliver
         {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
         </div>
       </div>
-      <div className="voice-bottom connect-voice-v4-bottom"><span>{error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-save" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div>
+      <div className="voice-bottom connect-voice-v4-bottom"><span>{buffering ? 'Загружаю аудио…' : error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-save" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div>
     </div>
   </div>;
 });
@@ -1436,20 +1426,58 @@ export default function Home() {
     if(!res.ok)throw new Error(json.error||'Ошибка сервера');
     return json;
   }
+  const stickerCatalogEpoch=useRef(0);
+  const stickerPriority=useRef<Set<string>>(new Set());
+  const [stickerCatalogReady,setStickerCatalogReady]=useState(false);
+  useEffect(()=>{
+    const ids=new Set<string>();
+    for(const m of messages){
+      const found=m.body.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/);
+      if(found)ids.add(found[1]);
+    }
+    stickerPriority.current=ids;
+  },[messages]);
+  useEffect(()=>{stickerCatalogEpoch.current++;setStickerCatalogReady(false);setCustomStickerUrls({});},[user?.id]);
   const loadCustomStickers=useCallback(async()=>{
     if(!supabase||!user)return;
+    const epoch=++stickerCatalogEpoch.current;
+    const viewer=user.id;
     const packs=await supabase.from('connect_sticker_packs').select('id,name,emoji,owner_id,is_public,created_at').order('created_at',{ascending:false});
-    if(packs.error)return;
+    if(epoch!==stickerCatalogEpoch.current||packs.error)return;
     const list=(packs.data||[]) as CustomPack[];
     setCustomPacks(list);
-    if(!list.length){setCustomStickers([]);return;}
+    if(!list.length){setCustomStickers([]);setCustomStickerUrls({});setStickerCatalogReady(true);return;}
     const stickers=await supabase.from('connect_stickers').select('id,pack_id,name,storage_path,position').in('pack_id',list.map(p=>p.id)).order('position');
-    if(!stickers.error){
-      const items=(stickers.data||[]) as CustomSticker[];setCustomStickers(items);
-      const urls:Record<string,string>={};
-      await Promise.all(items.map(async st=>{const {data}=await supabase!.storage.from('connect-stickers').createSignedUrl(st.storage_path,3600);if(data?.signedUrl)urls[st.id]=mediaUrl(data.signedUrl)}));
-      setCustomStickerUrls(urls);
-    }
+    if(epoch!==stickerCatalogEpoch.current||stickers.error)return;
+    const items=(stickers.data||[]) as CustomSticker[];
+    setCustomStickers(items);
+    setStickerCatalogReady(true);
+    // Prioritize stickers referenced by the open history. Do not wait for
+    // hundreds of Storage signing requests before presenting any of them.
+    const queue=[...items].sort((a,b)=>Number(stickerPriority.current.has(b.id))-Number(stickerPriority.current.has(a.id)));
+    let cursor=0;
+    const worker=async()=>{
+      while(epoch===stickerCatalogEpoch.current&&cursor<queue.length){
+        const st=queue[cursor++];
+        const identity='/storage/v1/object/sign/connect-stickers/'+st.storage_path;
+        try {
+          const local=await resolveCachedMedia(identity,viewer);
+          if(epoch!==stickerCatalogEpoch.current)return;
+          if(local.startsWith('blob:')){
+            setCustomStickerUrls(prev=>prev[st.id]===local?prev:{...prev,[st.id]:local});
+            continue;
+          }
+          const {data}=await supabase!.storage.from('connect-stickers').createSignedUrl(st.storage_path,3600);
+          if(epoch!==stickerCatalogEpoch.current)return;
+          if(!data?.signedUrl)continue;
+          const signed=mediaUrl(data.signedUrl);
+          setCustomStickerUrls(prev=>prev[st.id]===signed?prev:{...prev,[st.id]:signed});
+          // Queue a small, account-scoped cache write. Never block the UI on it.
+          void prefetchStickerWebp(signed,viewer).catch(()=>{});
+        }catch{/* Retry on next login/visibility refresh; never expose private packs. */}
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(4,queue.length)},()=>worker()));
   },[user?.id]);
   useEffect(()=>{void loadCustomStickers()},[loadCustomStickers]);
   useEffect(()=>{if(user)void authenticatedRequest('/api/admin/invite').then(r=>setAdmin(Boolean(r.admin))).catch(()=>setAdmin(false));else setAdmin(false)},[user?.id]);
@@ -1936,7 +1964,8 @@ export default function Home() {
         // messages were deleted. A shorter complete response supersedes cache.
         const firstIncoming=incoming[0];
         const older=!recentered&&incoming.length===200 ? prev.filter(m=>m.conversation_id===id&&firstIncoming&&compareChatMessages(m,firstIncoming)<0&&!m.deleted_at&&!serverDeleted.current.has(m.id)) : [];
-        const merged=[...older,...incoming].filter(m=>!m.deleted_at&&!serverDeleted.current.has(m.id));
+        const queued=prev.filter(m=>m.id.startsWith('local-')&&m.conversation_id===id);
+        const merged=[...older,...incoming,...queued].filter(m=>!m.deleted_at&&!serverDeleted.current.has(m.id)).sort(compareChatMessages);
         if(prev.length===merged.length&&prev.every((m,i)=>m.id===merged[i].id&&m.body===merged[i].body&&m.edited_at===merged[i].edited_at&&m.deleted_at===merged[i].deleted_at&&m.attachment_path===merged[i].attachment_path))return prev;
         return merged;
       });
@@ -1976,9 +2005,13 @@ export default function Home() {
         if(m.sender_id!==user.id)return;
         setNewerHistory(false);historyOldest.current=m;historyNewest.current=m;setMessages([m]);void refresh();return;
       }
-      setMessages(prev => {
-        const exists = prev.some(x => x.id === m.id);
-        return exists ? prev.map(x => x.id === m.id ? m : x) : [...prev, m].sort(compareChatMessages);
+      const optimistic=optimisticSend.current;
+      const replaceOptimistic=optimistic&&optimistic.chat===id&&m.sender_id===user.id&&
+        m.body===optimistic.body&&m.reply_to===optimistic.reply&&m.created_at>=optimistic.at;
+      setMessages(prev=>{
+        const without=replaceOptimistic?prev.filter(x=>x.id!==optimistic!.id):prev;
+        const exists=without.some(x=>x.id===m.id);
+        return exists?without.map(x=>x.id===m.id?m:x):[...without,m].sort(compareChatMessages);
       });
       // The viewport scan acknowledges messages only after they are actually shown.
     }).subscribe(status => { if (status === 'SUBSCRIBED') void refresh(); });
@@ -1997,7 +2030,7 @@ export default function Home() {
   useEffect(()=>{
     if(!user?.id||!activeChat||!messages.some(m=>m.conversation_id===activeChat))return;
     const userId=user.id,chatId=activeChat;
-    const rows=messages.filter(m=>m.conversation_id===chatId&&!m.deleted_at&&!hiddenMessages.includes(m.id)&&!serverDeleted.current.has(m.id));
+    const rows=messages.filter(m=>m.conversation_id===chatId&&!m.id.startsWith('local-')&&!m.deleted_at&&!hiddenMessages.includes(m.id)&&!serverDeleted.current.has(m.id));
     const timer=window.setTimeout(()=>{void writeChatHistory(userId,chatId,rows,readCache.current[chatId]||'').catch(()=>{});},400);
     return()=>window.clearTimeout(timer);
   },[user?.id,activeChat,messages,hiddenMessages]);
@@ -2555,23 +2588,42 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     if (error) { setNotice('Не удалось удалить: ' + error.message); return; }
     setMessages(prev => prev.filter(x => x.id !== m.id));
   }
+  const optimisticSend=useRef<{id:string;chat:string;body:string;reply:string|null;at:string}|null>(null);
   async function sendMessage(e: FormEvent) {
     e.preventDefault();
     if (!supabase || !user || !activeChat || !draft.trim() || busy) return;
-    const body = draft.trim(); setBusy(true); setNotice('');
-    if (editing) {
-      const { error } = await supabase.from('messages').update({ body }).eq('id', editing.id).eq('sender_id', user.id);
-      setBusy(false); if (error) { setNotice('Не удалось изменить: ' + error.message); return; }
-      setMessages(prev => prev.map(m => m.id === editing.id ? { ...m, body, edited_at: new Date().toISOString() } : m));
-      cancelCompose(); return;
+    const body=draft.trim(),chat=activeChat,reply=replyTo?.id||null;
+    setBusy(true);setNotice('');
+    if(editing){
+      const {error}=await supabase.from('messages').update({body}).eq('id',editing.id).eq('sender_id',user.id);
+      setBusy(false);if(error){setNotice('Не удалось изменить: '+error.message);return;}
+      setMessages(prev=>prev.map(m=>m.id===editing.id?{...m,body,edited_at:new Date().toISOString()}:m));
+      cancelCompose();return;
     }
-    const { data, error } = await supabase.from('messages').insert({ conversation_id: activeChat, sender_id: user.id, body, reply_to: replyTo?.id || null }).select(MESSAGE_COLUMNS).single();
-    setBusy(false); if (error || !data) { setNotice('Не удалось отправить: ' + (error?.message || 'Ошибка')); return; }
-    setDraft(''); setReplyTo(null); lastKeypress.current = 0; void updateTyping(activeChat, false);
-    const m = data as Message;
-    setMessages(prev => prev.some(x => x.id === m.id) ? prev : [...prev, m]);
-    setLatest(prev => ({ ...prev, [activeChat]: m }));
-    requestAnimationFrame(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; });
+    const tempId='local-'+crypto.randomUUID(),at=new Date().toISOString();
+    optimisticSend.current={id:tempId,chat,body,reply,at};
+    const optimistic:Message={id:tempId,conversation_id:chat,sender_id:user.id,body,created_at:at,
+      edited_at:null,deleted_at:null,reply_to:reply,attachment_path:null,attachment_name:null,
+      attachment_type:null,attachment_size:null,attachment_kind:null};
+    setMessages(prev=>[...prev,optimistic].sort(compareChatMessages));
+    setDraft('');setReplyTo(null);lastKeypress.current=0;void updateTyping(chat,false);
+    requestAnimationFrame(()=>{const el=scrollRef.current;if(el&&activeChat===chat)el.scrollTop=el.scrollHeight;});
+    const {data,error}=await supabase.from('messages').insert({conversation_id:chat,sender_id:user.id,body,reply_to:reply}).select(MESSAGE_COLUMNS).single();
+    setBusy(false);
+    if(error||!data){
+      setMessages(prev=>prev.filter(m=>m.id!==tempId));
+      if(activeChat===chat){setDraft(current=>current||body);setReplyTo(current=>current||replyTo);}
+      setNotice('Не удалось отправить: '+(error?.message||'Ошибка'));
+      if(optimisticSend.current?.id===tempId)optimisticSend.current=null;
+      return;
+    }
+    const m=data as Message;
+    if(optimisticSend.current?.id===tempId)optimisticSend.current=null;
+    setMessages(prev=>{
+      const without=prev.filter(x=>x.id!==tempId);
+      return without.some(x=>x.id===m.id)?without:[...without,m].sort(compareChatMessages);
+    });
+    setLatest(prev=>({...prev,[chat]:m}));
   }
 
 
@@ -2580,20 +2632,32 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     if(!supabase||!user)return;
     let cancelled=false;
     const client=supabase,viewer=user.id;
-    // The packaged Android UI keeps its original signer and playback lifecycle.
+    // Android also needs progressive, bounded signing for large audio-heavy chats.
     if(isNativeMediaRuntime()){
-      const paths=Array.from(new Set(messages.filter(m=>!m.deleted_at).flatMap(m=>[...(m.attachment_path?[m.attachment_path]:[]),...parseAlbum(m.body).map(x=>x.path)])));
+      const selected=messages.filter(m=>!m.deleted_at&&(!activeChat||m.conversation_id===activeChat));
+      const paths=Array.from(new Set([...selected].reverse().flatMap(m=>[...(m.attachment_path?[m.attachment_path]:[]),...parseAlbum(m.body).map(x=>x.path)])));
       const missing=paths.filter(path=>!attachmentUrls[path]);
-      if(missing.length)void Promise.all(missing.map(async path=>{
-        const meta=messages.find(m=>m.attachment_path===path);
-        if(meta?.attachment_kind==='image'||!meta&&supportsPhotoPreview(path)){
+      let cursor=0, audioWarm=0;
+      const worker=async()=>{
+        while(!cancelled&&cursor<missing.length){
+          const path=missing[cursor++];
+          const meta=selected.find(m=>m.attachment_path===path);
           const identity='/storage/v1/object/sign/connect-attachments/'+path;
-          const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
-          if(local.startsWith('blob:'))return {path,url:local};
+          try {
+            const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
+            let url=local.startsWith('blob:')?local:'';
+            if(!url){
+              const {data}=await client.storage.from('connect-attachments').createSignedUrl(path,3600);
+              url=data?.signedUrl?mediaUrl(data.signedUrl):'';
+            }
+            if(!url||cancelled)continue;
+            setAttachmentUrls(prev=>prev[path]?prev:{...prev,[path]:url});
+            if(meta?.attachment_kind==='audio'&&meta.attachment_size&&meta.attachment_size<=1024*1024&&audioWarm++<2)
+              void prefetchChatAudio(url,viewer,meta.attachment_size);
+          }catch{/* One failed attachment must not block the rest. */}
         }
-        const {data}=await client.storage.from('connect-attachments').createSignedUrl(path,3600);
-        return {path,url:data?.signedUrl?mediaUrl(data.signedUrl):undefined};
-      })).then(rows=>{if(!cancelled)setAttachmentUrls(prev=>{const next={...prev};rows.forEach(row=>{if(row.url)next[row.path]=row.url;});return next;});});
+      };
+      void Promise.all(Array.from({length:Math.min(4,missing.length)},()=>worker())).catch(()=>{});
       return()=>{cancelled=true;};
     }
     if(!activeChat||historyReadyChat!==activeChat)return;
@@ -2635,8 +2699,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
             if(!cancelled)setPhotoPreviews(prev=>prev[path]=== (local||null)?prev:{...prev,[path]:local||null});
           }
           if(item.kind==='video')await cachedChatPoster(path).catch(()=>null);
-          if(item.kind==='audio'&&index<10&&item.size>0&&item.size<=2*1024*1024&&!readChatWave(viewer,path))
-            await prewarmChatWave(viewer,path,url,item.size);
+           if(item.kind==='audio'&&index<4&&item.size>0&&item.size<=1024*1024)
+             void prefetchChatAudio(url,viewer,item.size);
         }catch{/* Never let a failed attachment block message navigation. */}
         finally{
           if(index<10&&--recentLeft===0&&!cancelled){
@@ -3288,7 +3352,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                             : isPlayableAudioFile(m) ? <VoicePlayer src={attachmentUrls[m.attachment_path]} path={m.attachment_path} sentAt={m.created_at} mine={mine} fileName={m.attachment_name||'Аудиофайл'} onSave={()=>void saveAttachment(m.attachment_path!,m.attachment_name||'Аудиофайл')} delivered={Boolean(currentPeerState?.delivered&&currentPeerState.delivered>=m.created_at||currentPeerState?.read&&currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read&&currentPeerState.read>=m.created_at)}/>
                             : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
                         </div>}
-                        {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);return st?<img className="sent-sticker" src={customStickerUrl(st)} alt="Стикер" loading="lazy"/>:<span>Стикер недоступен</span>})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (parseAlbum(m.body).length ? null : forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
+                        {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);const link=st?customStickerUrl(st):'';return link?<img className="sent-sticker" src={link} alt="Стикер" loading="lazy"/>:(!st&&stickerCatalogReady?<span>Стикер недоступен</span>:<span className="connect-sticker-loading" role="status" aria-label="Загрузка стикера"><i/></span>)})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (parseAlbum(m.body).length ? null : forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
                       </></div>
                       {m.attachment_kind!=='audio' && !isPlayableAudioFile(m) && !isVideoNote(m) && <div className="bubble-meta">{!m.deleted_at && isPlayableAudioFile(m) && <button type="button" className="connect-inline-audio-save" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Аудиофайл')}}>Сохранить</button>}{m.edited_at && !m.deleted_at && <span>изменено · </span>}{timeLabel(m.created_at)}{mine && <MessageChecks delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>}</div>}
                     </div>

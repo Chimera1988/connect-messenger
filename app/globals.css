@@ -707,3 +707,8 @@
 .connect-sticker-upload-action.is-busy{opacity:.55;cursor:default;}
 .connect-sticker-upload-input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;border:0;opacity:0;cursor:pointer;z-index:1;}
 .connect-sticker-upload-input:focus-visible{opacity:.01;outline:2px solid var(--accent);outline-offset:-3px;}
+
+/* CONNECT_PWA_STICKER_LOADING_PREVIEW_V1_20261115 */
+.connect-sticker-loading{display:flex;width:152px;height:152px;align-items:center;justify-content:center;background:transparent;color:var(--text);opacity:.5}
+.connect-sticker-loading i{display:block;width:23px;height:23px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:connect-sticker-spin .8s linear infinite}
+@keyframes connect-sticker-spin{to{transform:rotate(360deg)}}
