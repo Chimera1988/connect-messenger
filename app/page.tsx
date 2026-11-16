@@ -30,6 +30,7 @@ import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createClient, type User } from '@supabase/supabase-js';
+import { connectNeonRequest } from '../lib/connect-neon-text-client';
 import * as tus from 'tus-js-client';
 import type { FormEvent, TouchEvent, KeyboardEvent as ReactKeyboardEvent, CSSProperties } from 'react';
 
@@ -1468,6 +1469,13 @@ export default function Home() {
     return () => { alive = false; subscription.unsubscribe(); };
   }, [invited]);
 
+  // CONNECT_NEON_UNIFIED_TEXT_V1_20261116: write text into Neon, continuously
+  // converge with legacy Supabase via the verified one-minute bridge.
+  const connectNeonToken = async ():Promise<string|undefined> => {
+    if(!supabase)return;
+    const {data}=await supabase.auth.getSession();
+    return data.session?.access_token;
+  };
   // Neon production shadow session: starts after existing Supabase sign-in.
   // This does not change the source of messages, delivery, or media.
   useEffect(() => {
@@ -1489,6 +1497,23 @@ export default function Home() {
     return () => { cancelled=true; };
   }, [user?.id]);
 
+  useEffect(()=>{
+    if(!user?.id||directoryReady)return;
+    let alive=true;
+    const timer=window.setTimeout(async()=>{
+      if(!alive)return;
+      const r=await connectNeonRequest('GET','/api/connect-neon/directory',undefined,connectNeonToken);
+      if(!alive||!r.ok||!Array.isArray(r.data?.profiles)||!Array.isArray(r.data?.conversations))return;
+      const directory=r.data.profiles as Profile[];
+      setProfiles(directory);
+      setConversations(r.data.conversations as Conversation[]);
+      setAvatarUrls(prev=>({...prev,...Object.fromEntries(directory.filter(p=>p.avatar_path).map(p=>
+        [p.id,'/api/connect-neon/avatar/'+encodeURIComponent(p.id)]))}));
+      setDirectoryReady(true);
+    },5500);
+    return()=>{alive=false;window.clearTimeout(timer);};
+  },[user?.id,directoryReady]);
+
   // Compare the user's current chat window against the Neon backup once on open.
   // Never block rendering, never replace Supabase rows and never log message bodies.
   useEffect(() => {
@@ -1505,6 +1530,45 @@ export default function Home() {
       }catch{ /* Independent read is an optional, nonblocking shadow. */ }
     },1500);
     return()=>{cancelled=true;window.clearTimeout(timer);};
+  },[activeChat,user?.id]);
+
+  useEffect(()=>{
+    if(!user?.id||!activeChat)return;
+    const id=activeChat,owner=user.id;
+    let alive=true,running=false,first=true,cursor='0';
+    const tick=async()=>{
+      if(!alive||running||document.visibilityState==='hidden')return;
+      running=true;
+      try{
+        const e=await connectNeonRequest('GET','/api/connect-neon/events?conversationId='+encodeURIComponent(id)+'&after='+cursor,undefined,connectNeonToken);
+        if(!alive||!e.ok||!Array.isArray(e.data?.events))return;
+        if(typeof e.data.nextCursor==='string')cursor=e.data.nextCursor;
+        if(first||e.data.events.length){
+          first=false;
+          const r=await connectNeonRequest('GET','/api/connect-neon/messages?conversationId='+encodeURIComponent(id)+'&limit=200',undefined,connectNeonToken);
+          if(!alive||!r.ok||!Array.isArray(r.data?.messages))return;
+          const deleted=new Set<string>((r.data.deletedIds||[]) as string[]);
+          for(const key of deleted){serverDeleted.current.add(key);void dropCachedMessage(owner,id,key).catch(()=>{});}
+          const incoming=r.data.messages as Message[];
+          setMessages(prev=>{
+            const items=new Map<string,Message>();
+            for(const m of prev)if(m.conversation_id===id&&!deleted.has(m.id)&&!m.deleted_at)items.set(m.id,m);
+            for(const m of incoming)if(!deleted.has(m.id)&&!m.deleted_at)items.set(m.id,m);
+            return [...items.values()].sort(compareChatMessages);
+          });
+          if(incoming.length){
+            if(!historyOldest.current)historyOldest.current=incoming[incoming.length-1];
+            if(!historyNewest.current||compareChatMessages(incoming[0],historyNewest.current)>0)historyNewest.current=incoming[0];
+          }
+          setChatHistoryLoading(false);setHistoryReadyChat(id);
+        }
+      }catch{/* Neon reconnects automatically; legacy realtime remains active. */}
+      finally{running=false;}
+    };
+    void tick();const timer=window.setInterval(()=>void tick(),3500);
+    const onVisible=()=>{if(document.visibilityState==='visible')void tick();};
+    document.addEventListener('visibilitychange',onVisible);
+    return()=>{alive=false;window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);};
   },[activeChat,user?.id]);
 
   // Re-register the current FCM token after login or token rotation, not only
@@ -1760,8 +1824,8 @@ export default function Home() {
         // Signed URLs are short-lived; paths in IndexedDB are stable.
         void Promise.all(items.filter(x=>!x.local).map(async x=>{
           const {data}=await supabase.storage.from('connect-avatars').createSignedUrl(x.path,3600);
-          if(!data?.signedUrl||avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
-          const url=mediaUrl(data.signedUrl);
+          if(avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+          const url=data?.signedUrl?mediaUrl(data.signedUrl):'/api/connect-neon/avatar/'+encodeURIComponent(x.id);
           setAvatarUrls(prev=>({...prev,[x.id]:url}));
           void prefetchCachedMedia(url,owner);
         })).catch(()=>{});
@@ -2021,9 +2085,24 @@ export default function Home() {
       if (firstLoad) firstLoadPending = true;
       try {
       const [messageResult, entryStateResult] = await Promise.all([
-        (()=>{let query=supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null);const upper=historyNewest.current;if(!firstLoad&&historyNewer.current&&upper)query=query.or(`created_at.lt.${upper.created_at},and(created_at.eq.${upper.created_at},id.lte.${upper.id})`);return query.order('created_at',{ascending:false}).order('id',{ascending:false}).limit(200);})(),
-        firstLoad ? supabase.from('conversation_user_state').select('last_read_at')
-          .eq('conversation_id', id).eq('user_id', user.id).maybeSingle() : Promise.resolve(null),
+        (async()=>{
+          if(firstLoad||!historyNewer.current){
+            const r=await connectNeonRequest('GET','/api/connect-neon/messages?conversationId='+encodeURIComponent(id)+'&limit=200',undefined,connectNeonToken);
+            if(r.ok&&Array.isArray(r.data?.messages)){
+              for(const msgId of (r.data.deletedIds||[]) as string[])serverDeleted.current.add(msgId);
+              return {data:r.data.messages as Message[],error:null};
+            }
+          }
+          let query=supabase.from('messages').select(MESSAGE_COLUMNS).eq('conversation_id',id).is('deleted_at',null);
+          const upper=historyNewest.current;
+          if(!firstLoad&&historyNewer.current&&upper)query=query.or(`created_at.lt.${upper.created_at},and(created_at.eq.${upper.created_at},id.lte.${upper.id})`);
+          return query.order('created_at',{ascending:false}).order('id',{ascending:false}).limit(200);
+        })(),
+        firstLoad ? Promise.race([
+          supabase.from('conversation_user_state').select('last_read_at')
+            .eq('conversation_id', id).eq('user_id', user.id).maybeSingle(),
+          new Promise<null>(resolve=>window.setTimeout(()=>resolve(null),3500))
+        ]) : Promise.resolve(null),
       ]);
       refreshing = false;
       if (!alive) return;
@@ -2699,9 +2778,21 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     setMenuMessage(null);
     if (!window.confirm('Удалить это сообщение у обоих участников?')) return;
     setBusy(true);
-    const { error } = await eraseMessage(m);
+    const neon=await connectNeonRequest('DELETE','/api/connect-neon/message/'+encodeURIComponent(m.id),undefined,connectNeonToken);
+    // Mirror promptly for old APK and existing push/realtime. The database bridge
+    // also retries if Supabase is temporarily unavailable.
+    if(neon.ok){
+      void eraseMessage(m).catch(()=>{});
+      setBusy(false);
+      serverDeleted.current.add(m.id);
+      void dropCachedMessage(user.id,m.conversation_id,m.id).catch(()=>{});
+      setMessages(prev=>prev.filter(x=>x.id!==m.id));
+      return;
+    }
+    const {error}=await eraseMessage(m);
     setBusy(false);
-    if (error) { setNotice('Не удалось удалить: ' + error.message); return; }
+    if(error){setNotice('Не удалось удалить: '+error.message);return;}
+    serverDeleted.current.add(m.id);
     setMessages(prev => prev.filter(x => x.id !== m.id));
   }
   const optimisticSend=useRef<{id:string;chat:string;body:string;reply:string|null;at:string}|null>(null);
@@ -2711,7 +2802,10 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     const body=draft.trim(),chat=activeChat,reply=replyTo?.id||null;
     setBusy(true);setNotice('');
     if(editing){
-      const {error}=await supabase.from('messages').update({body}).eq('id',editing.id).eq('sender_id',user.id);
+      const neon=await connectNeonRequest('PATCH','/api/connect-neon/message/'+encodeURIComponent(editing.id),{body},connectNeonToken);
+      let error:{message:string}|null=null;
+      if(neon.ok){void supabase.from('messages').update({body}).eq('id',editing.id).eq('sender_id',user.id).then(()=>{},()=>{});}
+      else {const legacy=await supabase.from('messages').update({body}).eq('id',editing.id).eq('sender_id',user.id);error=legacy.error;}
       setBusy(false);if(error){setNotice('Не удалось изменить: '+error.message);return;}
       setMessages(prev=>prev.map(m=>m.id===editing.id?{...m,body,edited_at:new Date().toISOString()}:m));
       cancelCompose();return;
@@ -2724,7 +2818,19 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     setMessages(prev=>[...prev,optimistic].sort(compareChatMessages));
     setDraft('');setReplyTo(null);lastKeypress.current=0;void updateTyping(chat,false);
     requestAnimationFrame(()=>{const el=scrollRef.current;if(el&&activeChat===chat)el.scrollTop=el.scrollHeight;});
-    const {data,error}=await supabase.from('messages').insert({conversation_id:chat,sender_id:user.id,body,reply_to:reply}).select(MESSAGE_COLUMNS).single();
+    const messageId=crypto.randomUUID();
+    const neon=await connectNeonRequest('POST','/api/connect-neon/messages',
+      {conversationId:chat,messageId,body,replyTo:reply},connectNeonToken);
+    let data:Message|null=(neon.ok&&neon.data?.message)?neon.data.message as Message:null;
+    let error:{message:string}|null=null;
+    if(data){
+      // Idempotent ID: a lost reply cannot create a second message through legacy fallback.
+      void supabase.from('messages').insert({id:messageId,conversation_id:chat,sender_id:user.id,body,reply_to:reply})
+        .then(()=>{},()=>{});
+    }else{
+      const legacy=await supabase.from('messages').insert({id:messageId,conversation_id:chat,sender_id:user.id,body,reply_to:reply}).select(MESSAGE_COLUMNS).single();
+      data=(legacy.data||null) as Message|null;error=legacy.error;
+    }
     setBusy(false);
     if(error||!data){
       setMessages(prev=>prev.filter(m=>m.id!==tempId));

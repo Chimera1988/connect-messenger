@@ -32,11 +32,11 @@ test('only correctly shaped avatar metadata accepted',()=>{
  assert(!avatars.isValidAvatarMetadata({...row,object_key:'../evil.jpg'},id));
  assert(!avatars.isValidAvatarMetadata({...row,byte_size:2097153},id));
 });
-test('messages API reads only, verifies membership and tombstones',()=>{
+test('messages API reads safely and writes through an authorized Neon function',()=>{
  const source=read('app/api/connect-neon/messages/route.js');
  assert(source.includes('c.user_a=$2 OR c.user_b=$2'));
  assert(source.includes('message_tombstones'));
- assert(!/export async function (POST|PUT|PATCH|DELETE)/.test(source));
+ assert(/export async function POST/.test(source));
  assert(source.includes('m.deleted_at IS NULL'));
 });
 test('production credentials are server-only and limited',()=>{
