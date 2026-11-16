@@ -7,15 +7,12 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node tests/pwa-logout-regression.test.cjs && node tests/pwa-voice-waveform.test.cjs && node tests/crypto.test.cjs && node tests/migration.test.cjs && node tests/cache-browser.test.cjs && node tests/pwa-media-egress.test.cjs && node tests/media-cache-stale-error.test.cjs && node tests/media-recovery.test.cjs && node tests/call-device-ownership.test.cjs && node tests/call-server-ownership.test.cjs && node --expose-gc tests/call-rtc.integration.cjs && node tests/fix6-server.test.cjs && node tests/history-browser.test.cjs && node tests/call-push-delivery.test.cjs && node tests/call-health.test.cjs && node tests/call-turnix.test.cjs && node tests/call-history-status.test.cjs && node tests/missed-call-status.test.cjs"
+    "test": "node tests/supabase-only-rollback.test.cjs && node tests/pwa-logout-regression.test.cjs && node tests/pwa-voice-waveform.test.cjs && node tests/crypto.test.cjs && node tests/migration.test.cjs && node tests/cache-browser.test.cjs && node tests/pwa-media-egress.test.cjs && node tests/media-cache-stale-error.test.cjs && node tests/media-recovery.test.cjs && node tests/call-device-ownership.test.cjs && node tests/call-server-ownership.test.cjs && node --expose-gc tests/call-rtc.integration.cjs && node tests/fix6-server.test.cjs && node tests/history-browser.test.cjs && node tests/call-push-delivery.test.cjs && node tests/call-health.test.cjs && node tests/call-turnix.test.cjs && node tests/call-history-status.test.cjs && node tests/missed-call-status.test.cjs"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1169.0",
-    "@aws-sdk/s3-request-presigner": "^3.1169.0",
     "@supabase/supabase-js": "2.57.0",
     "firebase-admin": "^13.0.0",
     "next": "15.5.28",
-    "pg": "^8.16.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "tus-js-client": "4.3.1",
