@@ -1,0 +1,176 @@
+name: Connect Neon | Production media migration (single release)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/connect-neon-media-bulk-production-2026-11-16.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-neon-media-bulk-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Mirror media to private Neon Storage without breaking APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout working Connect repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Validate app and package baseline
+        shell: bash
+        run: |
+          test -s AGENTS.md
+          test -s app/page.tsx
+          test -s lib/connect-neon-live-db.cjs
+          test -s lib/connect-neon-live-session.cjs
+          test -s app/api/connect-neon/messages/route.js
+          test -s tests/connect-neon-consolidated.test.cjs
+          test -s package-lock.json
+      - name: Install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install reproducible dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Add protected Neon file mirror and independent media reader
+        shell: bash
+        run: |
+          python3 - <<'PYEMBED'
+          import io,base64,zipfile
+          from pathlib import Path
+          root=Path.cwd()
+          data=(
+          'UEsDBBQAAAAIAEKRcF0fzlR73gcAAN8UAAAwAAAAYXBwL2FwaS9jb25uZWN0LW5lb24vYWRtaW4vbWVkaWEtbWlycm9yL3JvdXRlLmpzrVht'
+          'b9s4Ev6eX8EAASRhaTVttnsHBdpc4gi7QVM7sN3DHhYLgZZom41evCSVxOfov9/wRbJkO1tscUDR2uR4OPPMM8+QZfm65BJtE06JpMOM0ULW'
+          'aMHLHDn/EtWazImg75oPg6/CuTxh9jfTC2OPHyo5nn+liRyWeU6KFP9C9xZuaUYl7a21p5BnMRDp47tEOxuIi84RJqxfiVg15kWZ0iDhm7Us'
+          'O3ZLKh/KMmuMfP9d90/G5u+Ssijg8EFBy2KQsSc6SOd+0svniWQs/cw4L/msfKQF7izcSZpjQRZ0KktOlvSByJXZtwtRka5LtgPvWyHkNGVk'
+          'sKwIT4WNg77oOMBMSMSrQrKchjrhw+2cvNxWnEhWFuFP55cnAC8SJpLLE+uBijV8oKH7VZQFFpLISoQfzs+98OeJ3fPVltnfGgO8oiSlXARb'
+          'Z0iSFR0My0LyMnMCiGSgjqAOdn7Ty6pcs82aDsZrFYjQNqJgi4VT197lyaIqErWBRFnxxLLL9bYnNomKZ+GalwkVwqfFkz+KfpvFD19u7u+G'
+          '8fTLw/XN9TSKv0zu8SPd9AzbzWk0+ffdMIon4/so/hT95/IEsYV7Co5fX0/hV55c8fIZRaqErjPVYTQ4oaLUaC7YsuI0dSBgwExWvEDdbnDB'
+          'mQoAb0klV8F2DeAwIacQC6QWLEgmKIatckIXAPlKU8csaxDqHQyq8JYuHRSoZU4vw+F4NIqGs3gUjUfx9CKORrcP47vRzCZ4jHlu48h7ff0r'
+          'V5Pol7vx6DQMHVoNEsiQk2zw3ulDdUuFZAUx1bN4NViZVSYQK3QcGjmTC0nUsZ/o5i59O53Pd5PJeBJfD4fRdKqqFt/dth4EBfDldePnm16m'
+          '0XASzTrOLEKdSIAKe173aGHze+ZMUlX7FEBhUEBEOEU5g0IXyy49LCBXV2FBn1Ejg+6W06WiRB9X3JQFL0pgnxKOqdxkNJC8orhzWrDtxIz3'
+          'IrZUshitSDivFgvKw593Cuk6sP7h40+O51frFBZdY+P5KVtCOV1nRV9UGkRsigS1rEzK9WZcUNc0KRYXGGDIFT9bpu000NV7ffy+FEoYUanV'
+          'HeVUEjiddFixnVfJI5UxS4M5XivlNGfFYLpsPgv2X4pzkLxYgqTUoTpo50F5xFSdV4fkmTBpNcW3tfCV6rpzyLV8LrKSpK46xzNk0L8DFign'
+          'RxXBhl4V5ImwjMwz2ol+vpFUhDcaS3OMCUB58wnnZGP2XM8ep3/gZ7RYyhW02ajK57DbSRMa9LRr9FcxJStSLGmKnlcso6jJriGkheLCF8Ay'
+          'V7Fxfxa72xsNPiAPNAo0+la7lXQHLeL4pkw3gQ6rMbjX0QXdUGtvB0w7YA6j2L8AHImi7ymhMJLTsHHpq2CuDjHv7fvQYYWArspn5Q3EeK1q'
+          'AVUI7O9IlpWJe747xvRBCG1iamTr1Zy+K1k349dXZd/YeLBr3LytlzA1k0dR5eiJcrZgiVldALNoVyu1nHK4B/QJzdeJ69irQqwmRqyvCnGu'
+          'ezC2v3LwCULbdTxvYF3HClRT37VurKDbZGtNvF4p1ZoWjMAkVFs42rh82ze7BUV5AEAp11HOPqnZqBEwpCULSTkyZaK8K6HKhRK0PS0CmMsi'
+          'AaCun+AoLmzX7Ibl20LwLdwqzoHSMTGOnT1p0NzxmTAc0kLRz9AE1KrbgVaoC5iR3TSE+xgCWrp2JqJyocVCZaHOVN0GS8SvBOUgimoUC8lV'
+          'T6tR1b9ktjkNmsgx8bW2ga2RFgj7Dvp1CSJDfFXhVmSIbyrsgQ+gp4IcNUBCbqKB0F6fXc//s6J8A/WM7mHQogbOOUkeq7Wv5puAilpMaWrR'
+          'dM/e47MP+OwCn/2Izz566HqKGlugvKIqQr+3+doE4J+d+HQCx03UfyhcdYNCqL+f/3Hl75x6FusffgCbuqWVXT3CrFS/QKaSZJ1J93/glVAe'
+          'HQytmLGcyeCi/rvM0jE1cp8xIY9yy8QP3MJKSODCKvZoBg72iXbAJbDx21mM1TfNpB49JN+onx8ZLUceca2u9z0rjW+8G51HXZyDVlEM4gHQ'
+          'K/qOljZeYguN5VlHFftBWYVs4mpUUn3vKGVtogX0mqA6AnhU+zQsimI54Y8gdzAIsgxZvXGMOxuiZiuqYSIkq21TR1isuxzeWuO20LWis339'
+          '7bH6YTydwWyCroWB1JIZ7sxPLNXjVO/49k3nQ5+7zsug/xDVYA6kerY0qni6/xR2G5f4W/fxX2ezh3g2/hSNPM8m1Axtd2uqDRdG9ZQqOTR7'
+          '6tT4x/P36lxLPHvF1RUJ+w9H6Niw94ZSaKrmsHlCxtv6UvnZLTT3BgOEfu56l7YCdXuc7t3wQE5bN1e+tvCuPgNzQLYK95/YfCQv7nvc2lkz'
+          'L/hHR2k15b+Wc/Fdcwu6jClREx2R0X/XjTweVxp14J7SmIIiiLUyr9++zGgo4TXADmWmozPqXq6ERvvXSqEANym98ZS4NE4N0QEWDb5u1k4P'
+          '6O+QzfEHx9+BzN60rBx0BUH5OlQEvdqVBL1wqAkq+B1l7DhuCXb84rKjgR4U1vr4MNqnjPoPGcsZ8zn6rvEkzWUHHXRj+Ric7vxiU6S27tgm'
+          'GLeppYFdwjoX2MhLuBIH+pvfqJZB3Vjo2IU1aB3rMzsZXRVVlpnvGum6JchbAvJZpYhMinBt6g3MGn8811jWoJr/A1BLAwQUAAAACABCkXBd'
+          'vf5KfqQFAABdDQAAIwAAAGFwcC9hcGkvY29ubmVjdC1uZW9uL21lZGlhL3JvdXRlLmpzrVZtb9s2EP7uX8ECASQBkhLH3RdlXpe6auvVtT3L'
+          'XjsMg0pLjMVGEh2SSuY5/u87UpTf4gYd0MAIbPLuuffnSIsl4xKto04vp6SU7nuC09H8K0lkjxUFLlP3HZEHBxt0w1mBrF/xg/BEenueaE1P'
+          'dKyrFjV4CyIjuihJOuP5EwXR8Ti5q4iQ3pIToeT4nm7CCZak9merK6olnmNBzpsv3ldxaG/M2NaU759vPzmdnyesLCECrySs9HJ6T7x07icH'
+          'CIIIQVk5E4S7XwUrvx/KaB7j4RsSScbxgoyxzNx7nNPUHIRlumQUsq0PJySlHCD3UvWs0QLksbeoME+FMUr+0UZBTEjEq1LSgnStkqVEX+dE'
+          'ItG5at1UZSLBVQTpmkChCbeddQvRG/vFKffsJWcJBOeT8t7vjYbDsDeNh+FoGEedOBy+GY/6w6nz+Pic2CR81x8NX3S7Fqm8BCrKce61LUdm'
+          'nD2gkHPGbWtWqmyhIUSHRO0DIsYJy7lqmcBwosx8IKt+2n3O5nWvF0ZR/CH8M+6/cQWBhpLXje6zmlHYm4TTPYCrOjt7lh8fXxwhHsZyEATX'
+          'SUYFhQ4pFzoU0Kw4SHReveqW5AE1k2evOVlAbYLDRLlNHoLvKYZ7w3ii+y2Sq5wEklfEBWdTwKM4F8F6L5LjzGw24N+mVee6IMWc8N8rwlfd'
+          'L1E4AGuojd5ORh+RacZ4jpPbaukXoA2xClS00G/gxPE9/LwnXGDVeAIlaAQSPk27xcFNTNMWGoRvpycxjI1YsmIOuS3BmlRAcnujARXGp/fh'
+          'JESFj6XESVZA4PES8oH6ERqOpmg4GwzQ9fANsp+IdM/aaDSB2mEuRfxAZWaftd0nYo+PVhxbjtOqYRK/AsqIcffsUmmbn3P46WiBwk8JzB9J'
+          'Yyy1E40D+743FzWm8tPe6UFNYwFtQHhX1dOg1icqbrC00ws/96NpZD9bsYym0BBxXWKBsjpnLQR/dlb7D7BNYBo683FaUFWln385uwyCqqKp'
+          'o+J9qjD/tgL4Oeh/7INfX7achcWqTNCWmd6FU9ssB0VNkq/gv5l/BQ+jjx8wBT7b8fVW4UrNai3lmDlTVG6viZrNAHgGVzJjnP5LUmvjvrxo'
+          'q4k06Hd6HGeTQQPnVzx3IM+YJ9kYc1yInfC8Sm6J7FoNMe96RFiubqY7H0jWttR3PfeaR46Wgl3DaAXnpMf9UhMz0pyPNJjy+2LP7wXHpTRJ'
+          'MWvQdvw7Nbn23hS7fyltt87O341HWtkH+uox2BpA0+2TbnzU5qsS32Oa43lOtBcvNYopkfFGMR/p7u0XJYJMydSdblxbpfrJU8Nev9b5CExa'
+          'gJMC5fTGqVGMBf2u2AW8fWfYGt9V0Mdvlm8ju2voQ1i/ol8G7cuLTW1puxH3drNdG3YPanZqjTVvmhTlLNHkVjdAQ/3KwQkRS4iG2GWV5+4a'
+          'OEdWIuhcXLqZzhsw9cAoB8au1YMOI16PwWpguRVYS07v4aHkopJ5OnTLtSbkBkpGuDdmOU1WIAWX3Bxamzq8DQAnmS7a+TkakAVOVkiwClYH'
+          '+FhgCjy9rTRKKw67CwHpejDQlSSoWuYMpyBTpkjkEH9BoY80v/u7OsH0HOzaYfh5Go9nrwf9XhzNxtevr6MwhnFzb4+W8vYyCid/9HthPBkN'
+          'QrOM69IANKxh0PvuZv3porPfQ7mOubv/0rQBVLnirhVHBOslFIEKGdU0E9zA9iQuXDFIMRQ4m7JbYo5NWg32OsUSu9qXjenS2pxvXgW+euOZ'
+          '0Xf82oddE+sphU7cNqJGgnAV7CtfNIL/e04Px6fhOoW6B7pNcX3kZ0zIEhcECpOKT2olWn7zAof9bcHrz0hCBSVLWK6eepmUSxEcPfIaKoOU'
+          '5WoRIYX9IybDlyySqkdt50cOSauZk1OJHtewhpdP9NoGXlL/AVBLAwQUAAAACAAdkXBdQWLvsIoDAAAeCAAAIQAAAGxpYi9jb25uZWN0LW5l'
+          'b24tbWVkaWEtZ3VhcmRzLmNqc41Va0/rRhD9zq9wpFs/il+gCxSCb1VopKI+hAioSCRFiz22V9fe9d1dk0CS/96xYyd2bqj6Jdk9M7szc+bs'
+          '2CglaFIJGipjeBByJpW2UDSnLBmTGEbfSpKtAgHfSirANBiP4CIUb4XihtX6Xz1c/z66HwcMZtoYlPlkIM4gVA55JYoIadhbRCkSpjkw1UUL'
+          'wWOagZNDREkHl4qGXwEvmG6CjR5vR9f3o18DI1WqkBee9yKclEYRMCcnKnVezhMavxWZKxUXJAE3dM5cKJ0QYwqSOUcumUmXAWeugjDdVP3b'
+          '6DHw/nnynXPixNPF6efVJ294EJcsVJQzjWQZn0F0VWJCynyp/6yFAFUKpqm3AnisrdEgCIyKUZYYut5w46ZEtoeGq+2tEjker/O8xeQbF7vA'
+          'tbU40GhsDvYGXi6bkJXnYBtwuawANwOWqPTypLf9cu77DSCxK0r+TTGi4RlWgwKLtpjVlBaTTMJwnUrtRVmYlRHI7sktNpnsAb3a03uazH3f'
+          'mcyP4sn8LJ56yL9UZl0rWn8wf744jpcn4dL3LY92jHtSWVdRZFTVabiS52BKSCphBV/aBfLiIiXdbbUfNMB3F7fdFCXuOl16JRmN/qQYIt9t'
+          'ed7rdt4yf3R8ruuoJuK8o6Cmzf+h60x/nHj70E9txXlPH01kIbi4UZCbFH8qYTRJVFtd7yukwty1TJ5pZOn6rsb6Dna9rXnW9QOtratGJS9F'
+          'CM+gSNIrc9fYCsz/0HQZHJ+c1vf/VeYvIFwqq/FywxQkIMw1aHYPS/oOFqb0kakK9pHtMjjyP/90cnbqo9O2ebVfjqvnqkhrX4srou/5V2Am'
+          'jqRXGkFkw7zAUQRR8x7bd9eYe2+vsbUnerYBzpdG081Rqwtuonykyf5INq/KOEYaY8HzbapGCnPDsru29t7GtqfoRhojFhWcMsykWWyU3gIo'
+          'gXb4fifROxzcAgM9iMwUZGb//zk2+K8RuEuGEm94m7Ye2GX9wXm4+6OKiIVpLVeli4woHvKsUu36M4GqLV0uaEJZpw5djyDET9rD3c01zwvO'
+          'cCqYZf0aGMnBqs57xuE6pcNqWZlqHWMUCUSE6S0RJJf1gDcenV/yd2dME0YwEzBQv4PSxU+sqK6rNwWRcsZFhPmuQqLCdNGrcYX9yXlUZuBi'
+          '6zhO6WDRY87e4cve6NveGRb2rqbtff22d/tnt+Sshgf/AlBLAwQUAAAACABJkXBduFJAV18FAADvDgAAKAAAAHRlc3RzL2Nvbm5lY3QtbmVv'
+          'bi1tZWRpYS1taXJyb3IudGVzdC5janO1V1tv2zYUfu+vYB8GyaglJW16c+EObequQVs7iJOhwzIIlHRkM5VIjaSSuEH++w5J2ZbltHWGLQ+W'
+          'dHh4bt+5JRVcaXKjQenboYS/aybB97jIYGBoXu/Vg9SyUKVA6g6LI0ZKS5a2eHPV4cvV+rCiet45NqQ1gxRCDw0plKBEcQl+HGdMclpC3wvD'
+          'FiPQbFgNX+cqNK/vWQHTBU99e/dCMO4bUf2q1/dqnb9YX7yhRSGuIHtbp19B9xXNYaqFpDM4xqv9S1qw7DOTUsgjDeXyG9W3Tk7FV+CO0Nwd'
+          '8axCpdoRTwBthlSfyaIV2DCMCpZEaAbHs4CD4EGJnDSY1VRmKkwvWqE6Ozt6N/T2Hz85ePrs+YvAvAQH5uel+VnSX+7tP/ZePTBw+V5pjSOq'
+          'riohtSKCFwuSi1qSQ6eTVJJdUg0ksc4rr+/3hq9vHiCT9J3ahIic/OktjaTITiUyrila03ReAtdtaiVFjhA4f1p0pRlqQgF/9Vy++Bvh95Me'
+          'Oryt3qlFOVWdFCxtq89Kxu82J8IAr+1da3x4h8rb3jJoeEiawInkwgYJ80ARKoFYmyRlHLJVqBqhnbzxtyNmAHzkNRYF+8+f7eFfeFHNPOvz'
+          'T+W049zI8h41L2nBqrCsDuK4EkqD3F1sB6hGXlkrlkZwTcuqABT8ZDdhK3S3DGTIEl5BUnkdgCsHMEKlIJU2BzFGCdZ6rQHf6fl5Yh5R5B7I'
+          '+M29RNfmmaTn/HphSb88zrEjbCC9WzSxKVQbOdDgLyGvFSjCuLGVYWA5ZuQCefpEsW94QnlGStA0Q0xXGeEcY9gthjeusGKWDb6jGq0adIN1'
+          'beHrK6zUFGIUPxsYR7HGV0SjfrC/1y+xE8V6UcHAYyV6GV1UMPNu11h1+pdvzGpj+bDLcBOGoWHa0LR3e/87+3sHL55ilu/f765z19vx0pb/'
+          'FZ+dy3P+JTjipniZ4AOyALUpb9XEsdzrjIkIS8fbbAOYq3MhvhJtWjuxF6iRRphyAFOuA40ibA5gpeDM20wAl89Dj3o4kSqg2n920LsTGDs+'
+          'fMffd4/vee9YvaQtc7cr3m5sLWuftCVvFQeHS8ASEVimatkpryQzX1pgUISe43kiKU/nBPnn2Ji6TfOuiel7c60rNcCCl8GcZRngVMQqCZKX'
+          'M5YvqiJU7kKYBs9DqIMUK0nSItgP6ZUKzRQNNaRzb9vRH2nKsNUFmII8Q0VXe3XO4H9QBJesCJdtNRVlJ+kUm+FoIY1e7D9ubdgaPibCY9Rv'
+          'cw/jTMxOgRLwxK5Pm4lYSzb8j4Ia3TVmV31r9UJNA/v1S/Cm/BZM0SeqawlDbGFeJ/9bi5GPZvZ3m3Z0a7w9/Im0zgy+ryRTEgVNsV20woST'
+          'xsJpXnv3tnx72JhKIs1yiIg3/cNCjJXGMCEVycQVLwTNEGg7h7otZ2h2XyziqopoxTZWy8huSpFbMJ3OyOoM3ZbZmskcUL4dy93+gD4fTsbj'
+          '0eFpPB5NxvHno5OTyUn84fT0OD6dfByNkWF6dvzm7ZvpKJ6OTn4/OhzFJ5NPo/jj6A88+w30xLaKQ1GW6BmSjustUmN2bMyOrcGxMzjGk5zJ'
+          '8oc82JoL+LGUWkrEJ16mxWpfUCGO+qLOQPkmBr2+/W0lR4vBewcFaHBL5NL2TWSX2/U6JRqUgWOwU7CTBLFVbrKUUCb4MWeVBT0z8i2dSrdU'
+          '7Y61dffn8OJyo1DDGTqHASvxC3M71qJMMM+5SS/PNYu4sQ0J1izIYqrJ0ZSMzz59MrvXysPYNSDvAxrXxfUO9DHFMUJT2/ew2JDSrb9/iQ5c'
+          'm/958Aj/CSR5ze0qQI4n09MVSP8AUEsBAhQDFAAAAAgAQpFwXR/OVHveBwAA3xQAADAAAAAAAAAAAAAAAKSBAAAAAGFwcC9hcGkvY29ubmVj'
+          'dC1uZW9uL2FkbWluL21lZGlhLW1pcnJvci9yb3V0ZS5qc1BLAQIUAxQAAAAIAEKRcF29/kp+pAUAAF0NAAAjAAAAAAAAAAAAAACkgSwIAABh'
+          'cHAvYXBpL2Nvbm5lY3QtbmVvbi9tZWRpYS9yb3V0ZS5qc1BLAQIUAxQAAAAIAB2RcF1BYu+wigMAAB4IAAAhAAAAAAAAAAAAAACkgREOAABs'
+          'aWIvY29ubmVjdC1uZW9uLW1lZGlhLWd1YXJkcy5janNQSwECFAMUAAAACABJkXBduFJAV18FAADvDgAAKAAAAAAAAAAAAAAApIHaEQAAdGVz'
+          'dHMvY29ubmVjdC1uZW9uLW1lZGlhLW1pcnJvci50ZXN0LmNqc1BLBQYAAAAABAAEAFQBAAB/FwAAAAA='
+          )
+          bundle=zipfile.ZipFile(io.BytesIO(base64.b64decode(data)))
+          files={name:bundle.read(name) for name in bundle.namelist()}
+          assert len(files)==4 and all(not name.startswith('/') and '..' not in Path(name).parts for name in files)
+          assert all(name.startswith(('app/api/connect-neon/','lib/','tests/')) for name in files)
+          for name,content in files.items():
+              path=root/name
+              if path.exists() and path.read_bytes()!=content:
+                  raise SystemExit('SOURCE_DRIFT: existing source differs at '+name)
+              path.parent.mkdir(parents=True,exist_ok=True)
+              path.write_bytes(content)
+          print('Prepared',len(files),'files safely; no PWA or APK code overwritten')
+          PYEMBED
+      - name: Validate mirrored object security and server routes
+        shell: bash
+        run: |
+          node --check lib/connect-neon-media-guards.cjs
+          node --check app/api/connect-neon/admin/media-mirror/route.js
+          node --check app/api/connect-neon/media/route.js
+          node --test tests/connect-neon-media-mirror.test.cjs
+          node --test tests/connect-neon-consolidated.test.cjs
+          git diff --check
+      - name: Run TypeScript before expensive browser installation
+        run: npm run typecheck
+      - name: Install the Chromium required by existing tests
+        run: npx playwright-core install --with-deps chromium
+      - name: Run complete Connect regression suite
+        run: npm test
+      - name: Verify production build
+        run: npm run build
+      - name: Commit only validated server additions
+        shell: bash
+        run: |
+          git add lib/connect-neon-media-guards.cjs \
+            app/api/connect-neon/admin/media-mirror/route.js \
+            app/api/connect-neon/media/route.js \
+            tests/connect-neon-media-mirror.test.cjs
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'Media mirror already installed; no changes needed'
+            exit 0
+          fi
+          git config user.name 'Connect Neon CI'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Connect: private Neon media mirror, verified transfer and old APK fallback'
+          git push origin HEAD:main
