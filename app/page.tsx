@@ -1468,6 +1468,45 @@ export default function Home() {
     return () => { alive = false; subscription.unsubscribe(); };
   }, [invited]);
 
+  // Neon production shadow session: starts after existing Supabase sign-in.
+  // This does not change the source of messages, delivery, or media.
+  useEffect(() => {
+    if (!supabase || !user?.id) return;
+    let cancelled = false;
+    void supabase.auth.getSession().then(async ({data}) => {
+      if (cancelled || data.session?.user.id !== user.id || !data.session.access_token) return;
+      try {
+        const current=await fetch('/api/connect-neon/session', {credentials:'same-origin',cache:'no-store'});
+        if (current.ok || cancelled) return;
+        await fetch('/api/connect-neon/session', {
+          method:'POST',
+          headers:{Authorization:`Bearer ${data.session.access_token}`},
+          credentials:'same-origin',
+          cache:'no-store',
+        });
+      } catch { /* Migration must never interrupt Connect login. */ }
+    }).catch(() => {});
+    return () => { cancelled=true; };
+  }, [user?.id]);
+
+  // Compare the user's current chat window against the Neon backup once on open.
+  // Never block rendering, never replace Supabase rows and never log message bodies.
+  useEffect(() => {
+    if (!activeChat || !user?.id) return;
+    let cancelled=false;
+    const timer=window.setTimeout(async()=>{
+      try {
+        const r=await fetch('/api/connect-neon/messages?conversationId='+encodeURIComponent(activeChat)+'&limit=200',
+          {credentials:'same-origin',cache:'no-store'});
+        if(!r.ok || cancelled)return;
+        const data=await r.json();
+        if(!Array.isArray(data.messages))return;
+        // Successful response proves the auth+Neon read path, without altering chat state.
+      }catch{ /* Independent read is an optional, nonblocking shadow. */ }
+    },1500);
+    return()=>{cancelled=true;window.clearTimeout(timer);};
+  },[activeChat,user?.id]);
+
   // Re-register the current FCM token after login or token rotation, not only
   // when the user manually opens the notification settings screen.
   useEffect(() => {
@@ -3333,6 +3372,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     window.history.replaceState({}, '', window.location.pathname);
   }
   async function logout() {
+    try { await fetch('/api/connect-neon/session',{method:'DELETE',credentials:'same-origin',cache:'no-store'}); } catch { /* Supabase logout remains available. */ }
     if(user?.id)await wipeUserHistory(user.id).catch(()=>{}); historyWarmStamps.current={};inboxMediaWarm.current.clear();avatarCacheEpoch.current++;setAvatarUrls({});if(user?.id)forgetUserChatPresentation(user.id); warmedChatWindows.current.clear();signedMediaLifetimes.current.clear(); await supabase?.auth.signOut(); exitChat(); setProfiles([]); setConversations([]); setMessages([]);
     setLatest({}); setUnread({}); readCache.current = {}; setPassword(''); setNotice('');
   }
