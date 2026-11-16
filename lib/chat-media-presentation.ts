@@ -29,6 +29,7 @@ export function rememberChatWave(user:string,path:string,value:ChatWave){
   waveMemory.set(key,normalized);
   if(waveMemory.size>600)waveMemory.delete(waveMemory.keys().next().value!);
   try{localStorage.setItem(key,JSON.stringify(normalized));}catch{/* UI still works without persistent storage. */}
+  if(typeof window!=='undefined')window.dispatchEvent(new CustomEvent('connect:chat-wave',{detail:{user,path}}));
 }
 export function getHotChatPoster(user:string,path:string):string|null{
   if(isNativeMediaRuntime())return null;
@@ -46,35 +47,63 @@ export function forgetUserChatPresentation(user:string){
   for(const key of posterMemory.keys())if(key.startsWith(user+':'))posterMemory.delete(key);
 }
 
-/** Compute wave peaks for a small voice file before the chat becomes visible.
- * Large/remote audio still loads on demand. Never preload full-size video here.
+// CONNECT_PWA_VOICE_WAVE_LAZY_RESTORE_20261116
+// At most two parallel decodes; one promise per stable storage path.
+// Waveform cache is account-scoped and contains just 43 amplitudes + duration.
+const wavePending=new Map<string,Promise<void>>();
+const waveQueue:Array<()=>void>=[];
+let activeWaveJobs=0;
+function scheduleWave(task:()=>Promise<void>):Promise<void>{
+  return new Promise<void>(resolve=>{
+    const start=()=>{
+      activeWaveJobs++;
+      void task().finally(()=>{
+        activeWaveJobs--;
+        resolve();
+        const next=waveQueue.shift();if(next)next();
+      });
+    };
+    if(activeWaveJobs<2)start();else waveQueue.push(start);
+  });
+}
+/** Decode small voice messages only when visible or already held locally.
+ * The caller must not run this for every message in loaded history.
  */
-export async function prewarmChatWave(user:string,path:string,src:string,size:number=0):Promise<void>{
-  if(isNativeMediaRuntime()||!user||!path||!src||size<=0||readChatWave(user,path)||size>2*1024*1024)return;
-  let context:AudioContext|null=null;
-  try{
-    const controller=new AbortController();
-    const timeout=setTimeout(()=>controller.abort(),7000);
-    let bytes:ArrayBuffer;
+export function prewarmChatWave(user:string,path:string,src:string,size:number=0):Promise<void>{
+  if(isNativeMediaRuntime()||!user||!path||!src||size<=0||size>2*1024*1024||readChatWave(user,path))return Promise.resolve();
+  const key=user+':'+path;
+  const existing=wavePending.get(key);
+  if(existing)return existing;
+  const job=scheduleWave(async()=>{
+    if(readChatWave(user,path))return;
+    let context:AudioContext|null=null;
     try{
-      const response=await fetch(src,{signal:controller.signal});
-      if(!response.ok) return;
-      const length=Number(response.headers.get('content-length')||0);
-      if(length>2*1024*1024)return;
-      bytes=await response.arrayBuffer();
-      if(bytes.byteLength>2*1024*1024)return;
-    }finally{clearTimeout(timeout);}
-    context=new AudioContext();
-    const decoded=await context.decodeAudioData(bytes);
-    const samples=decoded.getChannelData(0),count=43;
-    const peaks=Array.from({length:count},(_,i)=>{
-      const start=Math.floor(i*samples.length/count),end=Math.max(start+1,Math.floor((i+1)*samples.length/count));
-      const stride=Math.max(1,Math.floor((end-start)/140));let peak=0;
-      for(let j=start;j<end;j+=stride)peak=Math.max(peak,Math.abs(samples[j]||0));
-      return peak;
-    });
-    const max=Math.max(.001,...peaks);
-    rememberChatWave(user,path,{bars:peaks.map(x=>Math.max(.14,Math.min(1,Math.pow(x/max,.72)))),duration:decoded.duration});
-  }catch{/* Audio decode is optional; playback retains its network fallback. */}
-  finally{if(context)void context.close().catch(()=>{});}
+      const controller=new AbortController();
+      const timeout=setTimeout(()=>controller.abort(),7000);
+      let bytes:ArrayBuffer;
+      try{
+        const response=await fetch(src,{signal:controller.signal});
+        if(!response.ok)return;
+        const length=Number(response.headers.get('content-length')||0);
+        if(length>2*1024*1024)return;
+        bytes=await response.arrayBuffer();
+        if(bytes.byteLength>2*1024*1024)return;
+      }finally{clearTimeout(timeout);}
+      context=new AudioContext();
+      const decoded=await context.decodeAudioData(bytes);
+      const samples=decoded.getChannelData(0),count=43;
+      const peaks=Array.from({length:count},(_,i)=>{
+        const start=Math.floor(i*samples.length/count),end=Math.max(start+1,Math.floor((i+1)*samples.length/count));
+        const stride=Math.max(1,Math.floor((end-start)/140));let peak=0;
+        for(let j=start;j<end;j+=stride)peak=Math.max(peak,Math.abs(samples[j]||0));
+        return peak;
+      });
+      const max=Math.max(.001,...peaks);
+      rememberChatWave(user,path,{bars:peaks.map(x=>Math.max(.14,Math.min(1,Math.pow(x/max,.72)))),duration:decoded.duration});
+    }catch{/* Waveform best effort; never affect playback. */}
+    finally{if(context)void context.close().catch(()=>{});}
+  });
+  wavePending.set(key,job);
+  void job.finally(()=>{if(wavePending.get(key)===job)wavePending.delete(key);});
+  return job;
 }

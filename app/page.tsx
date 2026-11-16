@@ -235,7 +235,7 @@ function voiceTime(seconds: number) {
 }
 
 const voiceWaveformCache = new Map<string, {bars:number[];duration:number}>();
-const VoicePlayer = memo(function VoicePlayer({ src, path, sentAt, mine, delivered, read, fileName, onSave }: { src:string;path:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean;fileName?:string;onSave?:()=>void }) {
+const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, mine, delivered, read, fileName, onSave }: { src:string;path:string;byteSize?:number;sentAt:string;mine:boolean;delivered:boolean;read:boolean;fileName?:string;onSave?:()=>void }) {
   const waveOwner=mediaCacheOwner();
   const savedWave=readChatWave(waveOwner,path);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -262,13 +262,45 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, sentAt, mine, deliver
   },[src,path,waveOwner]);
   const wavePointer=useRef<{x:number;y:number;started:number}|null>(null);
 
+  // CONNECT_PWA_VOICE_WAVE_LAZY_RESTORE_20261116
   useEffect(() => {
-    const cached = isNativeMediaRuntime()?voiceWaveformCache.get(path):readChatWave(waveOwner,path);
-    if (cached) { setBars(cached.bars); setDuration(cached.duration); }
-    else { setBars(Array(43).fill(0.28)); setDuration(0); }
-    // Never fetch or decode an audio file during initial chat render.
-    // Decoding 80 recordings at once blocked the very first play and text send.
-  }, [path,waveOwner]);
+    const syncWave=()=>{
+      const saved=isNativeMediaRuntime()?voiceWaveformCache.get(path):readChatWave(waveOwner,path);
+      if(saved){setBars(saved.bars);setDuration(saved.duration);return true;}
+      return false;
+    };
+    if(syncWave())return;
+    setBars(Array(43).fill(0.28));setDuration(0);
+    // Only a small, visible audio item can trigger a waveform download.
+    // Never walk the entire history or decode on chat mount.
+    if(isNativeMediaRuntime()||!waveOwner||!path||!src||!byteSize||byteSize>2*1024*1024)return;
+    let disposed=false;
+    const updated=(event:Event)=>{
+      const detail=(event as CustomEvent<{user:string;path:string}>).detail;
+      if(!disposed&&detail?.user===waveOwner&&detail.path===path)syncWave();
+    };
+    window.addEventListener('connect:chat-wave',updated);
+    const generate=async()=>{
+      try{
+        // Shares the existing bounded media-cache job with the audio prefetch;
+        // no second full-object GET if it was already being cached.
+        if(byteSize<=1024*1024)await prefetchChatAudio(src,waveOwner,byteSize);
+        if(disposed)return;
+        const identity='/storage/v1/object/sign/connect-attachments/'+path;
+        const local=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
+        if(disposed)return;
+        await prewarmChatWave(waveOwner,path,local.startsWith('blob:')?local:src,byteSize);
+        if(!disposed)syncWave();
+      }catch{/* Waveform is optional; playback must remain available. */}
+    };
+    const node=audioRef.current?.parentElement;
+    if(typeof IntersectionObserver==='undefined'||!node){void generate();return()=>{disposed=true;window.removeEventListener('connect:chat-wave',updated);};}
+    const observer=new IntersectionObserver(entries=>{
+      if(entries.some(entry=>entry.isIntersecting)){observer.disconnect();void generate();}
+    },{root:node.closest('.message-scroll'),rootMargin:'100px 0px'});
+    observer.observe(node);
+    return()=>{disposed=true;observer.disconnect();window.removeEventListener('connect:chat-wave',updated);};
+  }, [src,path,waveOwner,byteSize]);
 
   async function toggle() {
     const audio=audioRef.current;
@@ -2985,6 +3017,12 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       // It retains the original file when iOS cannot safely encode the audio/video.
       const prepared=await connectOptimizeMedia(file,{native:isNativeMediaRuntime(),onProgress:f=>setUploadProgress(Math.round(f*35))});
       file=prepared.file;
+      // Locally recorded PWA audio already exists in memory: build its wave
+      // without downloading the uploaded object again.
+      if(kind==='audio'&&!isNativeMediaRuntime()&&file.size>0&&file.size<=2*1024*1024){
+        const localVoiceUrl=URL.createObjectURL(file);
+        void prewarmChatWave(user.id,path,localVoiceUrl,file.size).finally(()=>URL.revokeObjectURL(localVoiceUrl));
+      }
       // The dimensions travel with the storage path, so the recipient can reserve
       // an accurate layout before downloading a newly sent photo.
       if (kind === 'image' && !/^sticker-\d+\.(?:png|webp|gif|jpe?g)$/i.test(file.name)) {
@@ -3393,8 +3431,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                                  : <span>Миниатюра…</span>}</button>)
                             : isVideoNote(m) ? <VideoNoteBubble src={attachmentUrls[m.attachment_path]} name={m.attachment_name||'Видеокружок'} path={m.attachment_path} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/>
                             : m.attachment_kind==='video' ? <ConnectInlineAutoplayVideo src={attachmentUrls[m.attachment_path]} path={m.attachment_path} onOpen={()=>setMediaViewer({url:attachmentUrls[m.attachment_path!],path:m.attachment_path!,name:m.attachment_name || 'Видео.mp4',kind:'video'})}/>
-                            : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]} path={m.attachment_path} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/></div>
-                            : isPlayableAudioFile(m) ? <VoicePlayer src={attachmentUrls[m.attachment_path]} path={m.attachment_path} sentAt={m.created_at} mine={mine} fileName={m.attachment_name||'Аудиофайл'} onSave={()=>void saveAttachment(m.attachment_path!,m.attachment_name||'Аудиофайл')} delivered={Boolean(currentPeerState?.delivered&&currentPeerState.delivered>=m.created_at||currentPeerState?.read&&currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read&&currentPeerState.read>=m.created_at)}/>
+                            : m.attachment_kind==='audio' ? <div className="connect-audio-download"><VoicePlayer src={attachmentUrls[m.attachment_path]} path={m.attachment_path} byteSize={m.attachment_size||0} sentAt={m.created_at} mine={mine} delivered={Boolean(currentPeerState?.delivered && currentPeerState.delivered>=m.created_at || currentPeerState?.read && currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read && currentPeerState.read>=m.created_at)}/></div>
+                            : isPlayableAudioFile(m) ? <VoicePlayer src={attachmentUrls[m.attachment_path]} path={m.attachment_path} byteSize={m.attachment_size||0} sentAt={m.created_at} mine={mine} fileName={m.attachment_name||'Аудиофайл'} onSave={()=>void saveAttachment(m.attachment_path!,m.attachment_name||'Аудиофайл')} delivered={Boolean(currentPeerState?.delivered&&currentPeerState.delivered>=m.created_at||currentPeerState?.read&&currentPeerState.read>=m.created_at)} read={Boolean(currentPeerState?.read&&currentPeerState.read>=m.created_at)}/>
                             : <button type="button" className="attachment-file" onClick={e=>{e.stopPropagation();void saveAttachment(m.attachment_path!,m.attachment_name || 'Файл')}}><Icon name="file" size={23}/><span>{m.attachment_name || 'Файл'}<small>{m.attachment_size ? (m.attachment_size/1048576).toFixed(1)+' МБ' : ''} · Скачать</small></span></button>}
                         </div>}
                         {/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/.test(forwardedMessage(m.body).text) ? (()=>{const id=forwardedMessage(m.body).text.match(/^\[\[connect-custom-sticker:([0-9a-f-]{36})\]\]$/)?.[1];const st=customStickers.find(x=>x.id===id);const link=st?customStickerUrl(st):'';return link?<img className="sent-sticker" src={link} alt="Стикер" loading="lazy"/>:(!st&&stickerCatalogReady?<span>Стикер недоступен</span>:<span className="connect-sticker-loading" role="status" aria-label="Загрузка стикера"><i/></span>)})() : stickerFromBody(forwardedMessage(m.body).text) ? <img className="sent-sticker" src={stickerUrl(stickerFromBody(forwardedMessage(m.body).text)!)} alt="Стикер" loading="lazy"/> : (parseAlbum(m.body).length ? null : forwardedMessage(m.body).text ? highlightMessage(forwardedMessage(m.body).text) : null)}
