@@ -195,8 +195,26 @@ export function installMediaCache(user: string, refreshUrl?: (source: string) =>
         if (!(el instanceof HTMLImageElement || el instanceof HTMLMediaElement)) return;
         const binding = bindings.get(el);
         if (!binding || binding.retried) return;
+        const failedSrc = el.getAttribute('src') || '';
+        if (failedSrc !== binding.current) return;
         binding.retried = true;
         void (async () => {
+            // CONNECT_MEDIA_STALE_IMAGE_ERROR_GUARD_20261117
+            // An old request can dispatch `error` after a healthy cached blob
+            // becomes current. Only evict when the CURRENT image fails decode.
+            if (el instanceof HTMLImageElement && originals.has(failedSrc)) {
+                try {
+                    await el.decode();
+                    if (alive && bindings.get(el) === binding && el.getAttribute('src') === failedSrc) {
+                        binding.retried = false;
+                        return;
+                    }
+                } catch { /* Decode really failed; follow existing repair path. */ }
+            }
+            if (!alive || bindings.get(el) !== binding || el.getAttribute('src') !== failedSrc) {
+                binding.retried = false;
+                return;
+            }
             const id = mediaIdentity(binding.source);
             if (!id) return;
             if (originals.has(el.src)) await clearCachedMedia('temporary', id).catch(() => {});

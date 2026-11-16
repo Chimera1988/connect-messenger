@@ -1463,9 +1463,15 @@ export default function Home() {
       if (invited && data.session) setSetup(true);
     }).catch(error=>{if(alive){setLoading(false);setNotice(error instanceof Error?error.message:'Не удалось восстановить настройки');}});
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!alive) return;
-      void Promise.resolve().then(async()=>{await window.__connectPrepareSession?.(session);if(!alive)return;setUser(session?.user || null);setLoading(false);if(event==='PASSWORD_RECOVERY'||(invited&&session))setSetup(true);}).catch(error=>{if(alive){setLoading(false);setNotice(error instanceof Error?error.message:'Не удалось восстановить настройки');}});
-    });
+    if (!alive) return;
+    if (event === 'SIGNED_OUT' || !session) {
+      // CONNECT_PWA_LOGOUT_SESSION_RECOVERY_20261117
+      setUser(null); setLoading(false); setSetup(false);
+      void Promise.resolve().then(() => window.__connectPrepareSession?.(null)).catch(() => {});
+      return;
+    }
+    void Promise.resolve().then(async()=>{await window.__connectPrepareSession?.(session);if(!alive)return;setUser(session.user);setLoading(false);if(event==='PASSWORD_RECOVERY'||(invited&&session))setSetup(true);}).catch(error=>{if(alive){setLoading(false);setNotice(error instanceof Error?error.message:'Не удалось восстановить настройки');}});
+  });
     return () => { alive = false; subscription.unsubscribe(); };
   }, [invited]);
 
@@ -3478,9 +3484,30 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     window.history.replaceState({}, '', window.location.pathname);
   }
   async function logout() {
-    try { await fetch('/api/connect-neon/session',{method:'DELETE',credentials:'same-origin',cache:'no-store'}); } catch { /* Supabase logout remains available. */ }
-    if(user?.id)await wipeUserHistory(user.id).catch(()=>{}); historyWarmStamps.current={};inboxMediaWarm.current.clear();avatarCacheEpoch.current++;setAvatarUrls({});if(user?.id)forgetUserChatPresentation(user.id); warmedChatWindows.current.clear();signedMediaLifetimes.current.clear(); await supabase?.auth.signOut(); exitChat(); setProfiles([]); setConversations([]); setMessages([]);
-    setLatest({}); setUnread({}); readCache.current = {}; setPassword(''); setNotice('');
+    if (!supabase || busy) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.auth.signOut({ scope: 'local' });
+      if (error) { setNotice('Не удалось выйти: ' + error.message); return; }
+      // Auth listener may lag or fail: transition independently.
+      setUser(null); setLoading(false); setSetup(false);
+      try {
+        const response = await fetch('/api/connect-neon/session', {method:'DELETE',credentials:'same-origin',cache:'no-store'});
+        if (!response.ok) console.warn('Connect Neon logout HTTP',response.status);
+      } catch { console.warn('Connect Neon logout request failed'); }
+      if (user?.id) await wipeUserHistory(user.id).catch(() => {});
+      historyWarmStamps.current = {};
+      inboxMediaWarm.current.clear();
+      avatarCacheEpoch.current++;
+      setAvatarUrls({});
+      if (user?.id) forgetUserChatPresentation(user.id);
+      warmedChatWindows.current.clear(); signedMediaLifetimes.current.clear();
+      exitChat(); setProfiles([]); setConversations([]); setMessages([]);
+      setLatest({}); setUnread({}); readCache.current = {};
+      setPassword(''); setNotice('');
+    } catch (error) {
+      setNotice('Не удалось выйти: ' + (error instanceof Error ? error.message : 'Ошибка авторизации'));
+    } finally { setBusy(false); }
   }
 
   const keyboardOpen = frame ? window.innerHeight - frame.height - frame.top > 130 : false;
