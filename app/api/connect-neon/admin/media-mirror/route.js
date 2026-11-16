@@ -1,8 +1,10 @@
 import {createClient} from '@supabase/supabase-js';
 import {S3Client,PutObjectCommand,GetObjectCommand,DeleteObjectCommand} from '@aws-sdk/client-s3';
+import {getSignedUrl} from '@aws-sdk/s3-request-presigner';
 import {createHash} from 'node:crypto';
 import {getPool} from '../../../../../lib/connect-neon-live-db.cjs';
 import {validMirrorToken,validMirrorItem,safeStoragePath,validStorageEndpoint} from '../../../../../lib/connect-neon-media-guards.cjs';
+import {verifyMirrorReadback} from '../../../../../lib/connect-neon-media-verify.cjs';
 export const runtime='nodejs';
 export const maxDuration=60;
 let storage;
@@ -22,21 +24,34 @@ function neonStorage(){
 }
 const sha=buffer=>createHash('sha256').update(buffer).digest('hex');
 async function copyOne(source,s3,item){
- if(!validMirrorItem(item))throw Error('Unsafe object metadata');
- const {bucket_id:b,path,source_etag,source_size,mime_type}=item;
- const {data,error}=await source.storage.from(b).download(path);
- if(error||!data)throw Error('Source object unavailable');
- const bytes=Buffer.from(await data.arrayBuffer());
- if(bytes.length!==Number(source_size)||!bytes.length)throw Error('Source object changed while downloading');
- await s3.send(new PutObjectCommand({Bucket:b,Key:path,ContentType:mime_type,Body:bytes,ContentLength:bytes.length}));
- const response=await s3.send(new GetObjectCommand({Bucket:b,Key:path}));
- const received=response.Body?Buffer.from(await response.Body.transformToByteArray()):Buffer.alloc(0);
- const digest=sha(bytes);
- if(received.length!==bytes.length||sha(received)!==digest)throw Error('Destination checksum verification failed');
- const confirmed=await source.rpc('connect_neon_media_mirror_confirm',
-  {p_bucket:b,p_path:path,p_etag:source_etag,p_size:bytes.length,p_sha256:digest});
- if(confirmed.error||confirmed.data!==true)throw Error('Source version changed after transfer');
- return true;
+ let stage='validation';
+ try{
+  if(!validMirrorItem(item))throw Error('Unsafe object metadata');
+  const {bucket_id:b,path,source_etag,source_size,mime_type}=item;
+  stage='source_download';
+  const {data,error}=await source.storage.from(b).download(path);
+  if(error||!data)throw Error('Source object unavailable');
+  const bytes=Buffer.from(await data.arrayBuffer());
+  if(bytes.length!==Number(source_size)||!bytes.length)throw Error('Source object changed while downloading');
+  const digest=sha(bytes);
+  stage='neon_upload';
+  await s3.send(new PutObjectCommand({Bucket:b,Key:path,ContentType:mime_type,Body:bytes,ContentLength:bytes.length}));
+  stage='neon_readback';
+  // Native fetch on a narrowly validated presigned GET avoids SDK response-body
+  // transformations. Verify every returned byte before recording completion.
+  const signed=await getSignedUrl(s3,new GetObjectCommand({Bucket:b,Key:path}),{expiresIn:120});
+  await verifyMirrorReadback({url:signed,bucket:b,path,expectedBytes:bytes.length,expectedSha256:digest});
+  stage='source_confirm';
+  const confirmed=await source.rpc('connect_neon_media_mirror_confirm',
+   {p_bucket:b,p_path:path,p_etag:source_etag,p_size:bytes.length,p_sha256:digest});
+  if(confirmed.error||confirmed.data!==true)throw Error('Source version changed after transfer');
+  return true;
+ }catch(err){
+  // Do not expose private filenames, image bytes, signed URLs or credentials.
+  const failure=new Error('Media mirroring failed');
+  failure.mirrorStage=stage;
+  throw failure;
+ }
 }
 async function reconcileAvatars(source){
  const {data,error}=await source.rpc('connect_neon_media_mirror_current_avatars');
@@ -76,10 +91,13 @@ export async function POST(request){
   const {data:jobs,error}=await source.rpc('connect_neon_media_mirror_candidates',{p_limit:limit});
   if(error||!Array.isArray(jobs))throw Error('Mirror queue not available');
   let copied=0,failures=0;
+  const failureStages=Object.create(null);
   for(const item of jobs){
    try{await copyOne(source,s3,item);copied++;}
-   catch{
+   catch(err){
     failures++;
+    const stage=typeof err?.mirrorStage==='string'?err.mirrorStage:'unexpected';
+    failureStages[stage]=(failureStages[stage]||0)+1;
     if(validMirrorItem(item))await source.rpc('connect_neon_media_mirror_failed',
        {p_bucket:item.bucket_id,p_path:item.path,p_etag:item.source_etag});
    }
@@ -87,7 +105,7 @@ export async function POST(request){
   const avatars=await reconcileAvatars(source);
   const stale=await deleteStale(source,s3);
   const {data:stats,error:statsError}=await source.rpc('connect_neon_media_mirror_stats');
-  return response({ok:!statsError,copied,failures,avatars_reconciled:avatars,stale_removed:stale.deleted,
+  return response({ok:!statsError,copied,failures,failure_stages:failureStages,avatars_reconciled:avatars,stale_removed:stale.deleted,
      stale_errors:stale.failures,stats:statsError?null:stats});
  }catch{
   return response({error:'Media mirroring unavailable'},503);
