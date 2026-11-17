@@ -66,6 +66,19 @@ function mediaUrl(url: string): string {
   return url;
 }
 
+const CONNECT_LOCAL_LOGOUT_FLAG='connect-local-logout-v1';
+function locallyLoggedOut():boolean {try{return localStorage.getItem(CONNECT_LOCAL_LOGOUT_FLAG)==='1';}catch{return false;}}
+function clearStoredConnectAuth():void {
+  try {
+    if(!supabaseUrl)return;
+    const host=new URL(supabaseUrl).hostname;
+    if(!host.endsWith('.supabase.co'))return;
+    const ref=host.slice(0,-'.supabase.co'.length);
+    if(!/^[a-z0-9-]{4,64}$/.test(ref))return;
+    localStorage.removeItem(`sb-${ref}-auth-token`);
+  }catch{/* Storage restrictions must never prevent the screen from locking. */}
+}
+
 const supabase = supabaseUrl && supabaseKey
   ? createClient(supabaseUrl, supabaseKey, {
       auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true },
@@ -1101,6 +1114,11 @@ export default function Home() {
   // Sticker input lives inside each pack's label; native iOS picker retains the tap gesture.
 
   const [user, setUser] = useState<User | null>(null);
+  // CONNECT_PWA_AUTH_FAIL_CLOSED_20261117: stored session alone is never authorization.
+  const [authGate, setAuthGate] = useState<'checking'|'verified'|'denied'|'offline'>('checking');
+  const authSequence = useRef(0);
+  const passwordRecoveryPending = useRef(false);
+  const loginInProgress = useRef(false);
   const [loading, setLoading] = useState(true);
   const [splashVisible, setSplashVisible] = useState(()=>typeof window==='undefined'||!window.__connectNativeCall||window.__connectNativeCall.phase==='idle');
   const [directoryReady, setDirectoryReady] = useState(false);
@@ -1452,28 +1470,114 @@ export default function Home() {
 
   useEffect(() => { setDirectoryReady(false); }, [user?.id]);
 
-  useEffect(() => {
-    if (!supabase) { setLoading(false); return; }
-    let alive = true;
-    void supabase.auth.getSession().then(async ({ data, error }) => {
-      await window.__connectPrepareSession?.(data.session);
-      if (!alive) return;
-      setUser(data.session?.user || null); setLoading(false);
-      if (error) setNotice(error.message);
-      if (invited && data.session) setSetup(true);
-    }).catch(error=>{if(alive){setLoading(false);setNotice(error instanceof Error?error.message:'Не удалось восстановить настройки');}});
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-    if (!alive) return;
-    if (event === 'SIGNED_OUT' || !session) {
-      // CONNECT_PWA_LOGOUT_SESSION_RECOVERY_20261117
-      setUser(null); setLoading(false); setSetup(false);
-      void Promise.resolve().then(() => window.__connectPrepareSession?.(null)).catch(() => {});
+  const denyPrivateAccess = useCallback(() => {
+    setUser(null);setSetup(false);setAuthGate('denied');setLoading(false);
+    setActiveChat(null);setProfileView(null);setMessages([]);
+    setConversations([]);setProfiles([]);setAvatarUrls({});
+    setLatest({});setUnread({});setAdmin(false);setSettingsPage('home');
+    setMediaViewer(null);setMenuMessage(null);setForwardIds([]);
+    setVideoNoteOpen(false);setCrop(null);setProfileMediaOpen(null);
+  },[]);
+
+  // The only path to the authenticated UI is a live, server-verified Supabase session.
+  const verifyAuth = useCallback(async () => {
+    if (!supabase) { setUser(null); setAuthGate('denied'); setLoading(false); return; }
+    const sequence = ++authSequence.current;
+    if(locallyLoggedOut()){
+      if(loginInProgress.current)return;
+      clearStoredConnectAuth();
+      denyPrivateAccess();
       return;
     }
-    void Promise.resolve().then(async()=>{await window.__connectPrepareSession?.(session);if(!alive)return;setUser(session.user);setLoading(false);if(event==='PASSWORD_RECOVERY'||(invited&&session))setSetup(true);}).catch(error=>{if(alive){setLoading(false);setNotice(error instanceof Error?error.message:'Не удалось восстановить настройки');}});
-  });
-    return () => { alive = false; subscription.unsubscribe(); };
-  }, [invited]);
+    setAuthGate('checking'); setLoading(true);
+    let timer:ReturnType<typeof setTimeout> | undefined;
+    let controller:AbortController | undefined;
+    try {
+      const {data,error} = await Promise.race([
+        supabase.auth.getSession(),
+        new Promise<never>((_,reject) => { timer=setTimeout(()=>reject(new Error('SESSION_CHECK_TIMEOUT')),12000); }),
+      ]);
+      if (sequence !== authSequence.current) return;
+      if (error && !data.session) {
+        const code = error.name || '';
+        if (code !== 'AuthSessionMissingError' && code !== 'AuthApiError') throw error;
+      }
+      const session = data.session;
+      if (!session?.access_token) {
+        clearStoredConnectAuth();
+        denyPrivateAccess();
+        void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
+        return;
+      }
+      controller = new AbortController();
+      if(timer)clearTimeout(timer);
+      timer=setTimeout(()=>controller?.abort(),12000);
+      const response = await fetch('/api/auth/verify', {
+        method:'GET',credentials:'same-origin',cache:'no-store',
+        headers:{Authorization:`Bearer ${session.access_token}`},signal:controller.signal,
+      });
+      if (sequence !== authSequence.current) return;
+      if (response.status === 401 || response.status === 403) {
+        clearStoredConnectAuth();
+        denyPrivateAccess();
+        void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
+        return;
+      }
+      if (!response.ok) throw new Error('SESSION_SERVER_UNAVAILABLE');
+      const result = await response.json();
+      if (!result?.ok || result.userId !== session.user.id) throw new Error('SESSION_NOT_CONFIRMED');
+      if (sequence !== authSequence.current) return;
+      await window.__connectPrepareSession?.(session);
+      if (sequence !== authSequence.current) return;
+      setUser(session.user); setAuthGate('verified'); setLoading(false);
+      if (invited || passwordRecoveryPending.current) setSetup(true);
+      passwordRecoveryPending.current=false;
+    } catch {
+      if (sequence === authSequence.current) {
+        // Network/verification failure: lock the UI without destroying a valid refresh token.
+        setUser(null); setAuthGate('offline'); setLoading(false);
+      }
+    } finally {if(timer)clearTimeout(timer);controller?.abort();}
+  },[invited,denyPrivateAccess]);
+
+  useEffect(() => {
+    if(!supabase){setAuthGate('denied');setLoading(false);return;}
+    let active=true;
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((event,session)=>{
+      if(!active)return;
+      if(event==='SIGNED_OUT'||!session){
+        // CONNECT_PWA_LOGOUT_SESSION_RECOVERY_20261117
+        ++authSequence.current;
+        denyPrivateAccess();
+        void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
+      } else if(event==='INITIAL_SESSION'||event==='SIGNED_IN'||event==='TOKEN_REFRESHED'||event==='USER_UPDATED'||event==='PASSWORD_RECOVERY'){
+        if(event==='PASSWORD_RECOVERY')passwordRecoveryPending.current=true;
+        // Supabase auth callbacks must not await other auth methods synchronously.
+        queueMicrotask(()=>{if(active)void verifyAuth();});
+      }
+    });
+    void verifyAuth();
+    const onOffline=()=>{
+      ++authSequence.current;
+      setUser(null);setAuthGate('offline');setLoading(false);
+    };
+    const onReturn=()=>{if(document.visibilityState==='visible')void verifyAuth();};
+    window.addEventListener('offline',onOffline);
+    window.addEventListener('online',onReturn);
+    window.addEventListener('focus',onReturn);
+    window.addEventListener('pageshow',onReturn);
+    document.addEventListener('visibilitychange',onReturn);
+    const timer=window.setInterval(onReturn,60000);
+    return ()=>{
+      active=false;++authSequence.current;subscription.unsubscribe();
+      window.removeEventListener('offline',onOffline);
+      window.removeEventListener('online',onReturn);
+      window.removeEventListener('focus',onReturn);
+      window.removeEventListener('pageshow',onReturn);
+      document.removeEventListener('visibilitychange',onReturn);
+      window.clearInterval(timer);
+    };
+  },[verifyAuth,denyPrivateAccess]);
 
   // Re-register the current FCM token after login or token rotation, not only
   // when the user manually opens the notification settings screen.
@@ -3314,6 +3418,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
 
   async function login(e: FormEvent) {
     e.preventDefault(); if (!supabase) return;
+    loginInProgress.current=true;
     setBusy(true); setNotice('');
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -3324,10 +3429,15 @@ const currentName = selected?.other?.display_name || 'Собеседник';
         }),
       ]);
       if (result.error) setNotice('Не удалось войти: ' + result.error.message);
+      else {
+        try{localStorage.removeItem(CONNECT_LOCAL_LOGOUT_FLAG);}catch{}
+        void verifyAuth();
+      }
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Ошибка соединения с сервером');
     } finally {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
+      loginInProgress.current=false;
       setBusy(false);
     }
   }
@@ -3340,36 +3450,52 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     window.history.replaceState({}, '', window.location.pathname);
   }
   async function logout() {
-    if (!supabase || busy) return;
-    setBusy(true);
+    if (!supabase) return;
+    // A missing remote session is NOT a reason to leave the private UI unlocked.
+    ++authSequence.current;
+    const accountId=user?.id;
+    try{localStorage.setItem(CONNECT_LOCAL_LOGOUT_FLAG,'1');}catch{}
+    setAuthGate('denied');setUser(null); setLoading(false); setSetup(false);
+    setBusy(true);setNotice('');
+    exitChat();setProfiles([]);setConversations([]);setMessages([]);
+    setLatest({});setUnread({});readCache.current={};setPassword('');
+    historyWarmStamps.current={};inboxMediaWarm.current.clear();
+    avatarCacheEpoch.current++;setAvatarUrls({});
+    if(accountId)forgetUserChatPresentation(accountId);
+    warmedChatWindows.current.clear();signedMediaLifetimes.current.clear();
+    let signoutTimeout:ReturnType<typeof setTimeout>|undefined;
     try {
-      const { error } = await supabase.auth.signOut({ scope: 'local' });
-      if (error) { setNotice('Не удалось выйти: ' + error.message); return; }
-      // Auth listener may lag or fail: transition independently.
-      setUser(null); setLoading(false); setSetup(false);
-      if (user?.id) await wipeUserHistory(user.id).catch(() => {});
-      historyWarmStamps.current = {};
-      inboxMediaWarm.current.clear();
-      avatarCacheEpoch.current++;
-      setAvatarUrls({});
-      if (user?.id) forgetUserChatPresentation(user.id);
-      warmedChatWindows.current.clear(); signedMediaLifetimes.current.clear();
-      exitChat(); setProfiles([]); setConversations([]); setMessages([]);
-      setLatest({}); setUnread({}); readCache.current = {};
-      setPassword(''); setNotice('');
-    } catch (error) {
-      setNotice('Не удалось выйти: ' + (error instanceof Error ? error.message : 'Ошибка авторизации'));
-    } finally { setBusy(false); }
+      const {error}=await Promise.race([
+        supabase.auth.signOut({ scope: 'local' }),
+        new Promise<{error:Error}>((resolve)=>{signoutTimeout=setTimeout(()=>resolve({error:new Error('signout_timeout')}),4500);}),
+      ]);
+      if(error && error.name!=='AuthSessionMissingError'){
+        setNotice('Локальный выход выполнен. Серверный выход не подтверждён.');
+      }
+    }catch{
+      setNotice('Локальный выход выполнен. Серверный выход не подтверждён.');
+    }finally{
+      if(signoutTimeout)clearTimeout(signoutTimeout);
+      // Even if Supabase returns Auth session missing or the network fails,
+      // ensure a cold PWA restart cannot reopen from stale local credentials.
+      clearStoredConnectAuth();
+      if(accountId)void wipeUserHistory(accountId).catch(()=>{});
+      setBusy(false);
+    }
   }
 
   const keyboardOpen = frame ? window.innerHeight - frame.height - frame.top > 130 : false;
   const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
   return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
     {splashVisible && <ConnectSplashScreen ready={!loading && (!user || directoryReady)} onComplete={finishSplash}/>}
-    {supabase && user && !setup && <ConnectPushGuardian supabase={supabase} userId={user.id}/>}
+    {supabase && user && authGate==='verified' && !setup && <ConnectPushGuardian supabase={supabase} userId={user.id}/>}
     {!supabase ? <div className="connection-error"><Icon name="info" size={32}/><h2>Подключение не настроено</h2><p>Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY в Vercel.</p></div>
-      : loading ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
-        : !user || setup ? <div className="login-screen">
+      : loading || authGate==='checking' ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
+        : authGate==='offline' ? <div className="login-screen" role="status">
+            <div className="login-brand"><img src="/icon-192.png" alt=""/><h1>Connect</h1></div>
+            <div className="login-form"><h2>Проверка входа</h2><p className="login-hint">Сервер авторизации недоступен. Переписки и настройки закрыты до подтверждения сессии.</p><button className="primary-action" type="button" onClick={()=>void verifyAuth()}>Повторить проверку</button><button className="settings-action secondary" type="button" onClick={()=>void logout()}>Выйти и войти заново</button></div>
+          </div>
+        : !user || authGate!=='verified' || setup ? <div className="login-screen">
           <div className="login-brand"><img src="/icon-192.png" alt=""/><h1>Connect</h1><p>Личные разговоры. Только свои.</p></div>
           <form className="login-form" onSubmit={setup ? savePassword : login}>
             <h2>{setup ? 'Создать пароль' : 'Вход в Connect'}</h2>
@@ -3614,11 +3740,11 @@ const currentName = selected?.other?.display_name || 'Собеседник';
             </div><nav className="bottom-nav" aria-label="Основная навигация">
               {([{ id: 'chats' as const, label: 'Чаты', icon: 'chats' as const }, { id: 'contacts' as const, label: 'Контакты', icon: 'contacts' as const }, { id: 'settings' as const, label: 'Настройки', icon: 'settings' as const }]).map(item => <button type="button" key={item.id} className={'nav-tab' + (tab === item.id ? ' selected' : '')} onClick={() => switchTab(item.id)}><span className="nav-symbol"><Icon name={item.icon} size={24}/>{item.id === 'chats' && unreadTotal > 0 && <em className="connect-nav-count" aria-hidden="true">{unreadTotal > 99 ? '99+' : unreadTotal}</em>}</span><small>{item.label}</small></button>)}
             </nav></>}
-    {crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}
+    {authGate==='verified' && user && crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}
     {notice && <button type="button" className="notice-toast"  role="status" onClick={() => setNotice('')}>{notice} <Icon name="close" size={16}/></button>}
-    {forwardIds.length>0&&<div className="forward-overlay"><div className="forward-dialog"><header><strong>Переслать сообщения</strong><button type="button" onClick={()=>setForwardIds([])}><Icon name="close" size={21}/></button></header><p>Выберите получателя · {forwardIds.length} сообщ.</p><div className="forward-contacts">{contacts.map(p=><button type="button" key={p.id} disabled={busy} onClick={()=>void forwardTo(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span>{p.display_name}</span><Icon name="chevron" size={18}/></button>)}</div></div></div>}
-    {videoNoteOpen && <VideoNoteRecorder onClose={()=>{setVideoNoteRecording(false);setVideoNoteOpen(false)}} onRecordingChange={setVideoNoteRecording} onSend={file=>{setVideoNoteRecording(false);setVideoNoteOpen(false);void sendAttachment(file)}}/>}
-    {mediaViewer && <ConnectGalleryViewer
+    {authGate==='verified' && user && forwardIds.length>0&&<div className="forward-overlay"><div className="forward-dialog"><header><strong>Переслать сообщения</strong><button type="button" onClick={()=>setForwardIds([])}><Icon name="close" size={21}/></button></header><p>Выберите получателя · {forwardIds.length} сообщ.</p><div className="forward-contacts">{contacts.map(p=><button type="button" key={p.id} disabled={busy} onClick={()=>void forwardTo(p)}><Avatar name={p.display_name} id={p.id} url={avatarUrls[p.id]}/><span>{p.display_name}</span><Icon name="chevron" size={18}/></button>)}</div></div></div>}
+    {authGate==='verified' && user && videoNoteOpen && <VideoNoteRecorder onClose={()=>{setVideoNoteRecording(false);setVideoNoteOpen(false)}} onRecordingChange={setVideoNoteRecording} onSend={file=>{setVideoNoteRecording(false);setVideoNoteOpen(false);void sendAttachment(file)}}/>}
+    {authGate==='verified' && user && mediaViewer && <ConnectGalleryViewer
       items={galleryIndex>=0?gallery:[...gallery,mediaViewer]}
       currentPath={mediaViewer.path}
       onClose={()=>setMediaViewer(null)}
@@ -3642,7 +3768,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
         });
       }}
     />}
-    {menuMessage && <div className="context-overlay" role="presentation" onClickCapture={e=>{if(Date.now()<suppressMessageClick.current){e.preventDefault();e.stopPropagation();}}} onPointerDownCapture={()=>{suppressMessageClick.current=0;clearGestureTimer();gesture.current=null;}} onKeyDownCapture={()=>{suppressMessageClick.current=0;}}><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
+    {authGate==='verified' && user && menuMessage && <div className="context-overlay" role="presentation" onClickCapture={e=>{if(Date.now()<suppressMessageClick.current){e.preventDefault();e.stopPropagation();}}} onPointerDownCapture={()=>{suppressMessageClick.current=0;clearGestureTimer();gesture.current=null;}} onKeyDownCapture={()=>{suppressMessageClick.current=0;}}><button className="context-backdrop" aria-label="Закрыть меню" type="button" onClick={() => setMenuMessage(null)}/><div className={"floating-menu menu-"+menuSide} role="dialog" aria-modal="true" aria-label="Действия с сообщением" style={{ top: `${menuTop}px` }}>
       {isKeyboardSticker(menuMessage) && <button type="button" onClick={() => void saveKeyboardStickerFavorite(menuMessage)} disabled={busy}><Icon name="plus" size={22}/>Добавить в избранное</button>}
       <button type="button" onClick={() => beginForward([menuMessage.id])}><Icon name="forward" size={22}/>Переслать</button>
       <button type="button" onClick={() => startSelection([menuMessage.id])}><Icon name="check" size={22}/>Выбрать</button>
