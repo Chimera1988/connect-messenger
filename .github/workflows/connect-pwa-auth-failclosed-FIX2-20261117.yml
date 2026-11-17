@@ -1,0 +1,517 @@
+name: Connect PWA | Fail-closed session security 2026-11-17
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-auth-security
+  cancel-in-progress: false
+
+jobs:
+  auth-guard:
+    name: Verify and release secure PWA login gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout production source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Validate source and prevent accidental overwrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test -s AGENTS.md && test -s app/page.tsx && test -s package-lock.json
+          test -s lib/server/admin.ts
+          test -s tests/pwa-logout-regression.test.cjs
+          test ! -e app/api/auth/verify/route.ts
+          test ! -e tests/connect-auth-session-lock.test.cjs
+          test ! -e sql/connect_auth_session_active.sql
+          git diff --quiet && git diff --cached --quiet
+      - name: Reproduce missing-session bypass with failing tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tests
+          cat > 'auth.test.cjs' <<'AUTH_REGRESSION_TEST_END'
+          const {test}=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+          const root=path.resolve(__dirname,'..');
+          const read=(p)=>fs.readFileSync(path.join(root,p),'utf8');
+
+          test('cached session cannot unlock Connect without server-side verification',()=>{
+           const page=read('app/page.tsx');
+           assert.match(page,/CONNECT_PWA_AUTH_FAIL_CLOSED_20261117/);
+           assert.match(page,/fetch\('\/api\/auth\/verify'/);
+           assert.match(page,/response\.status === 401 \|\| response\.status === 403/);
+           assert.match(page,/authGate!=='verified'/);
+           assert.match(page,/setUser\(null\);setAuthGate\('offline'\)/);
+           assert.match(page,/document\.addEventListener\('visibilitychange',onReturn\)/);
+           assert.match(page,/window\.addEventListener\('online',onReturn\)/);
+           assert.match(page,/window\.addEventListener\('offline',onOffline\)/);
+          });
+
+          test('local logout locks the private UI even when Supabase says session missing',()=>{
+           const page=read('app/page.tsx');
+           const logout=page.split('  async function logout() {')[1].split('\n  const keyboardOpen')[0];
+           assert.match(logout,/setAuthGate\('denied'\);setUser\(null\)/);
+           assert.match(logout,/error\.name!=='AuthSessionMissingError'/);
+           assert.match(logout,/clearStoredConnectAuth\(\)/);
+           assert.match(logout,/authSequence\.current/);
+           assert.doesNotMatch(logout,/setNotice\('Не удалось выйти:/);
+          });
+
+          test('verification endpoint checks real identity, profile, and active session',()=>{
+           const route=read('app/api/auth/verify/route.ts');
+           assert.match(route,/client\.auth\.getUser\(auth\[1\]\)/);
+           assert.match(route,/sessionIdFromAuthenticatedToken\(auth\[1\],user\.id\)/);
+           assert.match(route,/client\.rpc\('connect_auth_session_active'/);
+           assert.match(route,/valid!==true/);
+           assert.match(route,/no-store, private/);
+           assert.doesNotMatch(route,/NEXT_PUBLIC_SUPABASE_SERVICE_ROLE/);
+          });
+
+          test('server-side database function checks Supabase auth.sessions and is not public',()=>{
+           const sql=read('sql/connect_auth_session_active.sql');
+           assert.match(sql,/auth\.sessions/);
+           assert.match(sql,/s\.user_id=p_user_id AND s\.id=p_session_id/);
+           assert.match(sql,/REVOKE ALL.*PUBLIC, anon, authenticated/);
+           assert.match(sql,/GRANT EXECUTE.*service_role/);
+           assert.doesNotMatch(sql,/DROP |DELETE FROM |TRUNCATE /);
+          });
+
+          test('modals outside the main screen cannot show media, message actions or contacts without verified auth',()=>{
+           const page=read('app/page.tsx');
+           for(const exposed of ['crop && <AvatarCropper','forwardIds.length>0&&<div','videoNoteOpen && <VideoNoteRecorder','mediaViewer && <ConnectGalleryViewer','menuMessage && <div']){
+            assert(page.includes("authGate==='verified' && user && "+exposed),exposed);
+           }
+          });
+          AUTH_REGRESSION_TEST_END
+          mv auth.test.cjs tests/connect-auth-session-lock.test.cjs
+          if node --test tests/connect-auth-session-lock.test.cjs > "$RUNNER_TEMP/connect-auth-red.log" 2>&1; then
+            echo 'Expected fail-closed auth tests to fail before patch' >&2; exit 1
+          fi
+          grep -q 'not ok' "$RUNNER_TEMP/connect-auth-red.log"
+          echo 'RED: old code allows a cached session without a live server check.'
+      - name: Apply strict Supabase session gate and server verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/api/auth/verify sql
+          cat > 'route.ts' <<'AUTH_VERIFY_ROUTE_END'
+          import {adminClient} from '../../../../lib/server/admin';
+
+          export const runtime='nodejs';
+          export const dynamic='force-dynamic';
+
+          const noStore={'Cache-Control':'no-store, private','X-Content-Type-Options':'nosniff'};
+          const json=(body:object,status=200)=>Response.json(body,{status,headers:noStore});
+          const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+          // Decode only *after* Supabase Auth has validated the signature of this exact JWT.
+          function sessionIdFromAuthenticatedToken(token:string,userId:string):string|null {
+            try{
+              const parts=token.split('.');
+              if(parts.length!==3)return null;
+              const payload=JSON.parse(Buffer.from(parts[1],'base64url').toString('utf8'));
+              return payload?.sub===userId && typeof payload.session_id==='string' && uuid.test(payload.session_id)
+                ? payload.session_id : null;
+            }catch{return null;}
+          }
+
+          export async function GET(request:Request):Promise<Response>{
+            const auth=/^Bearer ([^\s]+)$/.exec(request.headers.get('authorization')||'');
+            if(!auth||auth[1].length>8192)return json({ok:false,error:'Требуется авторизация'},401);
+            try{
+              const client=adminClient();
+              const {data:{user},error:identityError}=await client.auth.getUser(auth[1]);
+              if(identityError){
+                // Failure to reach Auth is not proof that the session was revoked.
+                return json({ok:false,error:'Ошибка проверки авторизации'},
+                  typeof identityError.status !== 'number' || identityError.status===0 || identityError.status>=500 ? 503 : 401);
+              }
+              if(!user)return json({ok:false,error:'Сессия недействительна'},401);
+              const id=sessionIdFromAuthenticatedToken(auth[1],user.id);
+              if(!id)return json({ok:false,error:'Сессия недействительна'},401);
+              const {data:profile,error:profileError}=await client.from('profiles').select('is_blocked').eq('id',user.id).maybeSingle();
+              if(profileError)return json({ok:false,error:'Ошибка проверки доступа'},503);
+              if(!profile||profile.is_blocked)return json({ok:false,error:'Доступ закрыт'},403);
+              const {data:valid,error}=await client.rpc('connect_auth_session_active',{
+                p_user_id:user.id,p_session_id:id,
+              });
+              if(error){
+                console.error('Connect auth session verification failed:',error.code||'RPC_ERROR');
+                return json({ok:false,error:'Ошибка проверки сессии'},503);
+              }
+              if(valid!==true)return json({ok:false,error:'Сессия завершена'},401);
+              return json({ok:true,userId:user.id});
+            }catch{
+              return json({ok:false,error:'Сервер авторизации недоступен'},503);
+            }
+          }
+          AUTH_VERIFY_ROUTE_END
+          mv route.ts app/api/auth/verify/route.ts
+          cat > 'check.sql' <<'AUTH_SQL_END'
+          -- Applied to Supabase by an administrator; kept in GitHub for auditability.
+          -- Client users and anonymous callers have no EXECUTE privilege.
+          BEGIN;
+          CREATE OR REPLACE FUNCTION public.connect_auth_session_active(p_user_id uuid,p_session_id uuid)
+          RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog
+          AS $$
+            SELECT p_user_id IS NOT NULL AND p_session_id IS NOT NULL AND EXISTS (
+              SELECT 1 FROM auth.sessions s
+              WHERE s.user_id=p_user_id AND s.id=p_session_id
+              AND (s.not_after IS NULL OR s.not_after > now())
+            );
+          $$;
+          REVOKE ALL ON FUNCTION public.connect_auth_session_active(uuid,uuid) FROM PUBLIC, anon, authenticated;
+          GRANT EXECUTE ON FUNCTION public.connect_auth_session_active(uuid,uuid) TO service_role;
+          COMMENT ON FUNCTION public.connect_auth_session_active(uuid,uuid)
+          IS 'Server-only check of active Supabase Auth session for Connect fail-closed UI. No private data exposed.';
+          COMMIT;
+          AUTH_SQL_END
+          mv check.sql sql/connect_auth_session_active.sql
+          cat > 'patch.py' <<'AUTH_PATCH_PY_END'
+          from pathlib import Path
+          import re
+
+          root=Path.cwd()
+          page_path=root/'app/page.tsx'
+          src=page_path.read_text(encoding='utf8')
+
+          def replace_one(old,new,label):
+              global src
+              hits=src.count(old)
+              if hits!=1: raise SystemExit(f'{label}: expected one anchor, got {hits}')
+              src=src.replace(old,new)
+
+          replace_one("const [user, setUser] = useState<User | null>(null);", """const [user, setUser] = useState<User | null>(null);
+            // CONNECT_PWA_AUTH_FAIL_CLOSED_20261117: stored session alone is never authorization.
+            const [authGate, setAuthGate] = useState<'checking'|'verified'|'denied'|'offline'>('checking');
+            const authSequence = useRef(0);
+            const passwordRecoveryPending = useRef(false);
+            const loginInProgress = useRef(false);""",'auth fields')
+
+          old_start='  useEffect(() => {\n    if (!supabase) { setLoading(false); return; }\n    let alive = true;'
+          old_end='  }, [invited]);\n\n  // Re-register the current FCM token'
+          if src.count(old_start)!=1 or src.count(old_end)!=1: raise SystemExit('Auth effect anchors changed; stop')
+          a=src.index(old_start)
+          b=src.index(old_end,a)+len('  }, [invited]);')
+          auth_new="""  const denyPrivateAccess = useCallback(() => {
+              setUser(null);setSetup(false);setAuthGate('denied');setLoading(false);
+              setActiveChat(null);setProfileView(null);setMessages([]);
+              setConversations([]);setProfiles([]);setAvatarUrls({});
+              setLatest({});setUnread({});setAdmin(false);setSettingsPage('home');
+              setMediaViewer(null);setMenuMessage(null);setForwardIds([]);
+              setVideoNoteOpen(false);setCrop(null);setProfileMediaOpen(null);
+            },[]);
+
+            // The only path to the authenticated UI is a live, server-verified Supabase session.
+            const verifyAuth = useCallback(async () => {
+              if (!supabase) { setUser(null); setAuthGate('denied'); setLoading(false); return; }
+              const sequence = ++authSequence.current;
+              if(locallyLoggedOut()){
+                if(loginInProgress.current)return;
+                clearStoredConnectAuth();
+                denyPrivateAccess();
+                return;
+              }
+              setAuthGate('checking'); setLoading(true);
+              let timer:ReturnType<typeof setTimeout> | undefined;
+              let controller:AbortController | undefined;
+              try {
+                const {data,error} = await Promise.race([
+                  supabase.auth.getSession(),
+                  new Promise<never>((_,reject) => { timer=setTimeout(()=>reject(new Error('SESSION_CHECK_TIMEOUT')),12000); }),
+                ]);
+                if (sequence !== authSequence.current) return;
+                if (error && !data.session) {
+                  const code = error.name || '';
+                  if (code !== 'AuthSessionMissingError' && code !== 'AuthApiError') throw error;
+                }
+                const session = data.session;
+                if (!session?.access_token) {
+                  clearStoredConnectAuth();
+                  denyPrivateAccess();
+                  void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
+                  return;
+                }
+                controller = new AbortController();
+                if(timer)clearTimeout(timer);
+                timer=setTimeout(()=>controller?.abort(),12000);
+                const response = await fetch('/api/auth/verify', {
+                  method:'GET',credentials:'same-origin',cache:'no-store',
+                  headers:{Authorization:`Bearer ${session.access_token}`},signal:controller.signal,
+                });
+                if (sequence !== authSequence.current) return;
+                if (response.status === 401 || response.status === 403) {
+                  clearStoredConnectAuth();
+                  denyPrivateAccess();
+                  void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
+                  return;
+                }
+                if (!response.ok) throw new Error('SESSION_SERVER_UNAVAILABLE');
+                const result = await response.json();
+                if (!result?.ok || result.userId !== session.user.id) throw new Error('SESSION_NOT_CONFIRMED');
+                if (sequence !== authSequence.current) return;
+                await window.__connectPrepareSession?.(session);
+                if (sequence !== authSequence.current) return;
+                setUser(session.user); setAuthGate('verified'); setLoading(false);
+                if (invited || passwordRecoveryPending.current) setSetup(true);
+                passwordRecoveryPending.current=false;
+              } catch {
+                if (sequence === authSequence.current) {
+                  // Network/verification failure: lock the UI without destroying a valid refresh token.
+                  setUser(null); setAuthGate('offline'); setLoading(false);
+                }
+              } finally {if(timer)clearTimeout(timer);controller?.abort();}
+            },[invited,denyPrivateAccess]);
+
+            useEffect(() => {
+              if(!supabase){setAuthGate('denied');setLoading(false);return;}
+              let active=true;
+              const {data:{subscription}}=supabase.auth.onAuthStateChange((event,session)=>{
+                if(!active)return;
+                if(event==='SIGNED_OUT'||!session){
+                  // CONNECT_PWA_LOGOUT_SESSION_RECOVERY_20261117
+                  ++authSequence.current;
+                  denyPrivateAccess();
+                  void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
+                } else if(event==='INITIAL_SESSION'||event==='SIGNED_IN'||event==='TOKEN_REFRESHED'||event==='USER_UPDATED'||event==='PASSWORD_RECOVERY'){
+                  if(event==='PASSWORD_RECOVERY')passwordRecoveryPending.current=true;
+                  // Supabase auth callbacks must not await other auth methods synchronously.
+                  queueMicrotask(()=>{if(active)void verifyAuth();});
+                }
+              });
+              void verifyAuth();
+              const onOffline=()=>{
+                ++authSequence.current;
+                setUser(null);setAuthGate('offline');setLoading(false);
+              };
+              const onReturn=()=>{if(document.visibilityState==='visible')void verifyAuth();};
+              window.addEventListener('offline',onOffline);
+              window.addEventListener('online',onReturn);
+              window.addEventListener('focus',onReturn);
+              window.addEventListener('pageshow',onReturn);
+              document.addEventListener('visibilitychange',onReturn);
+              const timer=window.setInterval(onReturn,60000);
+              return ()=>{
+                active=false;++authSequence.current;subscription.unsubscribe();
+                window.removeEventListener('offline',onOffline);
+                window.removeEventListener('online',onReturn);
+                window.removeEventListener('focus',onReturn);
+                window.removeEventListener('pageshow',onReturn);
+                document.removeEventListener('visibilitychange',onReturn);
+                window.clearInterval(timer);
+              };
+            },[verifyAuth,denyPrivateAccess]);"""
+          src=src[:a]+auth_new+src[b:]
+
+          # Clear only this project's Supabase SDK session storage key, not chat caches.
+          # Use the default storage key from the existing createClient(supabaseUrl,..) initialization.
+          anchor="const supabase = supabaseUrl && supabaseKey"
+          if src.count(anchor)!=1: raise SystemExit('SDK init anchor changed')
+          helper="""const CONNECT_LOCAL_LOGOUT_FLAG='connect-local-logout-v1';
+          function locallyLoggedOut():boolean {try{return localStorage.getItem(CONNECT_LOCAL_LOGOUT_FLAG)==='1';}catch{return false;}}
+          function clearStoredConnectAuth():void {
+            try {
+              if(!supabaseUrl)return;
+              const host=new URL(supabaseUrl).hostname;
+              if(!host.endsWith('.supabase.co'))return;
+              const ref=host.slice(0,-'.supabase.co'.length);
+              if(!/^[a-z0-9-]{4,64}$/.test(ref))return;
+              localStorage.removeItem(`sb-${ref}-auth-token`);
+            }catch{/* Storage restrictions must never prevent the screen from locking. */}
+          }
+
+          """
+          src=src.replace(anchor,helper+anchor,1)
+
+          logout_a=src.index('  async function logout() {')
+          logout_b=src.index('\n  const keyboardOpen',logout_a)
+          logout_new="""  async function logout() {
+              if (!supabase) return;
+              // A missing remote session is NOT a reason to leave the private UI unlocked.
+              ++authSequence.current;
+              const accountId=user?.id;
+              try{localStorage.setItem(CONNECT_LOCAL_LOGOUT_FLAG,'1');}catch{}
+              setAuthGate('denied');setUser(null); setLoading(false); setSetup(false);
+              setBusy(true);setNotice('');
+              exitChat();setProfiles([]);setConversations([]);setMessages([]);
+              setLatest({});setUnread({});readCache.current={};setPassword('');
+              historyWarmStamps.current={};inboxMediaWarm.current.clear();
+              avatarCacheEpoch.current++;setAvatarUrls({});
+              if(accountId)forgetUserChatPresentation(accountId);
+              warmedChatWindows.current.clear();signedMediaLifetimes.current.clear();
+              let signoutTimeout:ReturnType<typeof setTimeout>|undefined;
+              try {
+                const {error}=await Promise.race([
+                  supabase.auth.signOut({ scope: 'local' }),
+                  new Promise<{error:Error}>((resolve)=>{signoutTimeout=setTimeout(()=>resolve({error:new Error('signout_timeout')}),4500);}),
+                ]);
+                if(error && error.name!=='AuthSessionMissingError'){
+                  setNotice('Локальный выход выполнен. Серверный выход не подтверждён.');
+                }
+              }catch{
+                setNotice('Локальный выход выполнен. Серверный выход не подтверждён.');
+              }finally{
+                if(signoutTimeout)clearTimeout(signoutTimeout);
+                // Even if Supabase returns Auth session missing or the network fails,
+                // ensure a cold PWA restart cannot reopen from stale local credentials.
+                clearStoredConnectAuth();
+                if(accountId)void wipeUserHistory(accountId).catch(()=>{});
+                setBusy(false);
+              }
+            }
+          """
+          src=src[:logout_a]+logout_new+src[logout_b:]
+          # A deliberate login is the only way to remove the persistent local-logout lock.
+          replace_one("    setBusy(true); setNotice('');\n    let timeoutId: ReturnType<typeof setTimeout> | undefined;\n    try {\n      const result = await Promise.race([\n        supabase.auth.signInWithPassword({ email, password }),",
+                      "    loginInProgress.current=true;\n    setBusy(true); setNotice('');\n    let timeoutId: ReturnType<typeof setTimeout> | undefined;\n    try {\n      const result = await Promise.race([\n        supabase.auth.signInWithPassword({ email, password }),",'login start')
+          replace_one("      if (result.error) setNotice('Не удалось войти: ' + result.error.message);", """      if (result.error) setNotice('Не удалось войти: ' + result.error.message);
+                else {
+                  try{localStorage.removeItem(CONNECT_LOCAL_LOGOUT_FLAG);}catch{}
+                  void verifyAuth();
+                }""",'login success')
+          replace_one("      if (timeoutId !== undefined) clearTimeout(timeoutId);\n      setBusy(false);", "      if (timeoutId !== undefined) clearTimeout(timeoutId);\n      loginInProgress.current=false;\n      setBusy(false);",'login finally')
+
+          replace_one("{supabase && user && !setup && <ConnectPushGuardian", "{supabase && user && authGate==='verified' && !setup && <ConnectPushGuardian", 'push gate')
+          replace_one(": loading ? <div className=\"loading-screen\">", ": loading || authGate==='checking' ? <div className=\"loading-screen\">", 'loading gate')
+          replace_one("        : !user || setup ? <div className=\"login-screen\">", """        : authGate==='offline' ? <div className="login-screen" role="status">
+                      <div className="login-brand"><img src="/icon-192.png" alt=""/><h1>Connect</h1></div>
+                      <div className="login-form"><h2>Проверка входа</h2><p className="login-hint">Сервер авторизации недоступен. Переписки и настройки закрыты до подтверждения сессии.</p><button className="primary-action" type="button" onClick={()=>void verifyAuth()}>Повторить проверку</button><button className="settings-action secondary" type="button" onClick={()=>void logout()}>Выйти и войти заново</button></div>
+                    </div>
+                  : !user || authGate!=='verified' || setup ? <div className="login-screen">""", 'login gate')
+
+          # Overlays render outside the main three-way login/private screen switch;
+          # these must never leak cached media or message actions on a locked screen.
+          for old,new in [
+              ("    {crop && <AvatarCropper", "    {authGate==='verified' && user && crop && <AvatarCropper"),
+              ("    {forwardIds.length>0&&<div className=\"forward-overlay\">", "    {authGate==='verified' && user && forwardIds.length>0&&<div className=\"forward-overlay\">"),
+              ("    {videoNoteOpen && <VideoNoteRecorder", "    {authGate==='verified' && user && videoNoteOpen && <VideoNoteRecorder"),
+              ("    {mediaViewer && <ConnectGalleryViewer", "    {authGate==='verified' && user && mediaViewer && <ConnectGalleryViewer"),
+              ("    {menuMessage && <div className=\"context-overlay\"", "    {authGate==='verified' && user && menuMessage && <div className=\"context-overlay\""),
+          ]:
+              replace_one(old,new,'auth-gated overlay')
+
+          page_path.write_text(src,encoding='utf8')
+          print('Patched app/page.tsx with fail-closed auth gate, verified session and local logout.')
+          AUTH_PATCH_PY_END
+          python3 patch.py
+          rm patch.py
+          cat > 'logout.test.cjs' <<'AUTH_LOGOUT_TEST_END'
+          'use strict';
+          const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript');
+          const source=fs.readFileSync(path.join(__dirname,'../app/page.tsx'),'utf8');
+          function makeLogout(result){
+            const begin=source.indexOf('  async function logout() {');
+            const end=source.indexOf('\n  const keyboardOpen',begin);
+            assert(begin>=0&&end>begin,'Logout body missing or moved');
+            const events=[];
+            const deps={
+              supabase:{auth:{signOut:async opts=>{events.push(['signOut',opts]);return result;}}},
+              authSequence:{current:0},
+              CONNECT_LOCAL_LOGOUT_FLAG:'connect-local-logout-v1',
+              localStorage:{setItem:(k,v)=>events.push(['storage',k,v])},
+              user:{id:'00000000-0000-0000-0000-000000000001'},
+              setAuthGate:v=>events.push(['gate',v]),setUser:v=>events.push(['user',v]),
+              setLoading:v=>events.push(['loading',v]),setSetup:v=>events.push(['setup',v]),
+              setBusy:v=>events.push(['busy',v]),setNotice:v=>events.push(['notice',v]),
+              exitChat:()=>events.push(['exitChat']),setProfiles:()=>{},setConversations:()=>{},setMessages:()=>{},
+              setLatest:()=>{},setUnread:()=>{},readCache:{current:{}},setPassword:()=>{},
+              historyWarmStamps:{current:{}},inboxMediaWarm:{current:{clear(){}}},
+              avatarCacheEpoch:{current:0},setAvatarUrls:()=>{},forgetUserChatPresentation:()=>{},
+              warmedChatWindows:{current:{clear(){}}},signedMediaLifetimes:{current:{clear(){}}},
+              clearStoredConnectAuth:()=>events.push(['purgeTokens']),
+              wipeUserHistory:async()=>events.push(['wipe']),
+            };
+            const body=ts.transpileModule(source.slice(begin,end)+'\nreturn logout;',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+            const logout=Function(...Object.keys(deps),body)(...Object.values(deps));
+            return {events,logout};
+          }
+          test('sign-out immediately locks the UI before the asynchronous network request',async()=>{
+            const {events,logout}=makeLogout({error:null});
+            const attempt=logout();
+            assert(events.some(e=>e[0]==='gate'&&e[1]==='denied'));
+            assert(events.some(e=>e[0]==='user'&&e[1]===null));
+            assert(events.some(e=>e[0]==='storage'&&e[2]==='1'));
+            await attempt;
+            assert.deepEqual(events.find(e=>e[0]==='signOut')[1],{scope:'local'});
+            assert(events.some(e=>e[0]==='purgeTokens'));
+            assert(events.some(e=>e[0]==='wipe'));
+          });
+          test('missing Supabase auth session is treated as successful local exit',async()=>{
+            const error=new Error('Auth session missing!');error.name='AuthSessionMissingError';
+            const {events,logout}=makeLogout({error});
+            await logout();
+            assert(events.some(e=>e[0]==='gate'&&e[1]==='denied'));
+            assert(events.some(e=>e[0]==='purgeTokens'));
+            assert(events.some(e=>e[0]==='wipe'));
+            assert(!events.some(e=>e[0]==='notice'&&String(e[1]).includes('Не удалось выйти')));
+          });
+          test('network sign-out failure still closes the screen and removes local credentials',async()=>{
+            const {events,logout}=makeLogout({error:new Error('network unavailable')});
+            await logout();
+            assert(events.some(e=>e[0]==='user'&&e[1]===null));
+            assert(events.some(e=>e[0]==='purgeTokens'));
+            assert(events.some(e=>e[0]==='wipe'));
+            assert(events.some(e=>e[0]==='notice'&&String(e[1]).includes('Серверный выход не подтверждён')));
+          });
+          test('SIGNED_OUT auth event locks the UI before the native session bridge',()=>{
+            const start=source.indexOf('supabase.auth.onAuthStateChange((event,session)=>');
+            const end=source.indexOf('window.addEventListener(\'offline\',onOffline)',start);
+            assert(start>=0&&end>start,'Session listener not found');
+            const body=source.slice(start,end);
+            assert.match(body,/event==='SIGNED_OUT'/);
+            assert.match(body,/denyPrivateAccess\(\)/);
+            assert.match(source,/const denyPrivateAccess = useCallback\(\(\) => \{\s*setUser\(null\)/);
+          });
+          AUTH_LOGOUT_TEST_END
+          mv logout.test.cjs tests/pwa-logout-regression.test.cjs
+          git diff --check
+          test -s app/api/auth/verify/route.ts
+          ! grep -q 'connect-neon' app/page.tsx
+      - name: Run targeted authorization regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/connect-auth-session-lock.test.cjs
+          node -e "const fs=require('node:fs');const s=fs.readFileSync('app/page.tsx','utf8');if(!s.includes('CONNECT_PWA_AUTH_FAIL_CLOSED_20261117'))process.exit(1)"
+      - name: Prepare Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        shell: bash
+        run: npm ci --no-audit --no-fund
+      - name: Install Chromium required by existing cache tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright-core install --with-deps chromium
+          node -e "const fs=require('node:fs');const path=require('playwright-core').chromium.executablePath();if(!fs.existsSync(path)){throw Error('Playwright Chromium missing')}"
+      - name: Full PWA typecheck, tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Commit only verified PWA changes to main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/page.tsx app/api/auth/verify/route.ts sql/connect_auth_session_active.sql tests/connect-auth-session-lock.test.cjs tests/pwa-logout-regression.test.cjs
+          git diff --cached --check
+          if git diff --cached --quiet; then echo 'No code changes staged'; exit 1; fi
+          git commit -m 'Connect PWA: lock private UI until active Supabase session is confirmed'
+          git push origin HEAD:main
