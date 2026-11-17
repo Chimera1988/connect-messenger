@@ -1,0 +1,450 @@
+name: Connect PWA | Admin storage and traffic dashboard 2026-11-17
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-admin-usage
+  cancel-in-progress: false
+
+jobs:
+  admin-usage:
+    name: Build and release PWA administration dashboard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Connect production main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Fail closed on unexpected source / repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+            test "$GITHUB_REF" = 'refs/heads/main'
+            git diff --quiet
+            test -s AGENTS.md
+            test -s app/page.tsx
+            test -s app/layout.tsx
+            test -s lib/server/admin.ts
+            test ! -e app/api/admin/usage/route.ts
+            test ! -e components/ConnectAdminUsage.tsx
+            test ! -e tests/admin-usage.test.cjs
+            test -s package-lock.json
+            git cat-file -e HEAD:app/page.tsx
+      - name: Create and run failing panel regression tests (RED)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tests
+          cat > tests/admin-usage.test.cjs <<'CONNECT_ADMIN_TEST_FILE'
+          'use strict';
+          const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+          const root=path.resolve(__dirname,'..');
+          const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+          test('admin-only page is linked in PWA settings and not in Android',()=>{
+           const source=read('app/page.tsx');
+           assert.match(source,/type SettingsPage = [^\n]*'usage'/);
+           assert.match(source,/id:'usage' as SettingsPage/);
+           assert.match(source,/settingsPage==='usage' && admin && <ConnectAdminUsage/);
+           assert.match(source,/import ConnectAdminUsage from '\.\.\/components\/ConnectAdminUsage'/);
+          });
+          test('usage API requires existing Supabase identity and explicit admin setting',()=>{
+           const api=read('app/api/admin/usage/route.ts');
+           assert.match(api,/await authenticatedUser\(request\)/);
+           assert.match(api,/process\.env\.CONNECT_ADMIN_USER_ID/);
+           assert.match(api,/user\.id!==adminId/);
+           assert.match(api,/sessionIdFromVerifiedToken/);
+           assert.match(api,/connect_admin_usage_snapshot/);
+           assert.match(api,/headers:\{'Cache-Control':'no-store, private'/);
+           assert.doesNotMatch(api,/CONNECT_NEON|connect-neon|process\.env\.NEXT_PUBLIC_SUPABASE_SERVICE/i);
+          });
+          test('server-only SQL function checks an active auth session and disallows public execute',()=>{
+           const sql=read('sql/connect_admin_usage_snapshot.sql');
+           assert.match(sql,/FROM auth\.sessions AS s/);
+           assert.match(sql,/p_session_id/);
+           assert.match(sql,/REVOKE ALL ON FUNCTION public\.connect_admin_usage_snapshot\(uuid, uuid\) FROM PUBLIC, anon, authenticated/i);
+           assert.match(sql,/GRANT EXECUTE ON FUNCTION public\.connect_admin_usage_snapshot\(uuid, uuid\) TO service_role/i);
+           assert.match(sql,/pg_database_size\(current_database\(\)\)/);
+           assert.match(sql,/FROM storage\.objects AS o/);
+           assert.doesNotMatch(sql,/DELETE FROM storage|DROP TABLE|TRUNCATE TABLE/i);
+          });
+          test('responsive gauges are tied to real counters, never fake transfer totals',()=>{
+           const comp=read('components/ConnectAdminUsage.tsx');
+           const css=read('app/admin-usage.css');
+           assert.match(comp,/setInterval\(refresh,60000\)/);
+           assert.match(comp,/aria-valuenow=/);
+           assert.match(comp,/storageBytes/);
+           assert.match(comp,/databaseBytes/);
+           assert.match(comp,/monthStoredBytes/);
+           assert.match(comp,/egress\)/i);
+           assert.match(comp,/value=\{null\} comparison=\{5\*GiB\}/);
+           assert.match(comp,/Обновить/);
+           assert.match(css,/\.connect-usage-track/);
+           assert.match(css,/var\(--accent\)/);
+          });
+          CONNECT_ADMIN_TEST_FILE
+          if node --test tests/admin-usage.test.cjs > "$RUNNER_TEMP/connect-usage-red.log" 2>&1; then
+            echo 'RED_EXPECTED: panel regression tests unexpectedly passed before implementation' >&2; exit 1
+          fi
+          grep -q 'not ok' "$RUNNER_TEMP/connect-usage-red.log" || { cat "$RUNNER_TEMP/connect-usage-red.log"; exit 1; }
+          echo 'RED confirmed: panel files absent.'
+      - name: Create secure Supabase server API, dashboard and SQL definition
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p app/api/admin/usage components app sql
+          cat > 'sql/connect_admin_usage_snapshot.sql' <<'CONNECT_ADMIN_USAGE_ADMIN_USAGE_SQL'
+          -- Connect admin observability: one read-only, privileged aggregate.
+          -- Only the Next.js server service-role can execute this; regular clients cannot.
+          BEGIN;
+          CREATE OR REPLACE FUNCTION public.connect_admin_usage_snapshot(p_user_id uuid, p_session_id uuid)
+          RETURNS jsonb
+          LANGUAGE plpgsql
+          SECURITY DEFINER
+          SET search_path = pg_catalog
+          AS $function$
+          DECLARE
+            result jsonb;
+          BEGIN
+            IF p_user_id IS NULL OR p_session_id IS NULL OR NOT EXISTS (
+              SELECT 1 FROM auth.sessions AS s WHERE s.id = p_session_id AND s.user_id = p_user_id
+            ) THEN
+              RAISE EXCEPTION 'Inactive session' USING ERRCODE = '28000';
+            END IF;
+
+            WITH object_sizes AS (
+              SELECT
+                o.bucket_id,
+                o.created_at,
+                CASE WHEN (o.metadata->>'size') ~ '^[0-9]{1,18}$'
+                     THEN (o.metadata->>'size')::bigint ELSE 0::bigint END AS bytes
+              FROM storage.objects AS o
+            ), per_bucket AS (
+              SELECT bucket_id, count(*)::bigint AS files,
+                     coalesce(sum(bytes),0)::bigint AS bytes,
+                     coalesce(sum(bytes) FILTER (WHERE created_at >= date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::bigint AS month_bytes
+              FROM object_sizes GROUP BY bucket_id
+            )
+            SELECT jsonb_build_object(
+              'databaseBytes', pg_database_size(current_database()),
+              'storageBytes', coalesce(sum(bytes),0),
+              'storageFiles', coalesce(sum(files),0),
+              'monthStoredBytes', coalesce(sum(month_bytes),0),
+              'buckets', coalesce(jsonb_agg(jsonb_build_object(
+                'id',bucket_id,'bytes',bytes,'files',files,'monthBytes',month_bytes
+              ) ORDER BY bucket_id),'[]'::jsonb)
+            ) INTO result FROM per_bucket;
+            RETURN result;
+          END
+          $function$;
+          REVOKE ALL ON FUNCTION public.connect_admin_usage_snapshot(uuid, uuid) FROM PUBLIC, anon, authenticated;
+          GRANT EXECUTE ON FUNCTION public.connect_admin_usage_snapshot(uuid, uuid) TO service_role;
+          COMMENT ON FUNCTION public.connect_admin_usage_snapshot(uuid,uuid)
+          IS 'Connect server-only read-only storage usage snapshot; requires current Supabase auth session.';
+          COMMIT;
+          CONNECT_ADMIN_USAGE_ADMIN_USAGE_SQL
+          cat > 'app/api/admin/usage/route.ts' <<'CONNECT_ADMIN_USAGE_ROUTE_TS'
+          import {authenticatedUser} from '../../../../lib/server/admin';
+
+          export const runtime = 'nodejs';
+          export const dynamic = 'force-dynamic';
+
+          function json(body:unknown,status=200):Response {
+            return Response.json(body, {status, headers:{'Cache-Control':'no-store, private', 'X-Content-Type-Options':'nosniff'}});
+          }
+
+          function sessionIdFromVerifiedToken(token:string, userId:string):string|null {
+            try {
+              const pieces=token.split('.');
+              if(pieces.length!==3 || pieces[1].length>8192)return null;
+              const claims=JSON.parse(Buffer.from(pieces[1],'base64url').toString('utf8'));
+              const id=claims?.session_id;
+              return claims?.sub===userId && typeof id==='string' &&
+                /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : null;
+            } catch{return null;}
+          }
+
+          export async function GET(request:Request):Promise<Response> {
+            const adminId=process.env.CONNECT_ADMIN_USER_ID;
+            if(!adminId)return json({error:'Администратор не настроен'},503);
+            try {
+              // Auth validates signature and user first; parsed session_id is only an index
+              // into auth.sessions, which the SQL function checks before reading statistics.
+              const {client,user}=await authenticatedUser(request);
+              if(user.id!==adminId)return json({error:'Доступ запрещён'},403);
+              const token=request.headers.get('authorization')?.match(/^Bearer (\S+)$/i)?.[1];
+              const sessionId=token?sessionIdFromVerifiedToken(token,user.id):null;
+              if(!sessionId)return json({error:'Войдите в Connect повторно'},401);
+              const {data,error}=await client.rpc('connect_admin_usage_snapshot', {p_user_id:user.id,p_session_id:sessionId});
+              if(error){
+                // Never expose SQL error details or any server-side credentials.
+                if(error.code==='28000')return json({error:'Сессия завершена. Войдите повторно.'},401);
+                console.error('Connect admin usage: aggregate unavailable',error.code||'SQL_ERROR');
+                return json({error:'Данные хранилища пока недоступны'},503);
+              }
+              if(!data || !Array.isArray(data.buckets))return json({error:'Неполный ответ статистики'},503);
+              return json({
+                checkedAt:new Date().toISOString(),
+                databaseBytes:Number(data.databaseBytes)||0,
+                storageBytes:Number(data.storageBytes)||0,
+                storageFiles:Number(data.storageFiles)||0,
+                monthStoredBytes:Number(data.monthStoredBytes)||0,
+                buckets:data.buckets.map((b:{id:unknown;bytes:unknown;files:unknown;monthBytes:unknown})=>({
+                  id:String(b.id),bytes:Number(b.bytes)||0,files:Number(b.files)||0,monthBytes:Number(b.monthBytes)||0,
+                })),
+                traffic:{egressBytes:null,cachedEgressBytes:null,source:'supabase-usage-dashboard'},
+              });
+            }catch{
+              return json({error:'Не удалось подтвердить сессию'},401);
+            }
+          }
+          CONNECT_ADMIN_USAGE_ROUTE_TS
+          cat > 'components/ConnectAdminUsage.tsx' <<'CONNECT_ADMIN_USAGE_CONNECTADMINUSAGE_TSX'
+          'use client';
+
+          import {useCallback,useEffect,useRef,useState} from 'react';
+          import type {SupabaseClient} from '@supabase/supabase-js';
+          import {cacheStats} from '../lib/media-cache';
+
+          interface BucketUsage {id:string;bytes:number;files:number;monthBytes:number}
+          interface UsageResponse {
+            checkedAt:string;
+            databaseBytes:number;
+            storageBytes:number;
+            storageFiles:number;
+            monthStoredBytes:number;
+            buckets:BucketUsage[];
+            traffic:{egressBytes:null;cachedEgressBytes:null;source:string};
+          }
+          const MiB=1024**2;
+          const GiB=1024**3;
+          const BUCKET_NAMES:Record<string,string>={
+            'connect-attachments':'Вложения в чатах',
+            'connect-avatars':'Аватары',
+            'connect-profile-media':'Медиатека профилей',
+            'connect-stickers':'Стикеры',
+          };
+          const dashboard='https://supabase.com/dashboard/project/tpwkmoxxzjfdsqsomhhr';
+          const safeNumber=(value:number)=>Number.isFinite(value)&&value>=0?value:0;
+          function size(value:number):string {
+            const bytes=safeNumber(value);
+            if(bytes>=GiB)return (bytes/GiB).toLocaleString('ru-RU',{maximumFractionDigits:2})+' ГБ';
+            if(bytes>=MiB)return (bytes/MiB).toLocaleString('ru-RU',{maximumFractionDigits:1})+' МБ';
+            if(bytes>=1024)return (bytes/1024).toLocaleString('ru-RU',{maximumFractionDigits:1})+' КБ';
+            return bytes.toLocaleString('ru-RU')+' Б';
+          }
+          function Gauge({label,value,comparison,detail,muted=false}:{label:string;value:number|null;comparison:number;detail:string;muted?:boolean}){
+            const valid=value!==null&&Number.isFinite(value)&&value>=0;
+            const ratio=valid?Math.min(100,value!/comparison*100):0;
+            return <div className={'connect-usage-gauge'+(muted?' is-muted':'')}>
+              <div className="connect-usage-gauge-head"><strong>{label}</strong><span>{valid?`${size(value!)} / ${size(comparison)}`:'Нет данных'}</span></div>
+              <div className="connect-usage-track" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={valid?Math.round(ratio):undefined} aria-valuetext={valid?`${size(value!)} относительно контрольного порога ${size(comparison)}`:'Данные недоступны'}>
+                <span className="connect-usage-fill" style={{width:valid?`${ratio}%`:'0%'}}/>
+              </div>
+              <small>{detail}</small>
+            </div>;
+          }
+
+          export default function ConnectAdminUsage({supabase,userId}:{supabase:SupabaseClient;userId:string}){
+            const [usage,setUsage]=useState<UsageResponse|null>(null);
+            const [localBytes,setLocalBytes]=useState<number|null>(null);
+            const [loading,setLoading]=useState(false);
+            const [problem,setProblem]=useState('');
+            const [storageGoal,setStorageGoal]=useState(GiB);
+            const [dbGoal,setDbGoal]=useState(500*MiB);
+            const [monthGoal,setMonthGoal]=useState(GiB);
+            const busy=useRef(false);
+            const active=useRef(true);
+            const load=useCallback(async()=>{
+              if(busy.current)return;
+              busy.current=true;setLoading(true);setProblem('');
+              try {
+                const {data:{session},error:authError}=await supabase.auth.getSession();
+                if(authError||session?.user.id!==userId||!session.access_token)throw Error('Войдите в аккаунт повторно');
+                const response=await fetch('/api/admin/usage',{
+                  method:'GET',credentials:'same-origin',cache:'no-store',
+                  headers:{Authorization:`Bearer ${session.access_token}`},
+                });
+                const result=await response.json().catch(()=>({error:'Не удалось прочитать ответ сервера'}));
+                if(!response.ok)throw Error(typeof result.error==='string'?result.error:'Не удалось обновить статистику');
+                if(!Number.isFinite(result.storageBytes)||!Number.isFinite(result.databaseBytes)||!Array.isArray(result.buckets))throw Error('Неверный формат данных');
+                if(active.current)setUsage(result as UsageResponse);
+                const cached=await cacheStats().catch(()=>null);
+                if(active.current)setLocalBytes(cached?Object.values(cached).reduce((sum,n)=>sum+safeNumber(n),0):null);
+              }catch(error){if(active.current)setProblem(error instanceof Error?error.message:'Ошибка получения статистики');}
+              finally{busy.current=false;if(active.current)setLoading(false);}
+            },[supabase,userId]);
+            useEffect(()=>{
+              active.current=true;
+              void load();
+              const refresh=()=>{if(document.visibilityState==='visible')void load();};
+              const timer=window.setInterval(refresh,60000);
+              return()=>{active.current=false;window.clearInterval(timer);};
+            },[load]);
+
+            return <section className="connect-admin-usage" aria-label="Администрирование: хранилище и трафик">
+              <div className="connect-usage-summary">
+                <div className="connect-usage-summary-head"><div><span className="connect-usage-eyebrow">CONNECT · АДМИНИСТРИРОВАНИЕ</span><h2>Хранилище и трафик</h2><p>Использование Supabase без лишних запросов</p></div><span className="connect-usage-pulse" aria-hidden="true"/></div>
+                <div className="connect-usage-totals">
+                  <div><small>Объекты Storage</small><strong>{usage?size(usage.storageBytes):'—'}</strong></div>
+                  <div><small>База данных</small><strong>{usage?size(usage.databaseBytes):'—'}</strong></div>
+                </div>
+                <div className="connect-usage-toolbar"><span>{usage?`Обновлено ${new Date(usage.checkedAt).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}`:'Показатели ещё не загружены'}</span><button type="button" onClick={()=>void load()} disabled={loading}>{loading?'Обновление…':'Обновить'}</button></div>
+              </div>
+
+              {problem&&<p className="connect-usage-error" role="alert">{problem}</p>}
+              <div className="connect-usage-panel">
+                <div className="connect-usage-title"><h3>Хранилище</h3><span>{usage?`${usage.storageFiles} файлов`:'—'}</span></div>
+                <div className="connect-usage-limit"><span>Контрольный порог Storage</span><select aria-label="Контрольный порог Storage" value={storageGoal} onChange={e=>setStorageGoal(Number(e.target.value))}><option value={250*MiB}>250 МБ</option><option value={GiB}>1 ГБ</option><option value={5*GiB}>5 ГБ</option><option value={20*GiB}>20 ГБ</option><option value={100*GiB}>100 ГБ</option></select></div>
+                <Gauge label="Все файлы Supabase" value={usage?.storageBytes??null} comparison={storageGoal} detail="Текущий размер объектов, не среднее за расчётный период"/>
+                <div className="connect-usage-limit"><span>Контрольный порог базы</span><select aria-label="Контрольный порог базы" value={dbGoal} onChange={e=>setDbGoal(Number(e.target.value))}><option value={500*MiB}>500 МБ</option><option value={2*GiB}>2 ГБ</option><option value={8*GiB}>8 ГБ</option><option value={20*GiB}>20 ГБ</option></select></div>
+                <Gauge label="База PostgreSQL" value={usage?.databaseBytes??null} comparison={dbGoal} detail="Размер PostgreSQL (не полный занятый объём диска)"/>
+                <p className="connect-usage-note">Пороги задают только масштаб шкал и не считаются лимитами тарифа Supabase.</p>
+                <h4>По категориям</h4>
+                {usage?.buckets.length ? usage.buckets.map(item=><div className="connect-usage-category" key={item.id}>
+                  <div className="connect-usage-category-head"><span>{BUCKET_NAMES[item.id]||item.id}</span><strong>{size(item.bytes)}</strong></div>
+                  <div className="connect-usage-mini"><span style={{width:`${Math.min(100,item.bytes/Math.max(usage.storageBytes,1)*100)}%`}}/></div>
+                  <small>{item.files} файлов · {usage.storageBytes?Math.round(item.bytes/usage.storageBytes*100):0}% общего объёма</small>
+                </div>) : <p className="connect-usage-note">{usage?'Файлы не найдены':'Загрузка категорий…'}</p>}
+                <div className="connect-usage-local">Кеш на этом iPhone <strong>{localBytes===null?'Недоступен':size(localBytes)}</strong></div>
+              </div>
+
+              <div className="connect-usage-panel">
+                <div className="connect-usage-title"><h3>Трафик</h3><span>Календарный месяц · UTC</span></div>
+                <div className="connect-usage-limit"><span>Ориентир новых файлов</span><select aria-label="Ориентир новых файлов" value={monthGoal} onChange={e=>setMonthGoal(Number(e.target.value))}><option value={250*MiB}>250 МБ</option><option value={GiB}>1 ГБ</option><option value={5*GiB}>5 ГБ</option><option value={20*GiB}>20 ГБ</option></select></div>
+                <Gauge label="Новые файлы за месяц" value={usage?.monthStoredBytes??null} comparison={monthGoal} detail="Сумма сохранившихся загруженных файлов, не полный сетевой трафик"/>
+                <Gauge label="Исходящий трафик Supabase (egress)" value={null} comparison={5*GiB} detail="Точные данные находятся в отчётах Supabase; эта шкала не подменяется оценкой" muted/>
+                <a className="connect-usage-dashboard-link" href={dashboard} target="_blank" rel="noopener noreferrer">Отчёты Supabase <span aria-hidden="true">↗</span></a>
+                <p className="connect-usage-note">Egress включает Storage, API, авторизацию и Realtime, в том числе кешированные ответы. Для точной шкалы нужен поддерживаемый источник официальной статистики.</p>
+              </div>
+              <p className="connect-usage-footnote">Данные обновляются по кнопке и раз в минуту, пока эта страница открыта. Доступ предоставляется только администратору.</p>
+            </section>;
+          }
+          CONNECT_ADMIN_USAGE_CONNECTADMINUSAGE_TSX
+          cat > 'app/admin-usage.css' <<'CONNECT_ADMIN_USAGE_ADMIN_USAGE_CSS'
+          /* Connect admin instrumentation. Uses theme variables; never affects APK layout. */
+          .connect-admin-usage{display:flex;flex-direction:column;gap:14px;padding:2px 0 24px;color:var(--text)}
+          .connect-usage-summary,.connect-usage-panel{border:1px solid color-mix(in srgb,var(--border) 78%,transparent);background:color-mix(in srgb,var(--panel) 86%,transparent);-webkit-backdrop-filter:blur(22px);backdrop-filter:blur(22px);border-radius:20px;padding:17px 16px;box-shadow:inset 0 1px #ffffff0c}
+          .connect-usage-summary{background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 15%,var(--panel)),color-mix(in srgb,var(--panel) 91%,transparent))}
+          .connect-usage-summary-head{display:flex;justify-content:space-between;align-items:flex-start;gap:13px}
+          .connect-usage-eyebrow{color:var(--accent2);font-size:10px;font-weight:760;letter-spacing:1.1px}
+          .connect-usage-summary h2{font-size:22px;font-weight:740;letter-spacing:-.45px;margin:7px 0}
+          .connect-usage-summary p{font-size:12px;color:var(--muted);margin:0}
+          .connect-usage-pulse{width:8px;height:8px;margin:6px 3px;flex-shrink:0;border-radius:50%;background:var(--accent);box-shadow:0 0 0 5px color-mix(in srgb,var(--accent) 14%,transparent)}
+          .connect-usage-totals{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:23px 0 17px}
+          .connect-usage-totals>div{background:#ffffff0b;border:1px solid #ffffff0b;border-radius:14px;padding:12px 10px;min-width:0}
+          .connect-usage-totals small,.connect-usage-totals strong{display:block}
+          .connect-usage-totals small{color:var(--muted);font-size:11px;margin-bottom:7px}
+          .connect-usage-totals strong{font-size:23px;font-weight:760;letter-spacing:-.5px;white-space:nowrap}
+          .connect-usage-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px}
+          .connect-usage-toolbar button{border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent2);border-radius:11px;padding:8px 13px;font-weight:670;font-size:12px}
+          .connect-usage-title{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:15px}
+          .connect-usage-title h3{margin:0!important;letter-spacing:-.2px!important;text-transform:none!important;font-size:17px!important;color:var(--text)!important;font-weight:730!important}
+          .connect-usage-title span{font-size:11px;color:var(--muted);text-align:right}
+          .connect-usage-limit{display:flex;align-items:center;justify-content:space-between;gap:10px;color:var(--muted);font-size:11px;margin:14px 0 10px}
+          .connect-usage-limit select{background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:9px;max-width:125px;padding:6px 8px;font-size:12px}
+          .connect-usage-gauge{margin:8px 0 18px}
+          .connect-usage-gauge-head,.connect-usage-category-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:9px}
+          .connect-usage-gauge-head strong,.connect-usage-category-head span{font-size:12px;font-weight:650}
+          .connect-usage-gauge-head span,.connect-usage-category-head strong{font-size:12px;font-weight:700;white-space:nowrap;letter-spacing:-.1px}
+          .connect-usage-track,.connect-usage-mini{position:relative;overflow:hidden;border-radius:100px;background:color-mix(in srgb,var(--muted) 20%,transparent)}
+          .connect-usage-track{height:9px}
+          .connect-usage-fill,.connect-usage-mini>span{position:absolute;inset:0 auto 0 0;border-radius:inherit;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .35s ease}
+          .connect-usage-gauge small,.connect-usage-category small{display:block;margin-top:7px;font-size:10.5px;line-height:1.4;color:var(--muted)}
+          .connect-usage-gauge.is-muted .connect-usage-track{background:repeating-linear-gradient(110deg,var(--border),var(--border) 8px,color-mix(in srgb,var(--muted) 12%,transparent) 8px,color-mix(in srgb,var(--muted) 12%,transparent) 16px)}
+          .connect-usage-panel h4{font-size:12px;margin:24px 0 15px;color:var(--muted);font-weight:700;letter-spacing:.25px}
+          .connect-usage-category{margin:0 0 15px}
+          .connect-usage-mini{height:5px}
+          .connect-usage-local{display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--border);padding-top:13px;margin-top:15px;font-size:12px;color:var(--muted)}
+          .connect-usage-local strong{color:var(--text)}
+          .connect-usage-note,.connect-usage-footnote{font-size:11px;line-height:1.6;color:var(--muted)}
+          .connect-usage-note{margin:12px 0 3px}
+          .connect-usage-footnote{margin:0 8px 12px}
+          .connect-usage-error{margin:0;color:#ff8a8a;font-size:12px;padding:12px;background:#ff334415;border-radius:12px}
+          .connect-usage-dashboard-link{display:flex;justify-content:space-between;align-items:center;margin-top:11px;padding:11px 12px;border-radius:12px;background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid color-mix(in srgb,var(--accent) 28%,transparent);text-decoration:none;color:var(--accent2);font-size:13px;font-weight:680}
+          @media(max-width:360px){.connect-usage-totals strong{font-size:20px}.connect-usage-summary,.connect-usage-panel{padding:14px}}
+          CONNECT_ADMIN_USAGE_ADMIN_USAGE_CSS
+      - name: Integrate admin-only settings item without changing chat or APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'CONNECT_ADMIN_PATCH'
+          from pathlib import Path
+          import json
+
+          def replace_once(path,old,new):
+              file=Path(path)
+              src=file.read_text(encoding='utf8')
+              count=src.count(old)
+              if count!=1:raise SystemExit(f'SOURCE_DRIFT {path}: expected one anchor, saw {count}: {old[:100]}')
+              file.write_text(src.replace(old,new,1),encoding='utf8')
+
+          page='app/page.tsx'
+          replace_once(page,"import CacheSettings from '../components/ConnectCacheSettings';",
+                           "import CacheSettings from '../components/ConnectCacheSettings';\nimport ConnectAdminUsage from '../components/ConnectAdminUsage';")
+          replace_once(page,"type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'data' | 'privacy' | 'about';",
+                           "type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'usage' | 'data' | 'privacy' | 'about';")
+          replace_once(page,"members:'Участники',data:'Данные',privacy:",
+                           "members:'Участники',usage:'Хранилище и трафик',data:'Данные',privacy:")
+          replace_once(page,"...(admin?[{id:'members' as SettingsPage,icon:'contacts' as IconName,title:'Управление участниками',subtitle:'Приглашения в Connect'}]:[])",
+                           "...(admin?[{id:'members' as SettingsPage,icon:'contacts' as IconName,title:'Управление участниками',subtitle:'Приглашения в Connect'},{id:'usage' as SettingsPage,icon:'file' as IconName,title:'Хранилище и трафик',subtitle:'Статистика Supabase'}]:[])")
+          replace_once(page,"                  {settingsPage==='members' && admin &&",
+                           "                  {settingsPage==='usage' && admin && <ConnectAdminUsage supabase={supabase!} userId={user.id}/>}\n                  {settingsPage==='members' && admin &&")
+          replace_once('app/layout.tsx',"import './connect-media-frame-overlay.css';",
+                       "import './connect-media-frame-overlay.css';\nimport './admin-usage.css';")
+          p=Path('package.json');package=json.loads(p.read_text('utf8'))
+          testcmd=package['scripts']['test'];start='node tests/admin-usage.test.cjs'
+          if start in testcmd:raise SystemExit('SOURCE_DRIFT: test already installed')
+          package['scripts']['test']=start+' && '+testcmd
+          p.write_text(json.dumps(package,ensure_ascii=False,indent=2)+'\n',encoding='utf8')
+          CONNECT_ADMIN_PATCH
+      - name: Panel regression tests (GREEN)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/admin-usage.test.cjs
+      - name: Install Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install unchanged locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+      - name: Install exact-match Playwright Chromium for browser regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright-core install --with-deps chromium
+          node -e "const fs=require('node:fs');const p=require('playwright-core').chromium.executablePath();if(!fs.existsSync(p)){console.error('CHROMIUM_NOT_INSTALLED: '+p);process.exit(1)}"
+      - name: Check types, full Connect tests and production build
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Commit only after every check and publish to main
+        shell: bash
+        run: |
+          set -euo pipefail
+            git add app/page.tsx app/layout.tsx app/admin-usage.css app/api/admin/usage/route.ts components/ConnectAdminUsage.tsx sql/connect_admin_usage_snapshot.sql tests/admin-usage.test.cjs package.json
+            git diff --cached --check
+            git diff --cached --stat
+            git diff --cached --name-only | grep -q '^app/api/admin/usage/route.ts$'
+            git diff --cached --name-only | grep -q '^sql/connect_admin_usage_snapshot.sql$'
+            git diff --cached --name-only | grep -q '^components/ConnectAdminUsage.tsx$'
+            git -c user.name='Connect Actions' -c user.email='actions@users.noreply.github.com' commit -m 'Connect PWA: admin storage usage dashboard with private Supabase metrics'
+            git fetch origin main
+            test "$(git rev-parse HEAD^)" = "$(git rev-parse origin/main)" || { echo 'SOURCE_DRIFT: main changed during CI; refusing unsafe push' >&2; exit 1; }
+            git push origin HEAD:main
+            echo 'PUBLISHED: PWA admin usage dashboard. Supabase SQL aggregate must be installed separately.'
