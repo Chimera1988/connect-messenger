@@ -1,0 +1,222 @@
+name: Connect PWA | Settings glass grouping FIX 2026-11-17
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: connect-pwa-settings-glass-grouping
+  cancel-in-progress: false
+
+jobs:
+  settings-glass:
+    name: Repair Liquid Glass settings cards and verify PWA
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout current main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Validate clean source and required anchors
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          git diff --quiet && git diff --cached --quiet
+          test -s app/page.tsx && test -s app/liquid-glass.css
+          test -s package.json && test -s package-lock.json
+          test ! -e lib/settings-menu-groups.ts
+          test ! -e tests/settings-menu-groups.test.cjs
+          python3 - <<'PY'
+          from pathlib import Path
+          page=Path('app/page.tsx').read_text()
+          css=Path('app/liquid-glass.css').read_text()
+          pkg=Path('package.json').read_text()
+          assert page.count("import CacheSettings from '../components/ConnectCacheSettings';") == 1
+          assert page.count('.map((item,i)=><div key={item.id}>') == 1
+          assert css.count('/* Give settings a three-card visual hierarchy (3 / 3 / 1).') == 1
+          assert css.count('.connect-app .settings-menu-row { min-height: 65px; }') == 1
+          assert pkg.count('"test": "node tests/admin-usage.test.cjs') == 1
+          assert 'settingsMenuSegmentClasses' not in page
+          PY
+
+      - name: Define regression tests first (RED)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tests
+          cat > tests/settings-menu-groups.test.cjs <<'SETTINGS_TEST'
+          'use strict';
+          const test = require('node:test');
+          const assert = require('node:assert/strict');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = path.resolve(__dirname, '..');
+          const read = file => fs.readFileSync(path.join(root,file),'utf8');
+          
+          test('settings menu grouping is derived from semantic item ids, not child positions', () => {
+            const page = read('app/page.tsx');
+            const css = read('app/liquid-glass.css');
+            assert.match(page,/settingsMenuSegmentClasses\(items,i\)/);
+            assert.match(page,/\.map\(\(item,i,items\)=>/);
+            assert.match(css,/\.settings-menu\s*>\s*div\.settings-segment-start/);
+            assert.match(css,/\.settings-menu\s*>\s*div\.settings-segment-end/);
+            assert.doesNotMatch(css,/\.settings-menu\s*>\s*div:nth-child\(/);
+            assert.match(read('package.json'),/node tests\/settings-menu-groups\.test\.cjs/);
+          });
+          
+          test('rounded groups stay correct with and without administrator-only rows',()=>{
+            const ts = require('typescript');
+            const helper = read('lib/settings-menu-groups.ts');
+            const js = ts.transpileModule(helper,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+            const module = {exports:{}};
+            Function('module','exports',js)(module,module.exports);
+            const apply = ids => ids.map(id=>({id})).map((_,i,a)=>module.exports.settingsMenuSegmentClasses(a,i));
+            const start = 'settings-segment-start';
+            const end = 'settings-segment-end';
+            assert.deepEqual(apply(['appearance','stickers','notifications','data','privacy','about']),[
+              start,end,start,'',end,start+' '+end
+            ]);
+            assert.deepEqual(apply(['appearance','stickers','members','usage','notifications','data','privacy','about']),[
+              start,end,start,end,start,'',end,start+' '+end
+            ]);
+          });
+          SETTINGS_TEST
+          if node --test tests/settings-menu-groups.test.cjs > "$RUNNER_TEMP/settings-groups-red.log" 2>&1; then
+            echo 'Expected regression tests to fail before fix' >&2
+            exit 1
+          fi
+          grep -q 'not ok' "$RUNNER_TEMP/settings-groups-red.log"
+          echo 'RED confirmed: current nth-child styling cannot handle additional admin rows.'
+
+      - name: Repair menu semantic classes and Liquid Glass corners
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p lib
+          cat > lib/settings-menu-groups.ts <<'GROUP_HELPER'
+          // Segment settings according to their meaning, never their index.
+          // This remains correct when administrator-only entries appear/disappear.
+          function settingsMenuGroup(id: string): string {
+            if (id === 'appearance' || id === 'stickers') return 'personal';
+            if (id === 'members' || id === 'usage') return 'administration';
+            if (id === 'notifications' || id === 'data' || id === 'privacy') return 'application';
+            if (id === 'about') return 'about';
+            return 'other';
+          }
+          
+          export function settingsMenuSegmentClasses<T extends {id:string}>(items: readonly T[], i: number): string {
+            const group = settingsMenuGroup(items[i].id);
+            const first = i === 0 || settingsMenuGroup(items[i-1].id) !== group;
+            const last = i === items.length-1 || settingsMenuGroup(items[i+1].id) !== group;
+            return [first && 'settings-segment-start', last && 'settings-segment-end'].filter(Boolean).join(' ');
+          }
+          GROUP_HELPER
+          python3 - <<'PY'
+          from pathlib import Path
+          page=Path('app/page.tsx')
+          src=page.read_text()
+          def once(old,new,label):
+              global src
+              n=src.count(old)
+              if n!=1: raise SystemExit(f'{label}: expected exactly one anchor; found {n}')
+              src=src.replace(old,new,1)
+          once("import CacheSettings from '../components/ConnectCacheSettings';",
+              "import CacheSettings from '../components/ConnectCacheSettings';\nimport { settingsMenuSegmentClasses } from '../lib/settings-menu-groups';",'menu helper import')
+          once('.map((item,i)=><div key={item.id}>',
+              '.map((item,i,items)=><div key={item.id} className={settingsMenuSegmentClasses(items,i)}>',
+              'semantic settings menu classes')
+          page.write_text(src)
+          
+          sheet=Path('app/liquid-glass.css')
+          css=sheet.read_text()
+          a=css.find('/* Give settings a three-card visual hierarchy (3 / 3 / 1).')
+          marker='.connect-app .settings-menu-row { min-height: 65px; }'
+          if a<0 or css.count(marker)!=1: raise SystemExit('Unexpected Liquid Glass source; no changes applied')
+          b=css.find(marker,a)
+          if b<0 or b-a>1700: raise SystemExit('Unexpected settings CSS block')
+          css=css[:a]+'''/* CONNECT_PWA_SETTINGS_SEMANTIC_GROUPS_20261117
+             Keep rounded Liquid Glass cards stable for both administrator and member menus.
+             Group boundaries are supplied by lib/settings-menu-groups.ts, not nth-child. */
+          .connect-app .settings-group.settings-menu {
+            background: transparent;
+            border: 0;
+            box-shadow: none;
+            -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+            overflow: visible;
+            padding: 0;
+          }
+          .connect-app .settings-menu > div {
+            padding: 0 14px;
+            border-radius: 0;
+            border-bottom-color: rgba(255,255,255,.04);
+          }
+          .connect-app .settings-menu > div .setting-divider { display: none; }
+          .connect-app .settings-menu > div.settings-segment-start {
+            border-top-left-radius: 22px;
+            border-top-right-radius: 22px;
+          }
+          .connect-app .settings-menu > div.settings-segment-end {
+            border-bottom-left-radius: 22px;
+            border-bottom-right-radius: 22px;
+          }
+          .connect-app .settings-menu > div.settings-segment-start:not(:first-child) {
+            margin-top: 14px;
+          }
+          ''' + css[b:]
+          sheet.write_text(css)
+          pkg=Path('package.json')
+          p=pkg.read_text()
+          old='"test": "node tests/admin-usage.test.cjs'
+          if p.count(old)!=1:raise SystemExit('Unexpected package script; refuse unsafe change')
+          pkg.write_text(p.replace(old,'"test": "node tests/settings-menu-groups.test.cjs && node tests/admin-usage.test.cjs',1))
+          PY
+          git diff --check
+
+      - name: Install Node.js 22 and locked dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install packages
+        shell: bash
+        run: npm ci --no-audit --no-fund
+      - name: Run regression tests (GREEN)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/settings-menu-groups.test.cjs
+      - name: Install Chromium for existing PWA integration tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx playwright-core install --with-deps chromium
+          node -e "const fs=require('node:fs');if(!fs.existsSync(require('playwright-core').chromium.executablePath()))process.exit(1)"
+      - name: Full PWA validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Commit verified PWA styling without changing application logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/page.tsx app/liquid-glass.css lib/settings-menu-groups.ts tests/settings-menu-groups.test.cjs package.json
+          git diff --cached --check
+          git diff --cached --quiet && { echo 'Nothing changed' >&2; exit 1; }
+          git fetch origin main
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || { echo 'Main moved; rerun on new source' >&2; exit 1; }
+          git commit -m 'Connect PWA: fix Liquid Glass settings card groups for admins and members'
+          git push origin HEAD:main
