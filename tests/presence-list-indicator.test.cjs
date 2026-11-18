@@ -6,7 +6,7 @@ const ts = require('typescript');
 const React = require('react');
 const {renderToStaticMarkup} = require('react-dom/server');
 
-const source = fs.readFileSync(path.join(__dirname,'../app/page.tsx'),'utf8');
+const source = require('./helpers/app-source.cjs')();
 const css = fs.readFileSync(path.join(__dirname,'../app/globals.css'),'utf8');
 const tree = ts.createSourceFile('page.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 

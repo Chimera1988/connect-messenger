@@ -1,0 +1,68 @@
+import { createClient } from 'npm:@supabase/supabase-js@2.57.0';
+
+const response = (body: Record<string, unknown>, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
+
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const expectedHost = 'br-hidden-math-b9gifypl.storage.c-7.eu-central-1.aws.neon.tech';
+const contentTypes = new Map([['jpg','image/jpeg'],['jpeg','image/jpeg'],['png','image/png'],['webp','image/webp']]);
+
+function validSignedUrl(raw: string, path: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' &&
+      url.hostname === expectedHost &&
+      url.port === '' &&
+      decodeURIComponent(url.pathname) === '/connect-avatars/' + path &&
+      url.searchParams.has('X-Amz-Signature') &&
+      url.searchParams.has('X-Amz-Expires');
+  } catch { return false; }
+}
+async function sha256(bytes: ArrayBuffer): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((x)=>x.toString(16).padStart(2,'0')).join('');
+}
+Deno.serve(async (req: Request) => {
+  if (req.method !== 'POST') return response({ error: 'Method not allowed' }, 405);
+  const token = req.headers.get('x-connect-gc-token') ?? '';
+  if (!/^[a-f0-9]{64}$/.test(token)) return response({ error: 'Unauthorized' },401);
+  const url = Deno.env.get('SUPABASE_URL'),secret = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!url || !secret) return response({ error: 'Server unavailable' }, 503);
+  const db = createClient(url, secret, { auth: {persistSession:false,autoRefreshToken:false} });
+  const check = await db.rpc('connect_media_gc_authorized', {p_token:token});
+  if (check.error || check.data !== true) return response({ error: 'Unauthorized' }, 401);
+  let body: Record<string, unknown>;
+  try { body=await req.json(); } catch { return response({ error:'Invalid JSON' },400); }
+  const accountId=body?.account_id, path=body?.path, putUrl=body?.put_url, getUrl=body?.get_url;
+  if (typeof accountId !== 'string' || !uuidPattern.test(accountId) ||
+      typeof path !== 'string' || path.length > 256 || !path.startsWith(accountId+'/avatar-') ||
+      path.includes('..') || path.includes('\\') ||
+      typeof putUrl !== 'string' || typeof getUrl !== 'string' ||
+      !validSignedUrl(putUrl,path) || !validSignedUrl(getUrl,path)) {
+    return response({ error:'Invalid transfer request' },422);
+  }
+  const ext=path.split('.').pop()?.toLowerCase() ?? '';
+  const type=contentTypes.get(ext);
+  if (!type) return response({ error:'Unsupported media type' },422);
+  const profile=await db.from('profiles').select('id').eq('id',accountId).eq('avatar_path',path).maybeSingle();
+  if (profile.error || !profile.data) return response({ error:'Profile avatar path no longer active' },409);
+  try {
+    const downloaded=await db.storage.from('connect-avatars').download(path);
+    if (downloaded.error || !downloaded.data) throw new Error('source download failed');
+    const bytes=await downloaded.data.arrayBuffer();
+    if (bytes.byteLength<1 || bytes.byteLength>2097152) throw new Error('invalid file size');
+    const sourceHash=await sha256(bytes);
+    const put=await fetch(putUrl,{ method:'PUT',redirect:'error',headers:{'Content-Type':type},body:bytes });
+    if (!put.ok) throw new Error('destination upload rejected '+put.status);
+    const fetched=await fetch(getUrl,{ method:'GET',redirect:'error' });
+    if (!fetched.ok) throw new Error('destination verification failed '+fetched.status);
+    const downloadedBack=await fetched.arrayBuffer();
+    const destinationHash=await sha256(downloadedBack);
+    if (sourceHash !== destinationHash || downloadedBack.byteLength !== bytes.byteLength)
+      throw new Error('destination checksum mismatch');
+    return response({copied:true,verified:true,account_id:accountId,path,sha256:sourceHash,byte_size:bytes.byteLength,content_type:type});
+  } catch(error) {
+    console.error('Neon avatar copy failed:',error instanceof Error?error.message:'Unknown error');
+    return response({ error:'Transfer or verification failed' },503);
+  }
+});

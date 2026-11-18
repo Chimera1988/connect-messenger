@@ -1,6 +1,6 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { useEffect,useRef,useState } from 'react';
 import ConnectWebPushDiagnostics from './ConnectWebPushDiagnostics';
 
 type Sound = 'soft' | 'bright' | 'gentle' | 'silent';
@@ -59,13 +59,10 @@ async function play(sound: Sound) {
     setTimeout(() => { void ctx.close().catch(() => {}); }, 850);
   }
 }
-function vapidBytes(value:string) {
-  const pad='='.repeat((4-value.length%4)%4);
-  return Uint8Array.from(atob((value+pad).replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
-}
-function valid(p:any):p is Prefs {
-  return p && typeof p.enabled==='boolean' && typeof p.vibrate==='boolean'
-    && ['soft','bright','gentle','silent'].includes(p.sound);
+function valid(value:unknown):value is Prefs {
+  if(!value||typeof value!=='object')return false;
+  const p=value as Partial<Prefs>;
+  return typeof p.enabled==='boolean'&&typeof p.vibrate==='boolean'&&typeof p.sound==='string'&&['soft','bright','gentle','silent'].includes(p.sound);
 }
 function nativeSounds(): NativeSounds | null {
   try {return window.ConnectAndroid ? JSON.parse(window.ConnectAndroid.getSoundSettings()) as NativeSounds : null;} catch {return null;}
@@ -136,37 +133,15 @@ function ConnectAndroidNotificationSettings({supabase,userId}:{supabase:Supabase
     });
   }
   async function activate() {
-    if(busy)return;
+    if(busy||!window.ConnectAndroid)return;
     setBusy(true);
-    try {
-      if (!window.ConnectAndroid) {
-        if(!('serviceWorker'in navigator)||!('PushManager'in window)||!('Notification'in window))
-          throw Error('Web Push недоступен. На iPhone откройте Connect с экрана «Домой».');
-        if(!process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY)throw Error('VAPID ещё не настроен');
-        if(Notification.permission!=='granted' && await Notification.requestPermission()!=='granted')
-          throw Error('Разрешение на уведомления не предоставлено');
-      }
+    try{
       const {data:{session}}=await supabase.auth.getSession();
-      if(!session)throw Error('Войдите в аккаунт');
-      if(window.ConnectAndroid) {
-        window.ConnectAndroid.setPreferences(JSON.stringify(latest.current));
-        window.ConnectAndroid.register(session.access_token);
-        setStatus('Android: ожидаем подтверждения регистрации');return;
-      }
-      const key=process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!;
-      const reg=await navigator.serviceWorker.register('/sw.js');
-      let sub=await reg.pushManager.getSubscription();
-      const bytes=vapidBytes(key),oldKey=sub?.options.applicationServerKey;
-      const matches=oldKey&&new Uint8Array(oldKey).length===bytes.length&&new Uint8Array(oldKey).every((v,i)=>v===bytes[i]);
-      if(sub&&!matches){await sub.unsubscribe();sub=null;}
-      if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes});
-      const response=await fetch('/api/push/register',{
-        method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},
-        body:JSON.stringify({platform:'web',endpoint:sub.endpoint,subscription:sub.toJSON()}),
-      });
-      if(!response.ok){const detail=await response.json().catch(()=>({}));throw Error(detail.error||'Не удалось зарегистрировать устройство');}
-      setStatus('Уведомления подключены.');
-    } catch(e){setStatus(e instanceof Error?e.message:'Ошибка подключения');}
+      if(session?.user.id!==userId)throw Error('Войдите в аккаунт');
+      window.ConnectAndroid.setPreferences(JSON.stringify(latest.current));
+      window.ConnectAndroid.register(session.access_token);
+      setStatus('Android: ожидаем подтверждения регистрации');
+    }catch(error){setStatus(error instanceof Error?error.message:'Ошибка подключения');}
     finally{setBusy(false);}
   }
   return <section className="connect-notifications" aria-label="Звуки и уведомления">

@@ -1,0 +1,49 @@
+name: Connect validation
+on:
+  workflow_call:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: connect-ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_SUPABASE_URL: https://example.invalid
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: public-fixture
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify lockfile
+        run: test -s package-lock.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run audit:prod
+      - name: Install matching Chromium
+        run: |
+          npx --no-install playwright-core install --with-deps chromium
+          node -e "const fs=require('fs');if(!fs.existsSync(require('playwright-core').chromium.executablePath()))process.exit(1)"
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.5.6
+      - run: npm run check:architecture
+      - run: npm run typecheck -- --incremental false
+      - name: Check locked Edge Functions separately
+        run: npm run check:edge
+      - name: Run all discovered regression, SQL and WebRTC tests
+        run: npm test
+      - run: npm run build
+      - name: Test the actual production PWA with isolated service fixtures
+        run: npm run test:e2e
+      - run: git diff --check

@@ -1,0 +1,96 @@
+import {createClient} from 'npm:@supabase/supabase-js@2.57.0';
+const HOST='br-hidden-math-b9gifypl.storage.c-7.eu-central-1.aws.neon.tech';
+const BUCKETS=new Set(['connect-avatars','connect-attachments','connect-stickers','connect-profile-media']);
+const validMime=(v:unknown):v is string=>typeof v==='string'&&v.length<129&&/^[a-z0-9][a-z0-9+.-]*\/[a-z0-9][a-z0-9+.-]*$/i.test(v);
+const respond=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
+const isPath=(s:unknown):s is string=>typeof s==='string'&&s.length>=5&&s.length<=900&&s.includes('/')&&!s.startsWith('/')&&!s.endsWith('/')&&!s.includes('\\')&&!s.includes('//')&&!/[\x00-\x1f\x7f]/.test(s)&&!s.split('/').some(x=>x==='.'||x==='..'||x==='')&&!/%(?:2f|5c|00)/i.test(s);
+function checkSigned(raw:unknown,bucket:string,path:string,mode:'GET'|'PUT'):boolean{
+ if(typeof raw!=='string'||raw.length>4000)return false;
+ try{
+  const url=new URL(raw);
+  return url.protocol==='https:'&&url.hostname===HOST&&url.port===''&&url.username===''&&url.password===''&&
+   decodeURIComponent(url.pathname)==='/'+bucket+'/'+path&&
+   url.searchParams.has('X-Amz-Signature')&&url.searchParams.has('X-Amz-Expires')&&
+   Number(url.searchParams.get('X-Amz-Expires'))<=900&&
+   (mode==='GET'||mode==='PUT');
+ }catch{return false;}
+}
+function validItem(x:any):boolean{
+ return x&&BUCKETS.has(x.bucket)&&isPath(x.path)&&validMime(x.mime)&&
+ typeof x.etag==='string'&&x.etag.length>0&&x.etag.length<=256&&
+ Number.isInteger(x.size)&&x.size>=1&&x.size<=104857600&&
+ checkSigned(x.put_url,x.bucket,x.path,'PUT')&&checkSigned(x.get_url,x.bucket,x.path,'GET');
+}
+async function sha(bytes:ArrayBuffer):Promise<string>{
+ const hash=await crypto.subtle.digest('SHA-256',bytes);
+ return Array.from(new Uint8Array(hash)).map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+Deno.serve(async req=>{
+ if(req.method!=='POST')return respond({error:'Method not allowed'},405);
+ const token=req.headers.get('x-connect-gc-token')??'';
+ if(!/^[a-f0-9]{64}$/.test(token))return respond({error:'Unauthorized'},401);
+ const url=Deno.env.get('SUPABASE_URL'),key=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+ if(!url||!key)return respond({error:'Unavailable'},503);
+ const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
+ const a=await db.rpc('connect_media_gc_authorized',{p_token:token});
+ if(a.error||a.data!==true)return respond({error:'Unauthorized'},401);
+ let input:any;
+ try{input=await req.json();}catch{return respond({error:'Invalid JSON'},400);}
+ const auto=input?.mode==='auto';
+ const rounds=auto?Math.min(3,Math.max(1,Number.isInteger(input?.rounds)?input.rounds:1)):1;
+ const failures:Record<string,number>={};
+ let copied=0, attempted=0;
+ for(let round=0;round<rounds;round++){
+  let items:any[]=input?.items;
+  if(auto){
+   const limit=Number.isInteger(input?.limit)?Math.min(6,Math.max(1,input.limit)):4;
+   const {data:jobs,error:queueError}=await db.rpc('connect_neon_media_mirror_candidates',{p_limit:limit});
+   if(queueError||!Array.isArray(jobs))return respond({error:'Source queue unavailable'},503);
+   if(jobs.length===0)break;
+   const desired=jobs.map((j:any)=>({bucket:j.bucket_id,path:j.path,mime:j.mime_type}));
+   if(desired.some((j:any)=>!BUCKETS.has(j.bucket)||!isPath(j.path)||!validMime(j.mime)))return respond({error:'Invalid source queue'},503);
+   let signed:any;
+   try{
+    const res=await fetch('https://br-hidden-math-b9gifypl-connectmediasigner.compute.c-7.eu-central-1.aws.neon.tech/',{
+      method:'POST',redirect:'error',headers:{'Content-Type':'application/json','x-connect-neon-mirror-token':token},
+      body:JSON.stringify({items:desired}),signal:AbortSignal.timeout(15000)
+    });
+    if(!res.ok)throw Error('Signer unavailable');
+    signed=await res.json();
+   }catch{return respond({error:'Neon link signer unavailable'},503);}
+   if(!Array.isArray(signed?.urls)||signed.urls.length!==jobs.length)return respond({error:'Invalid signed links'},503);
+   items=jobs.map((j:any,i:number)=>({
+    bucket:j.bucket_id,path:j.path,mime:j.mime_type,etag:j.source_etag,size:Number(j.source_size),
+    put_url:signed.urls[i]?.put_url,get_url:signed.urls[i]?.get_url
+   }));
+  }
+  if(!Array.isArray(items)||items.length<1||items.length>6||items.some(x=>!validItem(x)))return respond({error:'Invalid transfer batch'},422);
+  attempted+=items.length;
+  for(const x of items){
+  let stage='source_download';
+  try{
+   const original=await db.storage.from(x.bucket).download(x.path);
+   if(original.error||!original.data)throw new Error('Source missing');
+   const buffer=await original.data.arrayBuffer();
+   if(buffer.byteLength!==x.size)throw new Error('Source changed');
+   const originalHash=await sha(buffer);
+   stage='upload';
+   const upload=await fetch(x.put_url,{method:'PUT',redirect:'error',headers:{'Content-Type':x.mime},body:buffer,signal:AbortSignal.timeout(35000)});
+   if(!upload.ok)throw new Error('Upload rejected');
+   stage='readback';
+   const download=await fetch(x.get_url,{method:'GET',redirect:'error',signal:AbortSignal.timeout(35000)});
+   if(!download.ok)throw new Error('Readback rejected');
+   const duplicate=await download.arrayBuffer();
+   if(duplicate.byteLength!==buffer.byteLength||await sha(duplicate)!==originalHash)throw new Error('Checksum mismatch');
+   stage='confirm';
+   const verified=await db.rpc('connect_neon_media_mirror_confirm',{p_bucket:x.bucket,p_path:x.path,p_etag:x.etag,p_size:x.size,p_sha256:originalHash});
+   if(verified.error||verified.data!==true)throw new Error('Source version changed before confirm');
+   copied++;
+  }catch{
+   failures[stage]=(failures[stage]??0)+1;
+   await db.rpc('connect_neon_media_mirror_failed',{p_bucket:x.bucket,p_path:x.path,p_etag:x.etag});
+  }
+  }
+ }
+ return respond({ok:copied===attempted,copied,attempted,failed:attempted-copied,stages:failures,mode:auto?'auto':'signed'});
+});

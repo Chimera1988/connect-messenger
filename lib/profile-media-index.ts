@@ -3,7 +3,7 @@
  * Actual authenticated media bytes use existing connect-media-v1 cache.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { prefetchProfileFile, retireCachedProfileFile } from './media-cache';
+import { prefetchProfileFile,retireCachedProfileFile } from './media-cache';
 export type ProfileLibraryKind = 'photos' | 'videos' | 'music';
 export type ProfileLibraryRow = { path: string; createdAt: string };
 type Catalog = { key: string; viewer: string; owner: string; kind: ProfileLibraryKind; savedAt: number; items: ProfileLibraryRow[] };

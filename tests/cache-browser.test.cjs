@@ -1,3 +1,4 @@
+const {waitForPage}=require('./helpers/wait-for-page.cjs');
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http'),ts=require('typescript');
 const {chromium}=require(process.env.CONNECT_PLAYWRIGHT_MODULE||'playwright-core');
 test('persistent media cache survives restart, ignores signed tokens, isolates accounts and preserves avatar/vault on cleanup',async()=>{
@@ -8,7 +9,7 @@ test('persistent media cache survives restart, ignores signed tokens, isolates a
  await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
  try{
   browser=await chromium.launch({executablePath:process.env.CONNECT_CHROMIUM_PATH||undefined,args:['--no-sandbox']});
-  const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);await page.evaluate(async()=>{window.release=cache.installMediaCache('user-a');window.secretVault=new Vault('user-a');await secretVault.putMany({account:'secret-key-material'});for(const bucket of ['connect-avatars','connect-attachments']){const img=new Image();img.src='/storage/v1/object/sign/'+bucket+'/sample.png?token=old';document.body.append(img);}});await page.waitForFunction(async()=>{const s=await cache.cacheStats();return s.photos>0&&s.system>0;});
+  const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);await page.evaluate(async()=>{window.release=cache.installMediaCache('user-a');window.secretVault=new Vault('user-a');await secretVault.putMany({account:'secret-key-material'});for(const bucket of ['connect-avatars','connect-attachments']){const img=new Image();img.src='/storage/v1/object/sign/'+bucket+'/sample.png?token=old';document.body.append(img);}});await waitForPage(page,async()=>{const s=await cache.cacheStats();return s.photos>0&&s.system>0;});
  const count=requests;assert.equal(await page.evaluate(()=>cache.mediaIdentity('https://evil.test/storage/v1/object/sign/connect-avatars/sample.png')),null);
  assert.match(await page.evaluate(()=>cache.resolveCachedMedia(location.origin+'/storage/v1/object/sign/connect-attachments/sample.png?token=new')),/^blob:/);assert.equal(requests,count);
  await page.reload();assert.equal(await page.evaluate(async()=>{window.release=cache.installMediaCache('user-a');return await new Vault('user-a').get('account');}),'secret-key-material');assert.match(await page.evaluate(()=>cache.resolveCachedMedia(location.origin+'/storage/v1/object/sign/connect-attachments/sample.png?token=restart')),/^blob:/);assert.equal(requests,count);

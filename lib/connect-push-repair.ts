@@ -3,7 +3,7 @@
  * registration. Never request notification permission except on an explicit UI tap.
  * Never delete other installations' endpoints, or treat a network error as revocation.
  */
-import type {SupabaseClient} from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export type PushRepairState = 'active'|'unsupported'|'permission'|'denied'|'invalid-key'|'needs-action'|'disabled'|'temporary'|'unauthorized';
 export type PushRepairResult = {state:PushRepairState;reason?:string};
@@ -63,7 +63,7 @@ async function reconcile(client:SupabaseClient,userId:string,manual:boolean):Pro
   let token:string;
   try{
     const {data:{session},error}=await client.auth.getSession();
-    if(error||!session?.access_token)return {state:'unauthorized'};
+    if(error||!session?.access_token||session.user.id!==userId)return {state:'unauthorized'};
     token=session.access_token;
   }catch{return {state:'temporary'};}
   if(!manual){

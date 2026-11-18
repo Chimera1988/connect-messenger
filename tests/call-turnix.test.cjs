@@ -5,24 +5,28 @@ const path = require('node:path');
 const vm = require('node:vm');
 const crypto = require('node:crypto');
 const ts = require('typescript');
+const loader=require('./helpers/load-ts.cjs'),authFixture=require('./helpers/route-auth.cjs');
 const compiled = ts.transpileModule(fs.readFileSync(path.join(__dirname,'../app/api/calls/ice/route.ts'),'utf8'),
   {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText;
 const USER='00000000-0000-4000-8000-123456789abc', SECRET='MY_PRIVATE_TURNIX_FIXTURE_TOKEN';
 function fixture({env={},upstream,authorized=true,clientIP='203.0.113.9'}={}){
   const requests=[],warnings=[],exports={};
+  const db=authFixture.decorate({from:()=>{const q={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{is_blocked:false}})};return q;}},USER,authorized);
   const deps={
     'node:crypto':crypto,
     'node:net':require('node:net'),
     '@supabase/supabase-js':{createClient:()=>({auth:{getUser:async()=>({data:{user:authorized?{id:USER}:null},error:authorized?null:Error('unauthorized')})}})},
     'next/server':{NextResponse:{json:(body,opts={})=>({status:opts.status||200,body,headers:opts.headers||{}})}},
   };
+  const environment={NEXT_PUBLIC_SUPABASE_URL:'https://example.invalid',SUPABASE_SERVICE_ROLE_KEY:'service-fixture',...env};
+  deps['../../../../lib/server/admin']=loader({'@supabase/supabase-js':{createClient:()=>db}},{process:{env:environment}})('lib/server/admin.ts');
   vm.runInNewContext(compiled,{exports,require:n=>{assert.ok(deps[n],'unexpected dep '+n);return deps[n]},
-    process:{env:{NEXT_PUBLIC_SUPABASE_URL:'https://example.invalid',NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:'publishable',...env}},
+    process:{env:environment},
     console:{warn:(...items)=>warnings.push(items.join(' '))},
     fetch:async(url,opts)=>{requests.push({url,opts});return upstream?upstream(url,opts):{ok:false,status:503}},
     AbortSignal,Date,JSON,Promise,
   });
-  return {requests,warnings,get:auth=>exports.GET({headers:{get:name=>name==='authorization'?auth:(name==='x-vercel-forwarded-for'?clientIP:null)}})};
+  return {requests,warnings,get:auth=>exports.GET({headers:{get:name=>name==='authorization'?(auth?authFixture.token(USER):null):(name==='x-vercel-forwarded-for'?clientIP:null)}})};
 }
 const issued={iceServers:[
   {urls:['stun:stun.turnix.io:3478']},

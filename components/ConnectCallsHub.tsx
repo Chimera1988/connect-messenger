@@ -1,9 +1,10 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback,useEffect,useMemo,useRef,useState } from 'react';
 import { createPortal } from 'react-dom';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import ConnectCallAvatar, { loadCallAvatarUrls } from './ConnectCallAvatar';
+import ConnectCallAvatar,{ loadCallAvatarUrls } from './ConnectCallAvatar';
+import { useConnectSession } from './ConnectSessionProvider';
+import { useUiHosts } from './ConnectUiSlots';
 
 type CallStatus = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
 type Call = {
@@ -20,17 +21,6 @@ type Profile = { id: string; display_name: string; is_blocked: boolean; avatar_p
 type Conversation = { id: string; user_a: string; user_b: string };
 type DialContact = { conversationId: string | null; peerId: string; peerName: string };
 type Filter = 'all' | 'missed';
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
-const proxyFetch: typeof fetch = (input, init) => {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  const proxy = typeof window !== 'undefined' && window.location.hostname === 'connect-chat.duckdns.org';
-  const target = proxy && url.startsWith(supabaseUrl + '/')
-    ? window.location.origin + '/supabase/' + url.slice(supabaseUrl.length + 1)
-    : url;
-  return fetch(input instanceof Request ? new Request(target, input) : target, init);
-};
 
 function CallIcon({ outgoing = false, size = 24 }: { outgoing?: boolean; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.0" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -78,16 +68,9 @@ function statusText(call: Call, self: string) {
 
 /** Four-tab navigation and call history without replacing Connect's large page.tsx. */
 export default function ConnectCallsHub() {
-  const client = useMemo<SupabaseClient | null>(() => {
-    if (!supabaseUrl || !supabaseKey) return null;
-    return createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
-      global: { fetch: proxyFetch },
-    });
-  }, []);
-  const [userId, setUserId] = useState<string | null>(null);
-  const [nav, setNav] = useState<Element | null>(null);
-  const [main, setMain] = useState<Element | null>(null);
+  const {client,user}=useConnectSession();
+  const userId=user?.id||null;
+  const {hosts:{nav,main}}=useUiHosts();
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [calls, setCalls] = useState<Call[]>([]);
@@ -121,35 +104,6 @@ export default function ConnectCallsHub() {
       else setLastViewed(0);
     } catch { setLastViewed(0); }
   }, [userId]);
-
-  useEffect(() => {
-    if (!client) return;
-    let alive = true;
-    const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
-      if (alive) setUserId(session?.user?.id || null);
-    });
-    void client.auth.getSession().then(({ data }) => {
-      if (alive) setUserId(data.session?.user.id || null);
-    }).catch(() => {});
-    return () => { alive = false; subscription.unsubscribe(); };
-  }, [client]);
-
-  useEffect(() => {
-    let frame = 0;
-    const scan = () => {
-      frame = 0;
-      const shell = document.querySelector('.connect-app');
-      const nextNav = shell?.querySelector('.bottom-nav') || null;
-      const nextMain = shell?.querySelector('.main-view') || null;
-      setNav(current => current === nextNav ? current : nextNav);
-      setMain(current => current === nextMain ? current : nextMain);
-    };
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(scan); };
-    scan();
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
-  }, []);
 
   useEffect(() => {
     if (!nav || !main || !userId) { setOpen(false); setPickerOpen(false); }

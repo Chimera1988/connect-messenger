@@ -1,4 +1,4 @@
-import {makePhotoPreview} from './chat-thumbnails';
+import { makePhotoPreview } from './chat-thumbnails';
 export type ProfileThumbnailKind='photos'|'videos'|'music';
 export function profileThumbnailPath(path:string,kind:ProfileThumbnailKind):string|null{
   return kind==='photos'?path+'__thumb.webp':kind==='videos'?path+'__poster.jpg':null;

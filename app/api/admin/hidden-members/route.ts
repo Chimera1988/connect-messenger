@@ -1,4 +1,4 @@
-import { authenticatedUser, fail } from '../../../../lib/server/admin';
+import { authenticatedUser,fail } from '../../../../lib/server/admin';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';

@@ -7,7 +7,7 @@ const ts=require('typescript');
 const path=require('node:path');
 
 const source=fs.readFileSync(path.join(__dirname,'../lib/chat-media-presentation.ts'),'utf8');
-const page=fs.readFileSync(path.join(__dirname,'../app/page.tsx'),'utf8');
+const page=require('./helpers/app-source.cjs')();
 const compiled=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
 const storage=new Map();
 let fetches=0;
@@ -61,7 +61,7 @@ test('large and unknown-size audio is never automatically fetched for waveform',
 test('PWA renders waves only when voice is visible and computes outgoing wave locally',()=>{
   assert.match(page,/CONNECT_PWA_VOICE_WAVE_LAZY_RESTORE_20261116/);
   assert.match(page,/new IntersectionObserver\(entries=>/);
-  assert.match(page,/void prewarmChatWave\(user\.id,path,localVoiceUrl,file\.size\)/);
+  assert.match(page,/void prewarmChatWave\(owner,path,localVoiceUrl,file\.size\)/);
   assert.match(page,/\.finally\(\(\)=>URL\.revokeObjectURL\(localVoiceUrl\)\)/);
   assert.match(page,/byteSize=\{m\.attachment_size\|\|0\}/);
 });

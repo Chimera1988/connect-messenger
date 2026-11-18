@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { useCallback,useEffect,useRef,useState } from 'react';
 import * as tus from 'tus-js-client';
-import {createProfileThumbnail,profileThumbnailPath} from '../lib/profile-thumbnails';
-import { ConnectMusicLibrary } from './ConnectMusicSystem';
+import { cacheUploadedProfileFile,prefetchCachedMedia,prefetchProfileFile,resolveCachedProfileFile,retireCachedProfileFile } from '../lib/media-cache';
+import { readProfileLibrary,removeProfileLibraryItem,writeProfileLibrary,type ProfileLibraryRow } from '../lib/profile-media-index';
+import { createProfileThumbnail,profileThumbnailPath } from '../lib/profile-thumbnails';
 import ConnectGalleryViewer from './ConnectGalleryViewer';
-import { readProfileLibrary, writeProfileLibrary, removeProfileLibraryItem, type ProfileLibraryRow } from '../lib/profile-media-index';
-import { resolveCachedProfileFile, prefetchProfileFile, prefetchCachedMedia, cacheUploadedProfileFile, retireCachedProfileFile } from '../lib/media-cache';
+import { ConnectMusicLibrary } from './ConnectMusicSystem';
 // CONNECT_PROFILE_MEDIA_INSTANT_CACHE_V3_20261111
 
 export type ProfileMediaKind = 'photos' | 'videos' | 'music';

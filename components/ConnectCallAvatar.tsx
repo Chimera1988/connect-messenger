@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { useEffect,useState } from 'react';
 
 type AvatarPerson = { id: string; avatar_path?: string | null };
 

@@ -5,12 +5,17 @@ function fixture({devices,web,android,configured=true,reserved=false,vapidSetup}
  const call={id:'11111111-1111-4111-8111-111111111111',caller_id:'caller',callee_id:'callee',conversation_id:'chat',status:'ringing',created_at:new Date().toISOString()};
  let held=reserved,inserts=0,deletes=0;const removed=[];
  const db={from(table){let verb='select',values;const q={select(){return q},eq(){return q},maybeSingle(){return q},insert(v){verb='insert';values=v;return q},delete(){verb='delete';return q},then(resolve,reject){let result={data:null,error:null};if(table==='connect_call_push_log'){if(verb==='insert'){inserts++;if(held)result.error={code:'23505'};else held=true;}if(verb==='delete'){deletes++;held=false;}}if(table==='connect_calls')result.data=call;if(table==='conversations')result.data={user_a:'caller',user_b:'callee'};if(table==='push_devices'&&verb==='select')result.data=devices;if(table==='push_devices'&&verb==='delete')removed.push(values);if(table==='profiles')result.data={display_name:'Synthetic caller'};return Promise.resolve(result).then(resolve,reject)}};return q;}};
+ const loader=require('./helpers/load-ts.cjs'),authFixture=require('./helpers/route-auth.cjs');
+ db.rpc=(name)=>{assert.equal(name,'connect_push_targets');return Promise.resolve({data:devices,error:null});};authFixture.decorate(db,'caller');
  const exp={},env={NEXT_PUBLIC_SUPABASE_URL:'https://example.invalid',NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:'public',SUPABASE_SERVICE_ROLE_KEY:'test-only',...(configured?{FIREBASE_SERVICE_ACCOUNT_JSON:'{}',VAPID_PUBLIC_KEY:'public',VAPID_PRIVATE_KEY:'test-only',VAPID_SUBJECT:'mailto:example@example.invalid'}:{})};
  const deps={'next/server':{NextResponse:{json:(body,options={})=>({status:options.status||200,body})}},'../../../../lib/server/visibility':{canReach:async()=>true},'@supabase/supabase-js':{createClient:(_u,key)=>key==='public'?{auth:{getUser:async()=>({data:{user:{id:'caller'}}})}}:db},'firebase-admin/app':{getApps:()=>[{}],initializeApp:()=>{},cert:x=>x},'firebase-admin/messaging':{getMessaging:()=>({send:android||(async()=>{})})},'web-push':{setVapidDetails(){vapidSetup?.()},sendNotification:web||(async()=>{})}};
+ deps['../../../../lib/server/admin']=loader({'@supabase/supabase-js':{createClient:()=>db}},{process:{env}})('lib/server/admin.ts');
+ deps['../../../../lib/server/push-destination']=loader()('lib/server/push-destination.ts');
  vm.runInNewContext(compiled,{exports:exp,require:name=>{assert.ok(deps[name],name);return deps[name]},process:{env},console:{info(){},warn(){}},Date,Promise});
- return{post:()=>exp.POST({headers:{get:()=> 'Bearer fixture'},json:async()=>({callId:call.id})}),get held(){return held},get inserts(){return inserts},get deletes(){return deletes}};
+ return{post:()=>exp.POST({headers:{get:()=>authFixture.token('caller')},json:async()=>({callId:call.id})}),get held(){return held},get inserts(){return inserts},get deletes(){return deletes}};
 }
-const webDevice={id:'web',platform:'web',subscription:{}},androidDevice={id:'android',platform:'android',endpoint:'fixture'};
+const endpoint='https://fcm.googleapis.com/fcm/send/fixture';
+const webDevice={id:'web',platform:'web',endpoint,subscription:{endpoint,keys:{p256dh:Buffer.concat([Buffer.from([4]),Buffer.alloc(64,1)]).toString('base64url'),auth:Buffer.alloc(16,1).toString('base64url')}}},androidDevice={id:'android',platform:'android',endpoint:'fixture'};
 test('a slow web endpoint cannot block Android FCM; web timeout is bounded',async()=>{
  let finishWeb,startedAndroid=false;const web=new Promise(r=>finishWeb=r);
  const f=fixture({devices:[webDevice,androidDevice],web:(_s,_p,options)=>{assert.equal(options.timeout,6000);return web},android:async message=>{assert.equal(message.android.priority,'high');assert.equal(message.android.ttl,45000);startedAndroid=true;}});

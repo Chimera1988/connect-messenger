@@ -1,6 +1,6 @@
 'use strict';
 const {test}=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),ts=require('typescript');
-const source=fs.readFileSync(path.join(__dirname,'../app/page.tsx'),'utf8');
+const source=require('./helpers/app-source.cjs')();
 function makeLogout(result){
   const begin=source.indexOf('  async function logout() {');
   const end=source.indexOf('\n  const keyboardOpen',begin);
@@ -8,9 +8,11 @@ function makeLogout(result){
   const events=[];
   const verifiedSessionRef={current:true};
   const deps={
+    setPushSession:()=>{},retireCurrentPush:async()=>{},
     supabase:{auth:{signOut:async opts=>{events.push(['signOut',opts]);return result;}}},
     authSequence:{current:0},
     verifiedSessionRef,
+    verifiedIdentityRef:{current:'fixture'},
     setConnectionStatus:()=>{},
     CONNECT_LOCAL_LOGOUT_FLAG:'connect-local-logout-v1',
     localStorage:{setItem:(k,v)=>events.push(['storage',k,v])},

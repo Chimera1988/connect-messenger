@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
-import ConnectCallAvatar, { loadCallAvatarUrls } from './ConnectCallAvatar';
+import type { RealtimeChannel,SupabaseClient } from '@supabase/supabase-js';
+import { useEffect,useRef,useState } from 'react';
 import { traceCall } from '../lib/call-diagnostics';
-import {callOutputSupported,listedCallOutputs,chooseCallOutput,type ConnectCallOutput} from '../lib/connect-call-output'; // CONNECT_PWA_CALL_OUTPUT_UI_20261114
+import { answerFingerprint,flushCallFinishes,queueCallFinish } from '../lib/calls/finish';
+import { callOutputSupported,chooseCallOutput,listedCallOutputs,type ConnectCallOutput } from '../lib/connect-call-output'; // CONNECT_PWA_CALL_OUTPUT_UI_20261114
+import ConnectCallAvatar,{ loadCallAvatarUrls } from './ConnectCallAvatar';
 
 type Status = 'ringing' | 'active' | 'ended' | 'declined' | 'missed' | 'busy' | 'failed';
 type CallRow = {
@@ -85,10 +86,10 @@ function Glyph({ name }: { name: 'call' | 'end' | 'mic' | 'muted' | 'speaker' })
 }
 
 /** A real button rendered beside the three-dot menu in the chat header. */
-export function ConnectCallButton({ peerName, disabled = false }: { peerName: string; disabled?: boolean }) {
+export function ConnectCallButton({ peerName, disabled = false, target }: { peerName: string; disabled?: boolean; target?:OutgoingTarget }) {
   return <button className="connect-call-trigger" type="button"
     aria-label={`Позвонить: ${peerName}`} title="Аудиозвонок" disabled={disabled}
-    onClick={() => window.dispatchEvent(new Event('connect:audio-call:start'))}>
+    onClick={() => window.dispatchEvent(new CustomEvent('connect:audio-call:start',{detail:target}))}>
     <Glyph name="call"/>
   </button>;
 }
@@ -453,14 +454,10 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     const acceptedHere=current?.status==='active'&&!!submittedAnswerRef.current?.sdp&&current.answer?.sdp===submittedAnswerRef.current.sdp;
     const wireReason=current?.callee_id===userId&&!acceptedHere?'decline':reason;
     traceCall(current?.id,'finish','ended',reason);
-    cleanup();
-    if (current && client) {
-      const { error: rpcError } = await client.rpc('connect_finish_audio_call', {
-        p_call_id: current.id, p_reason: wireReason,
-      });
-      if (rpcError) console.warn('Connect call state:', rpcError.message);
-      else void notifyCallEnded(current.id);
-    }
+    const hash=acceptedHere?await answerFingerprint(submittedAnswerRef.current?.sdp):null;
+    const queued=current&&client&&userId?queueCallFinish(client,userId,{callId:current.id,reason:wireReason,answerHash:hash},id=>{void notifyCallEnded(id);}):Promise.resolve();
+    if(callRef.current?.id===current?.id)cleanup();
+    await queued;
   }
 
   function connectionDeadline(pc:RTCPeerConnection,generation:number,ms=25000){
@@ -590,6 +587,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
     if (!client || !userId) { cleanup(); return; }
     let active = true;
     missedCheckedRef.current = false;
+    let leaseAt=0,lastPoll=0,connected=false;
     const inbox = client.channel(`connect-calls-inbox-${userId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'connect_calls', filter: `callee_id=eq.${userId}` },
         payload => { if (active) { presentIncoming(payload.new as CallRow); void refreshIncoming(); } })
@@ -597,13 +595,15 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
         payload => { if (active) void onUpdatedCall(payload.new as CallRow); })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'connect_calls', filter: `callee_id=eq.${userId}` },
         payload => { if (active) void onUpdatedCall(payload.new as CallRow); })
-      .subscribe(status => { if (status === 'SUBSCRIBED') void refreshIncoming(); });
+      .subscribe(status => {connected=status==='SUBSCRIBED';if(connected)void refreshIncoming();});
 
     async function refreshIncoming() {
       if (!active || !client || !userId || syncingRef.current) return;
       syncingRef.current = true;
       try {
+        await flushCallFinishes(client,userId,id=>{void notifyCallEnded(id);});
         const existing = callRef.current;
+        if(existing?.status==='active'&&Date.now()-leaseAt>20000){leaseAt=Date.now();const hash=existing.callee_id===userId?await answerFingerprint(submittedAnswerRef.current?.sdp):null;await client.rpc('connect_heartbeat_audio_call',{p_call_id:existing.id,p_answer_sha256:hash});}
         if (existing) {
           const { data } = await client.from('connect_calls').select('*')
             .eq('id', existing.id).maybeSingle();
@@ -635,13 +635,13 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       } catch { /* Realtime or the next poll will retry transient errors. */ }
       finally { syncingRef.current = false; }
     }
-    function visible() { if (document.visibilityState === 'visible') void refreshIncoming(); }
+    function visible(){if(document.visibilityState==='visible'){lastPoll=Date.now();void refreshIncoming();}}
     function fromPush(event: MessageEvent) {
       if (event.data?.type === 'CONNECT_INCOMING_CALL') void refreshIncoming();
     }
     // WebKit can suspend the websocket while the PWA is backgrounded, and
     // a Realtime event can be missed when resuming. Re-fetch while visible.
-    const poll = setInterval(visible, 2400);
+    const poll=setInterval(()=>{const background=document.visibilityState!=='visible',live=callRef.current?.status==='active';const interval=background?20000:callRef.current?2400:connected?30000:5000;if((!background||live)&&Date.now()-lastPoll>interval){lastPoll=Date.now();void refreshIncoming();}},2400);
     document.addEventListener('visibilitychange', visible);
     window.addEventListener('focus', visible);
     window.addEventListener('pageshow', visible);
@@ -709,7 +709,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       if (rpcError || !data) throw new Error(rpcError?.message || 'Не удалось начать звонок');
       const row = data as CallRow;
       if (generation !== generationRef.current) {
-        await client.rpc('connect_finish_audio_call', { p_call_id: row.id, p_reason: 'hangup' });
+        await queueCallFinish(client,userId!,{callId:row.id,reason:'hangup'});
         return;
       }
       callRef.current = row; setShown(row); setPhase('ringing');
@@ -732,7 +732,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       const msg = friendlyError(e);
       const failed = callRef.current;
       cleanup();
-      if (failed) void client.rpc('connect_finish_audio_call', { p_call_id: failed.id, p_reason: 'failed' });
+      if (failed&&userId) void queueCallFinish(client,userId,{callId:failed.id,reason:'failed'});
       setToast(msg.includes('duplicate key') ? 'В этом чате уже идёт звонок' : `Звонок не начат: ${msg}`);
     }
   }
@@ -784,7 +784,7 @@ export default function ConnectAudioCalls({ client, userId, conversationId, peer
       if (generation !== generationRef.current) {
         // The accepted RPC may complete after a local cancel. Finish that ID,
         // without touching a new call's microphone, state or timers.
-        await client.rpc('connect_finish_audio_call', { p_call_id: row.id, p_reason: 'hangup' });
+        await queueCallFinish(client,userId!,{callId:row.id,reason:'hangup',answerHash:await answerFingerprint(submitted.sdp)});
         return;
       }
       callRef.current = data as CallRow; setShown(data as CallRow);

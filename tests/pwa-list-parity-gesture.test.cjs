@@ -5,7 +5,7 @@ const path=require('node:path');
 const ts=require('typescript');
 const root=process.cwd();
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-const page=read('app/page.tsx');
+const page=require('./helpers/app-source.cjs')();
 const liquid=read('app/liquid-glass.css');
 const journal=read('app/call-journal-editor.css');
 const marker='CONNECT_PWA_LIST_PARITY_GESTURE_V1_20261114';

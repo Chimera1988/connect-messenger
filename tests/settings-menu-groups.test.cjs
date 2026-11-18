@@ -7,14 +7,14 @@ const root = path.resolve(__dirname, '..');
 const read = file => fs.readFileSync(path.join(root,file),'utf8');
 
 test('settings menu grouping is derived from semantic item ids, not child positions', () => {
-  const page = read('app/page.tsx');
+  const page = require('./helpers/app-source.cjs')();
   const css = read('app/liquid-glass.css');
   assert.match(page,/settingsMenuSegmentClasses\(items,i\)/);
   assert.match(page,/\.map\(\(item,i,items\)=>/);
   assert.match(css,/\.settings-menu\s*>\s*div\.settings-segment-start/);
   assert.match(css,/\.settings-menu\s*>\s*div\.settings-segment-end/);
   assert.doesNotMatch(css,/\.settings-menu\s*>\s*div:nth-child\(/);
-  assert.match(read('package.json'),/node tests\/settings-menu-groups\.test\.cjs/);
+  assert(require('../scripts/test-all.cjs').discover(path.join(root,'tests')).some(file=>file.endsWith('settings-menu-groups.test.cjs')));
 });
 
 test('rounded groups stay correct with and without administrator-only rows',()=>{

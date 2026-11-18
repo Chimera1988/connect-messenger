@@ -1,8 +1,8 @@
 'use client';
 /** CONNECT_PWA_PUSH_GUARDIAN_20261114 - mounted for every signed-in PWA page. */
-import {useEffect} from 'react';
-import type {SupabaseClient} from '@supabase/supabase-js';
-import {reconcileWebPush} from '../lib/connect-push-repair';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { useEffect } from 'react';
+import { reconcileWebPush } from '../lib/connect-push-repair';
 
 export default function ConnectPushGuardian({supabase,userId}:{supabase:SupabaseClient;userId:string}){
   useEffect(()=>{

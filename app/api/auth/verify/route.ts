@@ -1,4 +1,4 @@
-import {adminClient} from '../../../../lib/server/admin';
+import { adminClient } from '../../../../lib/server/admin';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -43,7 +43,7 @@ export async function GET(request:Request):Promise<Response>{
       return json({ok:false,error:'Ошибка проверки сессии'},503);
     }
     if(valid!==true)return json({ok:false,error:'Сессия завершена'},401);
-    return json({ok:true,userId:user.id});
+    return json({ok:true,userId:user.id,isAdmin:user.id===process.env.CONNECT_ADMIN_USER_ID});
   }catch{
     return json({ok:false,error:'Сервер авторизации недоступен'},503);
   }

@@ -5,7 +5,7 @@ const path = require('node:path');
 const ts = require('typescript');
 
 const root = path.resolve(__dirname,'..');
-const page = fs.readFileSync(path.join(root,'app/page.tsx'),'utf8');
+const page = require('./helpers/app-source.cjs')();
 const call = fs.readFileSync(path.join(root,'components/ConnectAudioCalls.tsx'),'utf8');
 const liquid = fs.readFileSync(path.join(root,'app/liquid-glass.css'),'utf8');
 const callsCss = fs.readFileSync(path.join(root,'app/calls.css'),'utf8');

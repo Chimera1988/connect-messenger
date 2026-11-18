@@ -1,7 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback,useEffect,useRef,useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useUiHosts } from './ConnectUiSlots';
 
 /**
  * A self-contained retro Sonic-themed jump runner for Connect.
@@ -211,8 +212,7 @@ function drawScene(ctx: CanvasRenderingContext2D, w: number, h: number, game: Ga
 }
 
 export default function ConnectSonicRunner() {
-  const [menu, setMenu] = useState<Element | null>(null);
-  const [main, setMain] = useState<Element | null>(null);
+  const {hosts:{settings:menu,main}}=useUiHosts();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>('ready');
   const [score, setScore] = useState(0);
@@ -223,23 +223,6 @@ export default function ConnectSonicRunner() {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const hudAt = useRef(0);
   const bestRef = useRef(0);
-
-  useEffect(() => {
-    let frame = 0;
-    function scan() {
-      frame = 0;
-      const shell = document.querySelector('.connect-app');
-      const root = shell?.querySelector('.main-view') || null;
-      const settings = root?.querySelector('.settings-content .settings-menu') || null;
-      setMenu(current => current === settings ? current : settings);
-      setMain(current => current === root ? current : root);
-    }
-    const schedule = () => { if (!frame) frame = requestAnimationFrame(scan); };
-    scan();
-    const observer = new MutationObserver(schedule);
-    observer.observe(document.body, { childList: true, subtree: true });
-    return () => { observer.disconnect(); if (frame) cancelAnimationFrame(frame); };
-  }, []);
 
   useEffect(() => { if (open && !menu) setOpen(false); }, [open, menu]);
 

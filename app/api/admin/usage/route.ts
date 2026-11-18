@@ -1,4 +1,4 @@
-import {authenticatedUser} from '../../../../lib/server/admin';
+import { authenticatedUser } from '../../../../lib/server/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,14 +36,14 @@ export async function GET(request:Request):Promise<Response> {
       console.error('Connect admin usage: aggregate unavailable',error.code||'SQL_ERROR');
       return json({error:'Данные хранилища пока недоступны'},503);
     }
-    if(!data || !Array.isArray(data.buckets))return json({error:'Неполный ответ статистики'},503);
+    if(!data || typeof data!=='object' || Array.isArray(data) || !Array.isArray(data.buckets))return json({error:'Неполный ответ статистики'},503);
     return json({
       checkedAt:new Date().toISOString(),
       databaseBytes:Number(data.databaseBytes)||0,
       storageBytes:Number(data.storageBytes)||0,
       storageFiles:Number(data.storageFiles)||0,
       monthStoredBytes:Number(data.monthStoredBytes)||0,
-      buckets:data.buckets.map((b:{id:unknown;bytes:unknown;files:unknown;monthBytes:unknown})=>({
+      buckets:data.buckets.filter((b):b is {[key:string]:import('../../../../lib/database').Json}=>!!b&&typeof b==='object'&&!Array.isArray(b)).map(b=>({
         id:String(b.id),bytes:Number(b.bytes)||0,files:Number(b.files)||0,monthBytes:Number(b.monthBytes)||0,
       })),
       traffic:{egressBytes:null,cachedEgressBytes:null,source:'supabase-usage-dashboard'},

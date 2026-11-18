@@ -5,7 +5,7 @@ const path=require('node:path');
 const ts=require('typescript');
 const root=process.cwd();
 const helper=fs.readFileSync(path.join(root,'lib/connect-media-optimizer.ts'),'utf8');
-const page=fs.readFileSync(path.join(root,'app/page.tsx'),'utf8');
+const page=require('./helpers/app-source.cjs')();
 const js=ts.transpileModule(helper.replace(/^export /gm,''),{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.None}}).outputText;
 const policy=new Function(js+'; return connectCanOptimizeMedia;')();
 const fake=(name,type,size)=>({name,type,size});
@@ -25,13 +25,12 @@ test('media decisions preserve compressed originals, stickers, notes, native and
 });
 
 test('single uploads and albums both prepare before thumbnail, upload and metadata; PWA recordings bounded',()=>{
-  assert.equal((page.match(/await connectOptimizeMedia\(file,\s*\{native:isNativeMediaRuntime\(\)/g)||[]).length,2,'shared optimizer must apply to albums and single videos');
-  const album=page.slice(page.indexOf('async function sendAlbum('),page.indexOf('async function sendAttachment('));
-  const single=page.slice(page.indexOf('async function sendAttachment('),page.indexOf('async function beginRecording('));
-  for(const [name,src] of [['album',album],['single',single]]){
-    assert.ok(src.indexOf('await connectOptimizeMedia(') < src.indexOf('connectVideoFilePreview('),name+': prepare before poster');
-    assert.ok(src.indexOf('await connectOptimizeMedia(') < src.indexOf("storage.from('connect-attachments').upload("),name+': prepare before upload');
-  }
+  const pipeline=fs.readFileSync(path.join(root,'lib/chat/attachments.ts'),'utf8');
+  assert.match(page,/sendAlbum\(files:File\[\]\)\{return submitAttachments\(files\)/);
+  assert.match(page,/sendAttachment\(file:File,kindOverride\?:'audio'\)\{return submitAttachments\(\[file\],kindOverride\)/);
+  assert.ok(pipeline.indexOf('await connectOptimizeMedia(')<pipeline.indexOf('await connectVideoFilePreview('));
+  assert.ok(pipeline.indexOf('await connectOptimizeMedia(')<pipeline.indexOf('await uploadObject('));
+  assert.ok(pipeline.includes('for(let i=0;i<files.length;i++)'));
   assert.match(page,/audioBitsPerSecond:isNativeMediaRuntime\(\)\?64000:56000/);
   assert.match(page,/videoBitsPerSecond:isNativeMediaRuntime\(\)\?800000:720000/);
   assert.match(page,/!isNativeMediaRuntime\(\)\?\{audioBitsPerSecond:56000\}:\{\}/);

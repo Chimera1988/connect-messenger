@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
+import { cert,getApps,initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
+import { NextRequest,NextResponse } from 'next/server';
 import webpush from 'web-push';
 import { isMissedIncomingCall } from '../../../../../lib/call-missed';
+import { authenticatedUser,fail,requireRateLimit } from '../../../../../lib/server/admin';
+import { validPushSubscription } from '../../../../../lib/server/push-destination';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,23 +17,15 @@ const terminal = new Set(['ended', 'declined', 'missed', 'busy', 'failed']);
  * Device-side notification IDs are stable per call to collapse duplicate requests.
  */
 export async function POST(req: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publicKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !publicKey || !serviceKey) return NextResponse.json({ error: 'Not configured' }, { status: 503 });
-
-  const bearer = req.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
-  if (!bearer) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  const auth = createClient(url, publicKey, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: { user }, error: authError } = await auth.auth.getUser(bearer);
-  if (authError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-
+  let context;
+  try { context=await authenticatedUser(req); } catch(error) { return fail(error); }
+  const {client:db,user}=context;
+  try { await requireRateLimit(db,user.id,'call-end-push',120); } catch(error) { return fail(error); }
   const body = await req.json().catch(() => null);
   const callId = body?.callId;
   if (typeof callId !== 'string' || !uuid.test(callId))
     return NextResponse.json({ error: 'Invalid call ID' }, { status: 400 });
 
-  const db = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data: call } = await db.from('connect_calls')
     .select('id,caller_id,callee_id,conversation_id,status,created_at,answered_at,ended_at')
     .eq('id', callId).maybeSingle();
@@ -50,8 +43,7 @@ export async function POST(req: NextRequest) {
 
   const missed = user.id === call.caller_id && isMissedIncomingCall(call, call.callee_id);
   const [{ data: devices, error: deviceError }, { data: prefs }, { data: caller }] = await Promise.all([
-    db.from('push_devices').select('id,user_id,platform,endpoint,subscription')
-      .in('user_id', [call.caller_id, call.callee_id]),
+    db.rpc('connect_push_targets',{p_user_ids:[call.caller_id,call.callee_id]}),
     db.from('notification_preferences').select('enabled').eq('user_id', call.callee_id).maybeSingle(),
     missed ? db.from('profiles').select('display_name').eq('id', call.caller_id).maybeSingle()
       : Promise.resolve({ data: null }),
@@ -98,6 +90,7 @@ export async function POST(req: NextRequest) {
         } catch (e: unknown) { console.warn('Connect missed Android push:', (e as {code?: string})?.code || 'unknown'); }
       }
     } else if (device.platform === 'web' && device.subscription && vapid) {
+      if(!validPushSubscription(device.subscription,device.endpoint))return;
       try {
         await webpush.sendNotification(device.subscription, JSON.stringify({kind: 'call-ended', callId: call.id}),
           { TTL: 90, urgency: 'high', timeout: 6000 });

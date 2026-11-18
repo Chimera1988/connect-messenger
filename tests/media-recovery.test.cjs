@@ -1,3 +1,4 @@
+const {waitForPage}=require('./helpers/wait-for-page.cjs');
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),http=require('node:http'),vm=require('node:vm'),ts=require('typescript');
 const pw=require(process.env.CONNECT_PLAYWRIGHT_MODULE||'playwright-core');
 const root=path.resolve(__dirname,'..');
@@ -28,9 +29,9 @@ for(const browserName of names)test(browserName+': actual image/audio decoding, 
  }
  await page.setViewportSize({width:390,height:844});await page.evaluate(()=>document.documentElement.style.fontSize='16px');if(process.env.CONNECT_SCREENSHOT_DIR)await page.screenshot({path:process.env.CONNECT_SCREENSHOT_DIR+'/stickers-fixed-'+browserName+'.png'});
  await page.evaluate(()=>{fixtures.innerHTML='<img id="avatar" width="32" height="32" src="/storage/v1/object/sign/connect-avatars/a.png?token=one"><img id="photo" width="32" height="32" src="/storage/v1/object/sign/connect-attachments/a.png?token=one"><audio id="sound" controls preload="auto" src="/storage/v1/object/sign/connect-attachments/a.wav?token=one"></audio>';});
- await page.waitForFunction(async()=>{const s=await cache.cacheStats();return s.system>0&&s.photos>0;});
+ await waitForPage(page,async()=>{const s=await cache.cacheStats();return s.system>0&&s.photos>0;});
  // CONNECT_CALLS_MEDIA_FIX2_WAIT_FOR_EXACT_OBJECTS
- await page.waitForFunction(async()=>{
+ await waitForPage(page,async()=>{
    const base=location.origin+'/storage/v1/object/sign/';
    const urls=await Promise.all([
      cache.resolveCachedMedia(base+'connect-avatars/a.png?token=one'),
@@ -55,13 +56,13 @@ for(const browserName of names)test(browserName+': actual image/audio decoding, 
 });
  await page.waitForFunction(()=>avatar.naturalWidth>0&&photo.naturalWidth>0);
  assert.equal(await page.evaluate(()=>avatar.naturalWidth),192);
- await page.evaluate(async size=>{await cache.prefetchChatAudio(sound.src,'a',size);await sound.play();},wav.length);await page.waitForFunction(async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());
+ await page.evaluate(async size=>{await cache.prefetchChatAudio(sound.src,'a',size);await sound.play();},wav.length);await waitForPage(page,async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());
  await page.evaluate(async()=>{const el=document.createElement('audio');el.id='cachedSound';el.preload='auto';el.src=await cache.resolveCachedMedia(sound.src);fixtures.append(el);});
  await page.waitForFunction(()=>Number.isFinite(cachedSound.duration));assert.equal(await page.evaluate(()=>cachedSound.duration),1);
  await page.reload({waitUntil:'domcontentloaded'});
  await page.evaluate(async()=>{const i=document.createElement('img');i.id='restarted';i.src=await cache.resolveCachedMedia(location.origin+'/storage/v1/object/sign/connect-avatars/a.png?token=new');fixtures.append(i);});
  await page.waitForFunction(()=>restarted.naturalWidth===192);assert.ok(await page.evaluate(()=>restarted.src.startsWith('blob:')));
- await page.evaluate(async()=>{const q=indexedDB.open('connect-media-v1',3);const db=await new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)});await new Promise((resolve,reject)=>{const tx=db.transaction('objects','readwrite'),s=tx.objectStore('objects');for(const [name,type,data]of [['corrupt','image/png',[1,2,3]],['html','text/html',[60,104,49,62]]])s.put({key:'a:connect-attachments/'+name+'.png',user:'a',category:'photos',size:data.length,used:Date.now(),bytes:Uint8Array.from(data).buffer,type});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();for(const name of ['corrupt','html','expired']){const img=document.createElement('img');img.id=name;img.width=32;img.height=32;img.src='/storage/v1/object/sign/connect-attachments/'+name+'.png?token='+(name==='expired'?'expired':'fresh');fixtures.append(img);}const audio=document.createElement('audio');audio.id='expiredAudio';audio.preload='auto';audio.src='/storage/v1/object/sign/connect-attachments/expired.wav?token=expired';fixtures.append(audio);});
+ await page.evaluate(async()=>{const q=indexedDB.open('connect-media-v1');const db=await new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)});await new Promise((resolve,reject)=>{const tx=db.transaction('objects','readwrite'),s=tx.objectStore('objects');for(const [name,type,data]of [['corrupt','image/png',[1,2,3]],['html','text/html',[60,104,49,62]]])s.put({key:'a:connect-attachments/'+name+'.png',user:'a',category:'photos',size:data.length,used:Date.now(),bytes:Uint8Array.from(data).buffer,type});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();for(const name of ['corrupt','html','expired']){const img=document.createElement('img');img.id=name;img.width=32;img.height=32;img.src='/storage/v1/object/sign/connect-attachments/'+name+'.png?token='+(name==='expired'?'expired':'fresh');fixtures.append(img);}const audio=document.createElement('audio');audio.id='expiredAudio';audio.preload='auto';audio.src='/storage/v1/object/sign/connect-attachments/expired.wav?token=expired';fixtures.append(audio);});
  await page.waitForFunction(()=>['corrupt','html','expired'].every(n=>document.getElementById(n).naturalWidth===192)&&Number.isFinite(expiredAudio.duration));
  assert.equal(await page.evaluate(()=>expiredAudio.duration),1);assert.ok(await page.evaluate(()=>renewals>=2));
  await page.evaluate(()=>cache.clearCachedMedia('temporary'));await page.waitForFunction(()=>restarted.naturalWidth===192);

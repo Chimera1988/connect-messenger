@@ -33,7 +33,8 @@ function harness() {
     setToast: text => events.push(['toast', text]), setPhase: text => events.push(['phase', text]),
     setError() {}, setShown() {}, setShownName() {}, setShownPeerId() {},
     friendlyError: e => e.message, isLive: status => ['ringing', 'active'].includes(status),
-    traceCall(){},connectionDeadline(){},
+    traceCall(){},connectionDeadline(){},answerFingerprint:async()=>null,
+    queueCallFinish:(client,user,intent)=>client.rpc('connect_finish_audio_call',{p_call_id:intent.callId,p_reason:intent.reason}),
     async notifyCallEnded(id) { events.push(['notify-end', id]); },
     async flushLocalIce() {}, async flushRemoteIce() {}, watchIce() {}, async sendIce() {},
     cleanup() { events.push('cleanup'); c.generationRef.current++; c.callRef.current = null; c.pcRef.current = null; c.answerPendingRef.current = false; },
@@ -152,6 +153,6 @@ test('ICE polling advances past 250 candidates and keeps one cursor per call',as
   await h.load('pullIce')();assert.equal(seen.length,501);assert.equal(new Set(seen).size,501);assert.equal(h.c.remoteIceCursorRef.current,501);
 });
 test('pre-answer callee cancellation cannot send hangup against another winning device',async()=>{
-  const h=harness(),sent=[];h.c.client.rpc=async(name,args)=>{sent.push(args);return{};};
+  const h=harness(),sent=[];h.c.queueCallFinish=(client,user,intent)=>client.rpc('connect_finish_audio_call',{p_call_id:intent.callId,p_reason:intent.reason});h.c.client.rpc=async(name,args)=>{sent.push(args);return{};};
   await h.load('finish')('hangup');assert.equal(sent[0].p_reason,'decline');
 });

@@ -4,20 +4,21 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const path=require('node:path');
 const ts=require('typescript');
-const source=fs.readFileSync(path.join(__dirname,'../app/page.tsx'),'utf8');
+const source=require('./helpers/app-source.cjs')();
 const begin=source.indexOf('  const verifyAuth = useCallback(async () => {');
 const end=source.indexOf('\n\n  useEffect(() => {\n    if(!supabase)',begin);
 assert(begin>=0&&end>begin,'SOURCE_DRIFT: auth function moved');
 const compiled=ts.transpileModule(source.slice(begin,end)+'\nreturn verifyAuth;',{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}});
 
-function scenario({verified=false,status=200,networkFailure=false,sessionMissing=false,serverMismatch=false,online=true}={}) {
+function scenario({verified=false,status=200,networkFailure=false,sessionMissing=false,serverMismatch=false,online=true,differentUser=false}={}) {
   const events=[];
   const verifiedSessionRef={current:verified};
-  const session={access_token:'safe-unit-test-token',user:{id:'demo-user'}};
+  const session={access_token:'safe-unit-test-token',user:{id:differentUser?'another-user':'demo-user'}};
   const deps={
     useCallback:fn=>fn,
     supabase:{auth:{getSession:async()=>({data:{session:sessionMissing?null:session},error:null})}},
     verifiedSessionRef,
+    verifiedIdentityRef:{current:verified?'demo-user':null},
     authSequence:{current:0},
     locallyLoggedOut:()=>false,
     loginInProgress:{current:false},
@@ -25,7 +26,7 @@ function scenario({verified=false,status=200,networkFailure=false,sessionMissing
     denyPrivateAccess:()=>{verifiedSessionRef.current=false;events.push(['deny'])},
     setAuthGate:v=>events.push(['gate',v]),
     setLoading:v=>events.push(['loading',v]),
-    setUser:v=>events.push(['user',v]),
+    setAdmin:()=>{},setUser:v=>events.push(['user',v]),
     setConnectionStatus:v=>events.push(['status',v]),
     navigator:{onLine:online},
     setSetup:v=>events.push(['setup',v]),
@@ -123,4 +124,9 @@ test('network, logout and signed-out handlers preserve correct security boundari
   assert.match(source,/event==='SIGNED_OUT'\|\|!session/);
   assert.match(source,/connectionStatus!=='online'/);
   assert.match(source,/const timer=window\.setInterval\(onReturn,60000\)/);
+});
+
+test('switching SDK identity cannot inherit the previously verified offline screen',async()=>{
+ const h=scenario({verified:true,differentUser:true,networkFailure:true});await h.verifyAuth();
+ assert.equal(h.verifiedSessionRef.current,false);assert.equal(has(h,'user',null),true);
 });

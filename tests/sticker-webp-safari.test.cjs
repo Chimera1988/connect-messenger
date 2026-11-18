@@ -5,7 +5,7 @@ const ts=require('typescript');
 const vm=require('node:vm');
 
 const source=fs.readFileSync('lib/sticker-webp.ts','utf8');
-const page=fs.readFileSync('app/page.tsx','utf8');
+const page=require('./helpers/app-source.cjs')();
 const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText;
 const fakeWebp=Buffer.from('RIFF1234WEBP111');
 const fakePng=Buffer.from([137,80,78,71,13,10,26,10,33,44,55,66,77]);

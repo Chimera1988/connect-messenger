@@ -1,5 +1,5 @@
-import {createClient} from '@supabase/supabase-js';
-import {NextRequest,NextResponse} from 'next/server';
+import { NextRequest,NextResponse } from 'next/server';
+import { authenticatedUser,fail } from '../../../../lib/server/admin';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -7,12 +7,9 @@ export const dynamic='force-dynamic';
 /** Authenticated configuration facts only. No credentials, endpoints or user data.
  * Optional diagnostics: clients must not depend on this route to start a call. */
 export async function GET(req:NextRequest){
-  const token=req.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const url=process.env.NEXT_PUBLIC_SUPABASE_URL,key=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  if(!token||!url||!key)return NextResponse.json({error:'Unauthorized'},{status:401});
-  const db=createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false}});
-  const {data:{user},error}=await db.auth.getUser(token);
-  if(error||!user)return NextResponse.json({error:'Unauthorized'},{status:401});
+  let context;
+  try { context=await authenticatedUser(req); } catch(error) { return fail(error); }
+  const {client:db,user}=context;
   let firebaseConfigured=false,firebaseProjectMatches=false;
   try{
     const account=JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON||'null');

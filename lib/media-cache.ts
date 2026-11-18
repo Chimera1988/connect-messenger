@@ -10,7 +10,10 @@ type Entry = {
     bytes?: ArrayBuffer;
     type?: string;
 };
-const NAME = 'connect-media-v1', STORE = 'objects';
+const NAME = 'connect-media-v1', STORE = 'objects', META='metadata';
+type Metadata=Omit<Entry,'blob'|'bytes'>;
+function metadataOf(row:Entry):Metadata {return {key:row.key,user:row.user,category:row.category,size:row.size,used:row.used,type:row.type||row.blob?.type};}
+function writeEntry(tx:IDBTransaction,row:Entry){tx.objectStore(STORE).put(row);tx.objectStore(META).put(metadataOf(row));}
 let opening: Promise<IDBDatabase> | undefined;
 let owner = '';
 /** IDB entries and signed URLs are scoped to the current viewer. */
@@ -29,6 +32,12 @@ function restoreUrl(url: string) {
     }
     URL.revokeObjectURL(url);
     originals.delete(url);
+}
+/** Keep displayed/playing resources intact; bound only URLs without a live DOM consumer. */
+function releaseIdleObjectUrls(){
+ if(objectUrls.size<=128)return;
+ const used=new Set([...bindings].filter(([el])=>el.isConnected).map(([el])=>el.getAttribute('src')));
+ for(const [key,url]of objectUrls){if(objectUrls.size<=128)break;if(!used.has(url)){URL.revokeObjectURL(url);originals.delete(url);objectUrls.delete(key);}}
 }
 function contentType(key: string, type = '') {
     type = type.split(';')[0].toLowerCase();
@@ -65,11 +74,57 @@ export function mediaCategory(key: string, type = ''): CacheCategory {
         return 'photos';
     return 'other';
 }
-function db() { return opening ??= new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open(NAME, 3); r.onupgradeneeded = () => { if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE, { keyPath: 'key' });
-        if(!r.result.objectStoreNames.contains('links'))r.result.createObjectStore('links');
-        if(!r.result.objectStoreNames.contains('retired'))r.result.createObjectStore('retired'); }; r.onsuccess = () => { r.result.onversionchange = () => { r.result.close(); opening = undefined; }; resolve(r.result); }; r.onerror = () => { opening = undefined; reject(r.error); }; }); }
-async function run<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> { const d = await db(); return new Promise((resolve, reject) => { const t = d.transaction(STORE, mode), r = operation(t.objectStore(STORE)); let value: T; r.onsuccess = () => { value = r.result; }; t.oncomplete = () => resolve(value); t.onerror = () => reject(t.error || r.error); t.onabort = () => reject(t.error || Error('Cache transaction aborted')); }); }
-async function entries() { return run<Entry[]>('readonly', s => s.getAll()); }
+function db():Promise<IDBDatabase> {
+ return opening??=new Promise((resolve,reject)=>{
+  const request=indexedDB.open(NAME,4);
+  request.onupgradeneeded=()=>{
+   const database=request.result,tx=request.transaction!;
+   if(!database.objectStoreNames.contains(STORE))database.createObjectStore(STORE,{keyPath:'key'});
+   for(const name of ['links','retired'])if(!database.objectStoreNames.contains(name))database.createObjectStore(name);
+   if(!database.objectStoreNames.contains(META)){
+    const metadata=database.createObjectStore(META,{keyPath:'key'});metadata.createIndex('user','user');
+    // One legacy record at a time, never all binary values in one array.
+    const cursor=tx.objectStore(STORE).openCursor();
+    cursor.onsuccess=()=>{const item=cursor.result;if(item){metadata.put(metadataOf(item.value));item.continue();}};
+   }
+  };
+  request.onsuccess=()=>{request.result.onversionchange=()=>{request.result.close();opening=undefined;};resolve(request.result);};
+  request.onerror=()=>{opening=undefined;reject(request.error);};
+ });
+}
+async function run<T>(mode:IDBTransactionMode,operation:(store:IDBObjectStore)=>IDBRequest<T>):Promise<T> {
+ const database=await db();return new Promise((resolve,reject)=>{
+  const tx=database.transaction(STORE,mode),request=operation(tx.objectStore(STORE));let value:T;
+  request.onsuccess=()=>{value=request.result;};tx.oncomplete=()=>resolve(value);
+  tx.onerror=tx.onabort=()=>reject(tx.error||request.error||Error('Cache transaction aborted'));
+ });
+}
+async function entries(user=owner):Promise<Metadata[]> {
+ if(!user)return [];
+ const database=await db();return new Promise((resolve,reject)=>{
+  const tx=database.transaction(META,'readonly'),request=tx.objectStore(META).index('user').getAll(user);let rows:Metadata[]=[];
+  request.onsuccess=()=>{rows=request.result;};tx.oncomplete=()=>resolve(rows);tx.onerror=tx.onabort=()=>reject(tx.error||request.error);
+ });
+}
+async function removeEntry(key:string):Promise<void> {
+ const database=await db();return new Promise((resolve,reject)=>{
+  const tx=database.transaction([STORE,META],'readwrite');tx.objectStore(STORE).delete(key);tx.objectStore(META).delete(key);
+  tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);
+ });
+}
+async function putEntry(row:Entry):Promise<void> {
+ const database=await db();return new Promise((resolve,reject)=>{
+  const tx=database.transaction([STORE,META],'readwrite');writeEntry(tx,row);
+  tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);
+ });
+}
+async function touchEntry(key:string,used:number):Promise<void> {
+ const database=await db();return new Promise((resolve,reject)=>{
+  const tx=database.transaction(META,'readwrite'),store=tx.objectStore(META),request=store.get(key);
+  request.onsuccess=()=>{if(request.result)store.put({...request.result,used});};
+  tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);
+ });
+}
 export function cacheLimit() { try {
     return (localStorage.getItem('connect-cache-limit') || 'auto') as keyof typeof LIMITS;
 }
@@ -82,30 +137,29 @@ export async function cacheStats() { const result: Record<CacheCategory, number>
     if (row.user === owner)
         result[row.category] += row.size; return result; }
 export async function clearCachedMedia(category: CacheCategory | 'temporary', identity?: string) {
-    const rows = await entries();
+    const viewer=owner;
+    const rows=identity?[{key:viewer+':'+identity,user:viewer,category}]:await entries(viewer);
     for (const row of rows) {
-        if (row.user !== owner || !identity && row.category === 'system')
-            continue;
-        if (identity ? row.key !== owner + ':' + identity : category !== 'temporary' && row.category !== category)
-            continue;
-        await run('readwrite', s => s.delete(row.key));
-        const url = objectUrls.get(row.key);
-        if (url) {
-            restoreUrl(url);
-            objectUrls.delete(row.key);
-        }
+        if (row.user !== viewer || !identity && row.category === 'system') continue;
+        if (!identity && category !== 'temporary' && row.category !== category) continue;
+        await removeEntry(row.key);
+        const url=objectUrls.get(row.key);
+        if(url){restoreUrl(url);objectUrls.delete(row.key);}
     }
     window.dispatchEvent(new Event('connect:cache-changed'));
 }
-export async function trimCache() {
-    const rows = (await entries()).filter(x => x.user === owner).sort((a, b) => a.used - b.used);
+let trimPending:Promise<void>|null=null;
+export function trimCache():Promise<void> {return trimPending??=trimCacheNow().finally(()=>{trimPending=null;});}
+async function trimCacheNow() {
+    const viewer=owner;
+    const rows = (await entries(viewer)).filter(x => x.user === viewer).sort((a, b) => a.used - b.used);
     let temporary = rows.filter(x => x.category !== 'system').reduce((n, x) => n + x.size, 0), avatars = rows.filter(x => x.category === 'system' && !x.key.includes(':core')).reduce((n, x) => n + x.size, 0);
     const limit = LIMITS[cacheLimit()] || LIMITS.auto;
     for (const row of rows) {
         const avatar = row.category === 'system' && !row.key.includes(':core'), expired = Boolean((window as Window & {ConnectAndroid?:unknown;ConnectNative?:unknown}).ConnectAndroid||(window as Window & {ConnectAndroid?:unknown;ConnectNative?:unknown}).ConnectNative) && Date.now() - row.used > 30 * 86400000;
         if (row.category === 'system' ? !avatar || avatars <= 64 * 1024 ** 2 : temporary <= limit && !expired)
             continue;
-        await run('readwrite', s => s.delete(row.key));
+        await removeEntry(row.key);
         const local = objectUrls.get(row.key);
         if (local) { restoreUrl(local); objectUrls.delete(row.key); }
         if (avatar)
@@ -115,23 +169,24 @@ export async function trimCache() {
     }
 }
 export async function resolveCachedMedia(url: string, user = owner): Promise<string> { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
-    return url; const key = user + ':' + id; try {
+    return url; const key = user + ':' + id; if(user!==owner)return url; try {
     const row = await run<Entry | undefined>('readonly', s => s.get(key));
-    if (!row)
+    if (!row || user!==owner)
         return url;
     const type = contentType(id, row.type || row.blob?.type);
     const blob = row.blob || (row.bytes instanceof ArrayBuffer ? new Blob([row.bytes], { type }) : undefined);
     if (!blob?.size || !usableType(type)) {
-        await run('readwrite', s => s.delete(key));
+        await removeEntry(key);
         return url;
     }
     if (Date.now() - row.used > 60000) {
         row.used = Date.now();
-        void run('readwrite', s => s.put(row)).catch(() => { });
+        void touchEntry(key,row.used).catch(()=>{});
     }
     let local = objectUrls.get(key);
     if (!local) {
         local = URL.createObjectURL(blob.type === type ? blob : blob.slice(0, blob.size, type));
+        releaseIdleObjectUrls();
         objectUrls.set(key, local);
     }
     originals.set(local, url);
@@ -156,7 +211,7 @@ async function remember(url: string, user: string, maxBytes = 256 * 1024 ** 2, n
     // ArrayBuffer avoids WebKit's IndexedDB Blob-file staging failures. Old Blob
     // records remain readable; cache errors always leave the network URL usable.
     const bytes = await blob.arrayBuffer();
-    const database=await db();await new Promise<void>((resolve,reject)=>{const tx=database.transaction([STORE,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);check.onsuccess=()=>{if(!check.result)tx.objectStore(STORE).put({key,user,category:mediaCategory(id,type),size:blob.size,used:Date.now(),bytes,type} satisfies Entry);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error || Error('Cache write aborted'));}); await trimCache(); }).catch(() => { }).finally(() => pending.delete(key)); pending.set(key, operation); return operation; }
+    const database=await db();await new Promise<void>((resolve,reject)=>{const tx=database.transaction([STORE,META,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);check.onsuccess=()=>{if(!check.result&&owner===user)writeEntry(tx,{key,user,category:mediaCategory(id,type),size:blob.size,used:Date.now(),bytes,type} satisfies Entry);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error || Error('Cache write aborted'));}); await trimCache(); }).catch(() => { }).finally(() => pending.delete(key)); pending.set(key, operation); return operation; }
 export function installMediaCache(user: string, refreshUrl?: (source: string) => Promise<string | undefined>) {
     owner = user;
     let alive = true;
@@ -299,9 +354,9 @@ export async function retireCachedProfileFile(viewer:string,path:string):Promise
   try{
     const database=await db();
     await new Promise<void>((resolve,reject)=>{
-      const tx=database.transaction([STORE,'retired'],'readwrite');
+      const tx=database.transaction([STORE,META,'retired'],'readwrite');
       tx.objectStore('retired').put(true,key);
-      tx.objectStore(STORE).delete(key);
+      tx.objectStore(STORE).delete(key);tx.objectStore(META).delete(key);
       tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
     });
     const local=objectUrls.get(key);
@@ -319,7 +374,7 @@ export async function cacheUploadedProfileFile(viewer:string,path:string,file:Fi
   try{
     const bytes=await file.arrayBuffer();
     if(owner!==viewer)return;
-    await run('readwrite',s=>s.put({key:viewer+':'+id,user:viewer,category,size:file.size,used:Date.now(),bytes,type:file.type||contentType(id)} satisfies Entry));
+    await putEntry({key:viewer+':'+id,user:viewer,category,size:file.size,used:Date.now(),bytes,type:file.type||contentType(id)} satisfies Entry);
     void trimCache().catch(()=>{});
   }catch{/* Storage quota failure is not an upload failure. */}
 }
@@ -354,9 +409,9 @@ export async function storeGeneratedChatPoster(viewer:string,path:string,image:B
     const bytes=await image.arrayBuffer();
     const database=await db();
     await new Promise<void>((resolve,reject)=>{
-      const tx=database.transaction([STORE,'retired'],'readwrite');
+      const tx=database.transaction([STORE,META,'retired'],'readwrite');
       const guard=tx.objectStore('retired').get(key);
-      guard.onsuccess=()=>{if(!guard.result)tx.objectStore(STORE).put({key,user:viewer,category:'photos',size:image.size,used:Date.now(),bytes,type:'image/jpeg'} satisfies Entry);};
+      guard.onsuccess=()=>{if(!guard.result&&owner===viewer)writeEntry(tx,{key,user:viewer,category:'photos',size:image.size,used:Date.now(),bytes,type:'image/jpeg'} satisfies Entry);};
       tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
     });
     return await resolveCachedMedia('/storage/v1/object/sign/'+identity,viewer);

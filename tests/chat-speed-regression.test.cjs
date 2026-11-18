@@ -1,12 +1,12 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
-const page=fs.readFileSync('app/page.tsx','utf8');
+const page=require('./helpers/app-source.cjs')();
 const cache=fs.readFileSync('lib/media-cache.ts','utf8');
 const css=fs.readFileSync('app/globals.css','utf8');
 
 test('chat has a single integrated performance patch without dropping the existing security/access layer',()=>{
-  assert(page.includes('CONNECT_PWA_CHAT_SPEED_STICKER_VOICE_V1_20261115'));
+  assert(page.includes('prefetchStickerWebp')&&page.includes('prefetchChatAudio')&&page.includes('VoicePlayer'));
   assert(page.includes('connect-delete-forever'));
   assert(page.includes('connect-sticker-webp-convert'));
 });
@@ -21,7 +21,7 @@ test('sticker metadata is presented before all remote signatures finish; cache p
   assert(css.includes('.connect-sticker-loading'));
 });
 test('voice playback is not starved by eager waveform decoding or eager metadata requests',()=>{
-  const player=page.slice(page.indexOf('const VoicePlayer = memo('),page.indexOf('type CropState'));
+  const player=fs.readFileSync('components/chat/VoicePlayer.tsx','utf8');
   assert(player.includes('preload="none"'));
   assert(!player.includes('new AudioContext()'));
   assert(!player.includes('await fetch(src, { signal: controller.signal })'));
@@ -44,7 +44,7 @@ test('text is shown immediately and failed send restores draft; server id replac
   assert(begin>=0);
   const chunk=page.slice(begin,page.indexOf('// CONNECT_PWA_CHAT_MEDIA_ENTRY_V2',begin));
   assert(chunk.indexOf('setMessages(prev=>[...prev,optimistic]')>=0);
-  assert(chunk.indexOf('setMessages(prev=>[...prev,optimistic]')<chunk.indexOf("supabase.from('messages').insert("));
+  assert(chunk.indexOf('setMessages(prev=>[...prev,optimistic]')<chunk.indexOf("deliverMessage(supabase,"));
   assert(chunk.includes('setDraft(current=>current||body)'));
   assert(chunk.includes('const without=prev.filter(x=>x.id!==tempId)'));
   assert(page.includes("m.id.startsWith('local-')"));

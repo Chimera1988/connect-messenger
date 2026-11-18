@@ -20,7 +20,7 @@ test('web push diagnostic is isolated from real message/call pushes and Android 
  assert(web.includes("action:'test'"));
  assert(web.includes('getSubscription()'));
  assert(web.includes('data.requestId!==request.id'));
- assert(api.includes(".eq('user_id',user.id).eq('platform','web').eq('endpoint',endpoint)"));
+ assert(api.includes("db.rpc('connect_push_targets',{p_user_ids:[user.id]})"));assert(api.includes(".eq('platform','web').eq('endpoint',endpoint)"));
  assert(api.includes("kind:'connect-push-diagnostic'"));
  assert(api.includes('accepted:true'));
  assert(api.includes('webpush.sendNotification'));

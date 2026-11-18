@@ -2,7 +2,7 @@ const { test }=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const ts=require('typescript');
-const src=fs.readFileSync('app/page.tsx','utf8');
+const src=require('./helpers/app-source.cjs')();
 const css=fs.readFileSync('app/globals.css','utf8');
 
 test('iOS sticker uploads use a direct native file input, not an async synthetic click',()=>{

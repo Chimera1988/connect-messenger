@@ -1,8 +1,11 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createContext,useCallback,useContext,useEffect,useMemo,useRef,useState,type CSSProperties,type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+import { releasePlayback } from '../lib/media/playback-lifecycle';
+import { sessionScope } from '../lib/session-scope';
+import { useConnectSession } from './ConnectSessionProvider';
 
 export type ConnectMusicTrack = { path: string; name: string; url: string };
 type Persisted = { ownerId: string; path: string; position: number; shuffle: boolean; repeat: boolean; volume: number; muted: boolean };
@@ -24,9 +27,10 @@ function useMusic() {
   if (!api) throw new Error('Connect music player provider is not mounted');
   return api;
 }
-function readLast(): Persisted | null {
+function readLast(userId:string|null): Persisted | null {
+  if(!userId)return null;
   try {
-    const raw = localStorage.getItem('connect-profile-music-playback-v1');
+    const raw = localStorage.getItem('connect-profile-music-playback-v2:'+userId);
     if (!raw) return null;
     const obj = JSON.parse(raw) as Partial<Persisted>;
     if (typeof obj.ownerId !== 'string' || typeof obj.path !== 'string') return null;
@@ -60,6 +64,9 @@ function clock(value: number) {
 }
 
 export function ConnectMusicProvider({children}:{children:ReactNode}) {
+  const {user}=useConnectSession();
+  const listenerId=user?.id||null;
+  const [musicClient,setMusicClient]=useState<SupabaseClient|null>(null);
   const audioRef=useRef<HTMLAudioElement>(null);
   const clientRef=useRef<SupabaseClient|null>(null);
   const lastRef=useRef<Persisted|null>(null);
@@ -83,16 +90,15 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
   const miniBottomRef=useRef(112);
   const miniDrag=useRef<{pointerId:number;startY:number;startBottom:number}|null>(null);
   const [shell,setShell]=useState<Element|null>(null);
-  const [listenerId,setListenerId]=useState<string|null>(null);
   const [shareNowPlaying,setShareNowPlaying]=useState(false);
   const [shareLoaded,setShareLoaded]=useState(false);
   const [shareError,setShareError]=useState('');
   const current=useMemo(()=>tracks.find(t=>t.path===selected)||null,[tracks,selected]);
 
   useEffect(()=>{
-    const saved=readLast(); lastRef.current=saved;
+    const saved=readLast(listenerId); lastRef.current=saved;
     if(saved){setShuffle(saved.shuffle);setRepeat(saved.repeat);setVolume(saved.volume);setMuted(saved.muted);}
-  },[]);
+  },[listenerId]);
   useEffect(()=>{
     const scan=()=>setShell(current=>{const next=document.querySelector('.connect-app');return current===next?current:next;});
     scan();
@@ -137,18 +143,28 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
       if(audio?.paused && next && audio.src!==next){audio.src=next;audio.load();}
     }
   },[]);
-  const registerClient=useCallback((client:SupabaseClient)=>{
-    if(clientRef.current===client && listenerId)return;
-    clientRef.current=client;
-    void client.auth.getUser().then(async ({data})=>{
-      const id=data.user?.id || null;
-      if(!id)return;
-      if(id!==listenerId){setListenerId(id);setShareLoaded(false);setShareError('');
-        const result=await client.from('connect_music_presence').select('is_public').eq('owner_id',id).maybeSingle();
-        if(result.error){setShareError('Не удалось загрузить настройку видимости музыки.');setShareLoaded(false);return;}
-        setShareNowPlaying(result.data?.is_public===true);setShareLoaded(true);
-      }
-    }).catch(()=>{setShareError('Не удалось проверить учётную запись.');});
+  const registerClient=useCallback((client:SupabaseClient)=>{clientRef.current=client;setMusicClient(client);},[]);
+  useEffect(()=>{
+    setShareLoaded(false);setShareError('');
+    if(!listenerId||!musicClient)return;
+    let active=true;
+    void musicClient.from('connect_music_presence').select('is_public').eq('owner_id',listenerId).maybeSingle().then(({data,error})=>{
+      if(!active)return;
+      if(error){setShareError('Не удалось загрузить настройку видимости музыки.');return;}
+      setShareNowPlaying(data?.is_public===true);setShareLoaded(true);
+    });
+    return()=>{active=false;};
+  },[listenerId,musicClient]);
+  useEffect(()=>{
+    const reset=()=>{
+      releasePlayback(audioRef.current);ownerRef.current=null;selectedRef.current=null;queueRef.current=[];
+      lastRef.current=null;restoreRef.current=null;clientRef.current=null;
+      setOwnerId(null);setTracks([]);setSelected(null);setPlaying(false);setPosition(0);setDuration(0);
+      setShareLoaded(false);setShareNowPlaying(false);setMusicPageOpen(false);
+      try{localStorage.removeItem('connect-profile-music-playback-v1');}catch{}
+    };
+    const unsubscribe=sessionScope.onReset(reset);
+    return()=>{unsubscribe();reset();};
   },[listenerId]);
 
   const safePlay=useCallback(()=>{
@@ -193,11 +209,11 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
   },[]);
 
   const savePlayback=useCallback((at:number)=>{
-    if(!ownerRef.current||!selectedRef.current)return;
+    if(!listenerId||!ownerRef.current||!selectedRef.current)return;
     const saved:Persisted={ownerId:ownerRef.current,path:selectedRef.current,position:at,shuffle,repeat,volume,muted};
     lastRef.current=saved;
-    try{localStorage.setItem('connect-profile-music-playback-v1',JSON.stringify(saved));}catch{/* Storage can be unavailable. */}
-  },[shuffle,repeat,volume,muted]);
+    try{localStorage.setItem('connect-profile-music-playback-v2:'+listenerId,JSON.stringify(saved));}catch{/* Storage can be unavailable. */}
+  },[listenerId,shuffle,repeat,volume,muted]);
   useEffect(()=>{if(ownerId && selected)savePlayback(position);},[ownerId,selected,shuffle,repeat,volume,muted,savePlayback]);
   useEffect(()=>{
     if(!shareLoaded || !listenerId || !clientRef.current)return;
@@ -259,7 +275,7 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
       <button type="button" aria-label="Следующий трек" onClick={()=>adjacent(1)}>{icon('next',19)}</button>
       <button type="button" aria-label="Закрыть мини-плеер" onClick={()=>{
         audioRef.current?.pause();ownerRef.current=null;selectedRef.current=null;setOwnerId(null);setSelected(null);setTracks([]);
-        try{localStorage.removeItem('connect-profile-music-playback-v1')}catch{/* ignore */}
+        try{localStorage.removeItem('connect-profile-music-playback-v2:'+listenerId)}catch{/* ignore */}
       }}>{icon('close',15)}</button>
     </div>,shell!)}
   </MusicContext.Provider>;

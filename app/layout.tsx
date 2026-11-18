@@ -1,22 +1,21 @@
-import type { Metadata, Viewport } from 'next';
-import InvitationCodes from '../components/InvitationCodes';
-import ConnectDynamicTheme from '../components/ConnectDynamicTheme';
-import ConnectUiCoordinator from '../components/ConnectUiCoordinator';
-import ConnectCallBridge from '../components/ConnectCallBridge';
+import type { Metadata,Viewport } from 'next';
 import ConnectCallsHub from '../components/ConnectCallsHub';
-import ConnectSonicRunner from '../components/ConnectSonicRunner';
 import { ConnectMusicProvider } from '../components/ConnectMusicSystem';
-import './globals.css';
-import './liquid-glass.css';
-import './calls.css';
+import ConnectSessionProvider from '../components/ConnectSessionProvider';
+import ConnectSonicRunner from '../components/ConnectSonicRunner';
+import ConnectUiSlots from '../components/ConnectUiSlots';
+import InvitationCodes from '../components/InvitationCodes';
+import './admin-usage.css';
 import './call-journal-editor.css';
-import './profile-media.css';
-import './connect-unified-chat.css';
-import './music-system.css';
-import './connect-splash.css';
+import './calls.css';
 import './connect-icons.css';
 import './connect-media-frame-overlay.css';
-import './admin-usage.css';
+import './connect-splash.css';
+import './connect-unified-chat.css';
+import './globals.css';
+import './liquid-glass.css';
+import './music-system.css';
+import './profile-media.css';
 
 export const metadata: Metadata = {
   title: 'Connect',
@@ -32,5 +31,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="ru"><body><ConnectMusicProvider>{children}</ConnectMusicProvider><InvitationCodes /><ConnectDynamicTheme /><ConnectUiCoordinator /><ConnectCallBridge /><ConnectCallsHub /><ConnectSonicRunner /></body></html>;
+  return <html lang="ru"><body><ConnectUiSlots><ConnectSessionProvider><ConnectMusicProvider>{children}</ConnectMusicProvider><InvitationCodes /><ConnectCallsHub /><ConnectSonicRunner /></ConnectSessionProvider></ConnectUiSlots></body></html>;
 }

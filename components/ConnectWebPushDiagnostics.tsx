@@ -1,8 +1,8 @@
 'use client';
 
-import {useCallback,useEffect,useRef,useState} from 'react';
-import type {SupabaseClient} from '@supabase/supabase-js';
-import {reconcileWebPush} from '../lib/connect-push-repair'; // CONNECT_PWA_PUSH_REPAIR_UI_20261114
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { useCallback,useEffect,useRef,useState } from 'react';
+import { reconcileWebPush } from '../lib/connect-push-repair'; // CONNECT_PWA_PUSH_REPAIR_UI_20261114
 
 type Connection = 'checking'|'active'|'unsupported'|'denied'|'permission'|'missing'|'unregistered'|'disabled'|'invalid-key'|'error'|'temporary';
 type Delivery = 'idle'|'sending'|'confirmed'|'unconfirmed'|'error';

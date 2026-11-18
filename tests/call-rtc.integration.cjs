@@ -14,9 +14,10 @@ const chat='33333333-3333-4333-8333-333333333333';
 const all=[],timers=new Set(),sinks=new Set();let row=null,sequence=0,nextCall=0,failedIce=0,denyMicrophone=false;
 const ice=[];
 function later(fn){queueMicrotask(()=>void fn());}
+const finishApi=require('./helpers/load-ts.cjs')({}, {TextEncoder})('lib/calls/finish.ts');
 function endpoint(userId,frequency){
  const facts={frames:0,nonzero:0,connected:0},context={console:{info(){},warn(){}},Date,Error,Promise,Set,Map,AbortController,
-  setTimeout,clearTimeout,traceCall(){},userId,phase:'idle',shownName:'Test',
+  setTimeout,clearTimeout,...finishApi,traceCall(){},userId,phase:'idle',shownName:'Test',
   RING_TIMEOUT_MS:50000,uuidPattern:/^[a-f0-9-]{36}$/i,isLive:s=>s==='ringing'||s==='active',friendlyError:e=>e.message,
   window:{},navigator:{userAgent:'Mozilla/5.0 (iPhone; CPU iPhone OS 27_2 like Mac OS X)',audioSession:{type:'auto'},mediaDevices:{async getUserMedia(){
    if(denyMicrophone===userId){denyMicrophone=false;throw Error('test permission denied');}
@@ -53,7 +54,7 @@ function endpoint(userId,frequency){
    if(name==='connect_answer_audio_call'){
     if(!row||row.status!=='ringing')return{error:{message:'Call unavailable or already answered'}};
     row={...row,status:'active',answer:copy(args.p_answer),answered_at:new Date().toISOString()};
-   }else if(name==='connect_finish_audio_call'){
+   }else if(name==='connect_finish_audio_call'||name==='connect_finish_owned_audio_call'){
     if(['decline','busy'].includes(args.p_reason)&&row.status==='active')return{data:copy(row)};
     row={...row,status:args.p_reason==='decline'?'declined':'ended',ended_at:new Date().toISOString()};
    }

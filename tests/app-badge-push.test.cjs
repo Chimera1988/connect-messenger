@@ -4,7 +4,7 @@ const assert=require('node:assert/strict');
 const {readFileSync}=require('node:fs');
 const vm=require('node:vm');
 
-function worker() {
+function worker(activeUser='viewer') {
   const handlers={};
   const displayed=[];
   const notices=[];
@@ -28,6 +28,7 @@ function worker() {
   vm.runInContext(`let state=badgeEmpty();
     badgeChange=async(_user,update)=>{update(state);await badgeDisplay(badgeCount(state));};
     watermark=async()=>'';
+    activePushUser=async()=>${JSON.stringify(activeUser)};
   `,ctx);
   function receive(data){
     let promise;
@@ -76,4 +77,9 @@ test('incoming call path does not add an event badge',async()=>{
  await w.receive({kind:'incoming-call',callId:'call-1',userId:'viewer',title:'Incoming'});
  assert.equal(w.notices.length,1);
  assert.equal(w.displayed.length,0);
+});
+
+test('push from a previous account or a logged-out installation never displays a notification',async()=>{
+ const other=worker('next-user');await other.receive(message);assert.equal(other.notices.length,0);
+ const loggedOut=worker('');await loggedOut.receive(message);assert.equal(loggedOut.notices.length,0);
 });

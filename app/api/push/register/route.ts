@@ -1,36 +1,31 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { NextRequest,NextResponse } from 'next/server';
+import { authenticatedUser,fail } from '../../../../lib/server/admin';
+import { validPushSubscription } from '../../../../lib/server/push-destination';
 export const runtime = 'nodejs';
+const noStore={'Cache-Control':'no-store, private'};
 export async function POST(req: NextRequest) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publishable = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !publishable || !secret) return NextResponse.json({error:'Server not configured'}, {status:503});
-  const token = req.headers.get('authorization')?.match(/^Bearer (.+)$/i)?.[1];
-  if (!token) return NextResponse.json({error:'Unauthorized'}, {status:401});
-  const auth = createClient(url,publishable,{auth:{persistSession:false}});
-  const {data:{user},error} = await auth.auth.getUser(token);
-  if (error || !user) return NextResponse.json({error:'Unauthorized'}, {status:401});
-  const body = await req.json().catch(()=>null);
-  if (!body || !['web','android'].includes(body.platform) || typeof body.endpoint !== 'string' || body.endpoint.length > 4096) return NextResponse.json({error:'Invalid payload'}, {status:400});
-  if (body.platform === 'web') {
-    if (!body.subscription || body.subscription.endpoint !== body.endpoint || !body.subscription.keys?.p256dh || !body.subscription.keys?.auth || !body.endpoint.startsWith('https://')) return NextResponse.json({error:'Invalid web subscription'}, {status:400});
-  } else if (body.endpoint.length < 32 || body.endpoint.length > 4096) return NextResponse.json({error:'Invalid FCM token'}, {status:400});
-  const db = createClient(url,secret,{auth:{persistSession:false}});
-  const {error:dbError} = await db.from('push_devices').upsert({user_id:user.id,platform:body.platform,endpoint:body.endpoint,subscription:body.platform==='web'?body.subscription:null,updated_at:new Date().toISOString()},{onConflict:'user_id,endpoint'});
-  if (dbError) return NextResponse.json({error:'Could not save device'}, {status:500});
-  return NextResponse.json({ok:true});
+  try {
+    const {client:db,user,sessionId}=await authenticatedUser(req);
+    const body=await req.json().catch(()=>null);
+    if(!body||!['web','android'].includes(body.platform)||typeof body.endpoint!=='string'||body.endpoint.length>4096)
+      return NextResponse.json({error:'Invalid payload'},{status:400,headers:noStore});
+    if(body.platform==='web'?!validPushSubscription(body.subscription,body.endpoint):body.endpoint.length<32)
+      return NextResponse.json({error:'Invalid subscription'},{status:400,headers:noStore});
+    const {data,error}=await db.rpc('connect_register_push_device',{
+      p_user_id:user.id,p_session_id:sessionId,p_platform:body.platform,p_endpoint:body.endpoint,
+      p_subscription:body.platform==='web'?body.subscription:null,
+    });
+    if(error)return NextResponse.json({error:'Could not save device'},{status:503,headers:noStore});
+    if(data!==true)return NextResponse.json({error:'Too many registration requests'},{status:429,headers:noStore});
+    return NextResponse.json({ok:true},{headers:noStore});
+  } catch(error) { return fail(error); }
 }
-export async function DELETE(req: NextRequest) {
-  const url=process.env.NEXT_PUBLIC_SUPABASE_URL, pub=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, secret=process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const token=req.headers.get('authorization')?.match(/^Bearer (.+)$/i)?.[1];
-  if (!url||!pub||!secret||!token) return NextResponse.json({error:'Unauthorized'}, {status:401});
-  const auth=createClient(url,pub,{auth:{persistSession:false}});
-  const {data:{user}}=await auth.auth.getUser(token);
-  if (!user) return NextResponse.json({error:'Unauthorized'}, {status:401});
-  const body=await req.json().catch(()=>null);
-  if (typeof body?.endpoint !== 'string') return NextResponse.json({error:'Invalid endpoint'}, {status:400});
-  const db=createClient(url,secret,{auth:{persistSession:false}});
-  const {error}=await db.from('push_devices').delete().eq('user_id',user.id).eq('endpoint',body.endpoint);
-  return NextResponse.json({ok:!error},{status:error?500:200});
+export async function DELETE(req:NextRequest) {
+  try {
+    const {client:db,user}=await authenticatedUser(req);
+    const body=await req.json().catch(()=>null);
+    if(typeof body?.endpoint!=='string'||body.endpoint.length>4096)return NextResponse.json({error:'Invalid endpoint'},{status:400});
+    const {error}=await db.from('push_devices').delete().eq('user_id',user.id).eq('endpoint',body.endpoint);
+    return NextResponse.json({ok:!error},{status:error?503:200,headers:noStore});
+  } catch(error) { return fail(error); }
 }

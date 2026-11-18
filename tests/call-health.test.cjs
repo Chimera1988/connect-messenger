@@ -2,8 +2,10 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const source=fs.readFileSync(require('node:path').join(__dirname,'../app/api/calls/health/route.ts'),'utf8');
 const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}}).outputText;
 function fixture(env={},allowed=true){
- const exports={};vm.runInNewContext(compiled,{exports,process:{env:{NEXT_PUBLIC_SUPABASE_URL:'https://example.invalid',NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:'public',...env}},require:name=>name==='next/server'?{NextResponse:{json:(body,options={})=>({body,status:options.status||200,headers:options.headers})}}:{createClient:()=>({auth:{getUser:async()=>({data:{user:allowed?{id:'fixture'}:null},error:allowed?null:Error('denied')})}})}});
- return bearer=>exports.GET({headers:{get:()=>bearer}});
+ const loader=require('./helpers/load-ts.cjs'),authFixture=require('./helpers/route-auth.cjs');
+ const db=authFixture.decorate({from:()=>{const q={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{is_blocked:false}})};return q;}},'fixture',allowed);
+ const route=loader({'@supabase/supabase-js':{createClient:()=>db},'next/server':{NextResponse:{json:(body,options={})=>({body,status:options.status||200,headers:options.headers})}}},{process:{env:{NEXT_PUBLIC_SUPABASE_URL:'https://example.invalid',SUPABASE_SERVICE_ROLE_KEY:'service-fixture',...env}}})('app/api/calls/health/route.ts');
+ return bearer=>route.GET({headers:{get:()=>bearer?authFixture.token('fixture'):null}});
 }
 test('call configuration diagnostics require authenticated access',async()=>{
  assert.equal((await fixture()(null)).status,401);assert.equal((await fixture({},false)('Bearer fixture')).status,401);

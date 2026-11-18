@@ -1,0 +1,40 @@
+name: Connect backend apply (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type APPLY_REVIEWED_CONNECT_BACKEND after reviewing migrations and backup
+        type: string
+        required: true
+      backup_id:
+        description: Identifier of the completed backup or restore point
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: connect-backend-apply
+  cancel-in-progress: false
+jobs:
+  validate:
+    uses: ./.github/workflows/connect-ci.yml
+  apply:
+    needs: validate
+    environment: connect-backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply reviewed backend only
+        env:
+          CONNECT_BACKEND_CONFIRMATION: ${{ inputs.confirmation }}
+          CONNECT_BACKUP_ID: ${{ inputs.backup_id }}
+          CONNECT_DATABASE_URL: ${{ secrets.CONNECT_DATABASE_URL }}
+          CONNECT_PROJECT_REF: tpwkmoxxzjfdsqsomhhr
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: npm exec --yes --package=supabase@3.2.0 -- bash scripts/apply-backend.sh

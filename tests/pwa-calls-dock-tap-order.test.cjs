@@ -7,7 +7,7 @@ const ts = require('typescript');
 
 const root = process.cwd();
 const hub = fs.readFileSync(path.join(root,'components/ConnectCallsHub.tsx'),'utf8');
-const page = fs.readFileSync(path.join(root,'app/page.tsx'),'utf8');
+const page = require('./helpers/app-source.cjs')();
 const liquid = fs.readFileSync(path.join(root,'app/liquid-glass.css'),'utf8');
 const handler = hub.indexOf('    function onOtherTab(');
 const begin = handler >= 0 ? hub.lastIndexOf('  useEffect(() => {',handler) : -1;

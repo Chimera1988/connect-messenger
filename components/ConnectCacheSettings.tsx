@@ -1,7 +1,7 @@
 'use client';
-import { useEffect, useState } from 'react';
-import { cacheStats, clearCachedMedia, cacheLimit, setCacheLimit, type CacheCategory } from '../lib/media-cache';
-import { chatHistoryStats, wipeUserHistory } from '../lib/chat-history-cache';
+import { useEffect,useState } from 'react';
+import { chatHistoryStats,wipeUserHistory } from '../lib/chat-history-cache';
+import { cacheLimit,cacheStats,clearCachedMedia,setCacheLimit,type CacheCategory } from '../lib/media-cache';
 const names: Record<CacheCategory, string> = { system: 'Системные элементы и аватары', photos: 'Фотографии и стикеры', videos: 'Видео и видеокружки', audio: 'Голосовые и аудиофайлы', other: 'Прочие временные файлы' };
 function LocalHistoryCache({userId}:{userId:string}){
   const [info,setInfo]=useState<{chats:number;messages:number;bytes:number}|null>(null);

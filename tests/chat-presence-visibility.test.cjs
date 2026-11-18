@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require('playwright-core');
 const root = path.join(__dirname, '..');
-const main = fs.readFileSync(path.join(root, 'app/page.tsx'), 'utf8');
+const main = require('./helpers/app-source.cjs')();
 const globalCss = fs.readFileSync(path.join(root, 'app/globals.css'), 'utf8');
 const liquidCss = fs.readFileSync(path.join(root, 'app/liquid-glass.css'), 'utf8');
 

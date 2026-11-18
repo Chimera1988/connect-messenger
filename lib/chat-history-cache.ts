@@ -1,4 +1,4 @@
-import {chatTimeKey,compareChatMessages} from './chat-order';
+import { chatTimeKey,compareChatMessages } from './chat-order';
 type Row={id:string;conversation_id:string;created_at:string;sender_id?:string;deleted_at?:string|null;edited_at?:string|null};
 type Snapshot<T>={messages:T[];readAt:string;savedAt:number;hasMore?:boolean;hasNewer?:boolean};
 type Stored={key:string;user:string;chat:string;messages:Row[];readAt:string;savedAt:number;tombstones?:string[]};

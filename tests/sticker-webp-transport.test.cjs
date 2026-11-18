@@ -58,7 +58,7 @@ test('does not accept a renamed fake WebP or a missing media header',async()=>{
   await assert.rejects(convert(file('cat.png',[1,2,3],'image/png'),{...config,transport:async()=>new Response(goodWebP,{status:200,headers:{'Content-Type':'application/octet-stream'}})}),/WebP/i);
 });
 test('page integrates the binary transport rather than invoking Supabase Functions with File',()=>{
-  const page=fs.readFileSync(path.join(root,'app/page.tsx'),'utf8');
+  const page=require('./helpers/app-source.cjs')();
   assert(page.includes('convertStickerWebpOnServer('),'Page must call verified transport helper');
   assert(!page.includes("supabase.functions.invoke('connect-sticker-webp-convert'"),'Old zero-byte invoke must not remain');
   assert(page.includes('prepareStickerFile(file,convertStickerOnServer)'),'Upload fallback still wired');

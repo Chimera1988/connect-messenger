@@ -1,0 +1,11 @@
+project_id = "connect-messenger"
+# Preserve the deployed gateway settings. Public entry points below perform
+# their own request authorization; no service credentials are embedded here.
+[functions.connect-delete-account]
+verify_jwt = true
+[functions.connect-delete-forever]
+verify_jwt = true
+[functions.connect-media-gc-daily]
+verify_jwt = false
+[functions.connect-sticker-webp-convert]
+verify_jwt = false

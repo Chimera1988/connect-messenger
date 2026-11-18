@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect,useState } from 'react';
 
 type Member = { id:string; display_name:string; is_hidden:boolean };
 type Props = {

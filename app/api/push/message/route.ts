@@ -1,9 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { canReach } from '../../../../lib/server/visibility';
 import { createClient } from '@supabase/supabase-js';
-import webpush from 'web-push';
-import { getApps, initializeApp, cert } from 'firebase-admin/app';
+import { cert,getApps,initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
+import { NextRequest,NextResponse } from 'next/server';
+import webpush from 'web-push';
+import { validPushSubscription } from '../../../../lib/server/push-destination';
+import { canReach } from '../../../../lib/server/visibility';
 export const runtime = 'nodejs';
 export async function POST(req:NextRequest) {
   const expected=process.env.PUSH_WEBHOOK_SECRET;
@@ -19,7 +20,7 @@ export async function POST(req:NextRequest) {
   const recipient=conv.user_a===record.sender_id?conv.user_b:conv.user_a;
   if(!await canReach(db,record.sender_id,recipient)) return NextResponse.json({ignored:true});
   const [{data:devices},{data:prefs},{data:sender}] = await Promise.all([
-    db.from('push_devices').select('id,platform,endpoint,subscription').eq('user_id',recipient),
+    db.rpc('connect_push_targets',{p_user_ids:[recipient]}),
     db.from('notification_preferences').select('enabled').eq('user_id',recipient).maybeSingle(),
     db.from('profiles').select('display_name').eq('id',record.sender_id).maybeSingle()
   ]);
@@ -35,6 +36,7 @@ export async function POST(req:NextRequest) {
   for (const device of devices) {
     try {
       if (device.platform==='web') {
+        if(!validPushSubscription(device.subscription,device.endpoint))continue;
         if (!process.env.VAPID_PUBLIC_KEY||!process.env.VAPID_PRIVATE_KEY||!process.env.VAPID_SUBJECT||!device.subscription) continue;
         webpush.setVapidDetails(process.env.VAPID_SUBJECT,process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
         await webpush.sendNotification(device.subscription,payload);

@@ -1,7 +1,7 @@
-import { createHash, createHmac } from 'node:crypto';
+import { NextRequest,NextResponse } from 'next/server';
+import { createHash,createHmac } from 'node:crypto';
 import { isIP } from 'node:net';
-import { createClient } from '@supabase/supabase-js';
-import { NextRequest, NextResponse } from 'next/server';
+import { authenticatedUser,fail,requireRateLimit } from '../../../../lib/server/admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -83,16 +83,10 @@ async function turnixTurn(userId: string, req: NextRequest): Promise<RTCIceServe
 
 /** Shared by the native APK and PWA; neither receives the Turnix API token. */
 export async function GET(req: NextRequest) {
-  const authToken = req.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  if (!authToken || !url || !key)
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: NO_STORE });
-  const sb = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: { user }, error } = await sb.auth.getUser(authToken);
-  if (error || !user)
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: NO_STORE });
-
+  let context;
+  try { context=await authenticatedUser(req); } catch(error) { return fail(error); }
+  const {client:sb,user}=context;
+  try { await requireRateLimit(sb,user.id,'turn',12); } catch(error) { return fail(error); }
   const managed = await turnixTurn(user.id, req);
   const activeRelay = managed.length ? managed : legacyTurn(user.id);
   return NextResponse.json(

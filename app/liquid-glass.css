@@ -272,7 +272,6 @@
   box-shadow: inset 0 1px 0 rgba(255,255,255,.10), 0 10px 28px rgba(0,0,0,.15);
 }
 .connect-app .settings-menu-row:active { background: color-mix(in srgb, var(--accent) 9%, transparent); }
-.connect-app .settings-hint { line-height: 1.5; }
 .connect-app .settings-content { padding-bottom: 30px; }
 .connect-app .wallpaper-settings .settings-action {
   box-shadow: 0 5px 20px color-mix(in srgb, var(--accent) 12%, transparent);

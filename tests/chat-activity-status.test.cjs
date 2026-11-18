@@ -20,7 +20,7 @@ test('recipient does not see a stale activity',()=>assert.equal(visiblePeerActiv
 test('recipient rejects invalid activity kinds and invalid expiries',()=>{assert.equal(visiblePeerActivity({chat:'one',kind:'something',until:9000},'one',1000),null);assert.equal(visiblePeerActivity({chat:'one',kind:'file',until:NaN},'one',1000),null)});
 
 test('actual PWA wires video, file and sticker status through the same activity channel',()=>{
- const page=fs.readFileSync(root+'/app/page.tsx','utf8');
+ const page=require('./helpers/app-source.cjs')();
  assert.match(page,/composerActivity\(videoNoteRecording,stickerPicker,filePickerOpen\)/);
  assert.match(page,/onRecordingChange=\{setVideoNoteRecording\}/);
  assert.match(page,/input\.addEventListener\('cancel',cancelFileSelection\)/);

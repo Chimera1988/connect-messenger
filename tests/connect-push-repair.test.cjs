@@ -20,7 +20,7 @@ function setup({permission='granted',existing=true,registered=true,enabled=true,
   if(url.endsWith('/register')){calls.register++;return{ok:true,status:200};}
   throw Error(url);
  };
- const supabase={auth:{async getSession(){return{data:{session:{access_token:'synthetic-test-token'}}};}},from(table){assert.equal(table,'notification_preferences');return{select(){return this},eq(){return this},async maybeSingle(){return{data:{enabled}}}};}};
+ const supabase={auth:{async getSession(){return{data:{session:{access_token:'synthetic-test-token',user:{id:'user-a'}}}};}},from(table){assert.equal(table,'notification_preferences');return{select(){return this},eq(){return this},async maybeSingle(){return{data:{enabled}}}};}};
  const context=vm.createContext({exports:{},window,navigator,Notification,PushManager:function(){},localStorage:{getItem(k){return state.get(k)||null},setItem(k,v){state.set(k,v)}},fetch,CustomEvent:class{constructor(name,opts){this.type=name;this.detail=opts.detail;}},process:{env:{NEXT_PUBLIC_VAPID_PUBLIC_KEY:'AQID'}},atob:global.atob});
  vm.runInContext(js,context);
  return{calls,state,api:context.exports,client:supabase,endpoint};

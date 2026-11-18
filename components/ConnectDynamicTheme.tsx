@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import type { CSSProperties } from 'react';
 
 type Waves = readonly [primary: string, secondary: string, tertiary: string];
 
@@ -53,56 +53,8 @@ function wavesFromAccent(accent: string): Waves {
   return [color(0, sat, 57), color(24, sat * .86, 68), color(-18, sat * .74, 69)];
 }
 
-/**
- * Reads the accent already managed by the app. No duplicate theme state and no
- * changes to auth, messaging, wallpaper storage, or push logic are necessary.
- * Watching the root style allows the existing color picker to update instantly.
- */
-export default function ConnectDynamicTheme() {
-  useEffect(() => {
-    let shell: HTMLElement | null = null;
-    let styleObserver: MutationObserver | null = null;
-    let lastAccent = '';
-    let lastPalette: Waves | null = null;
-
-    function apply() {
-      if (!shell) return;
-      const accent = shell.style.getPropertyValue('--accent').trim() || '#087dff';
-      if (accent !== lastAccent || !lastPalette) {
-        lastAccent = accent;
-        lastPalette = wavesFromAccent(accent);
-      }
-      const [primary, secondary, tertiary] = lastPalette;
-      const properties: Record<string, string> = {
-        '--wave-primary': primary,
-        '--wave-secondary': secondary,
-        '--wave-tertiary': tertiary,
-      };
-      for (const [property, color] of Object.entries(properties)) {
-        if (shell.style.getPropertyValue(property) !== color) shell.style.setProperty(property, color);
-      }
-    }
-
-    function attach() {
-      const next = document.querySelector<HTMLElement>('.connect-app');
-      if (!next || next === shell) return;
-      styleObserver?.disconnect();
-      shell = next;
-      lastAccent = '';
-      lastPalette = null;
-      styleObserver = new MutationObserver(apply);
-      styleObserver.observe(shell, { attributes: true, attributeFilter: ['style'] });
-      apply();
-    }
-
-    // Next.js can mount/replace the app shell after this client component.
-    const treeObserver = new MutationObserver(attach);
-    treeObserver.observe(document.body, { childList: true, subtree: true });
-    attach();
-    return () => {
-      treeObserver.disconnect();
-      styleObserver?.disconnect();
-    };
-  }, []);
-  return null;
+/** Pure style derivation: the owning React shell supplies its accent. */
+export function waveStyles(accent:string):CSSProperties {
+ const [primary,secondary,tertiary]=wavesFromAccent(accent);
+ return {'--wave-primary':primary,'--wave-secondary':secondary,'--wave-tertiary':tertiary} as CSSProperties;
 }

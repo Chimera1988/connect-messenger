@@ -1,0 +1,5 @@
+// One-time legacy PNG->WebP migration completed on 2026-11-15.
+// Disabled deliberately: retain no callable bulk write endpoint.
+Deno.serve(() => new Response(JSON.stringify({error:'Legacy migration completed'}), {
+  status:410, headers:{'Content-Type':'application/json'}
+}));

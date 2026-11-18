@@ -1,5 +1,5 @@
 /* Public core assets only. User media, auth and keys live in separate IDBs. */
-const CORE='connect-core-v5';
+const CORE='connect-core-v6';
 const base=['/icon-192.png','/icon-512.png','/apple-touch-icon.png','/connect-splash-bubbles-transparent.png','/connect-scenes/moon.svg','/connect-scenes/aurora.svg','/connect-scenes/lagoon.svg'];
 self.addEventListener('install',event=>event.waitUntil((async()=>{
  try {const cache=await caches.open(CORE);await Promise.all(base.map(async url=>{try{const response=await fetch(url);if(coreResponse(url,response))await cache.put(url,response);}catch{}}));}catch{}
@@ -36,6 +36,16 @@ function badgeOpen(){return new Promise((resolve,reject)=>{
  req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains('state'))req.result.createObjectStore('state');};
  req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
 });}
+async function activePushUser(){
+ const db=await badgeOpen();try{return await new Promise((resolve,reject)=>{
+  const tx=db.transaction('state','readonly'),request=tx.objectStore('state').get('active');
+  request.onsuccess=()=>resolve(String(request.result||''));request.onerror=()=>reject(request.error);
+ });}catch{return '';}finally{db.close();}
+}
+async function changePushSession(user){
+ await badgeChange(user,()=>{},true);
+ for(const notice of await self.registration.getNotifications())if(!user||notice.data?.userId!==user)notice.close();
+}
 function badgeEmpty(){return {chats:{},missed:{count:0,lastAt:''},pending:[]};}
 function badgeDate(iso){const ms=Date.parse(iso||'');return Number.isFinite(ms)?ms:0;}
 function badgeCount(state){
@@ -110,8 +120,9 @@ function badgeCallsViewed(user,viewedAt){return badgeChange(user,state=>{
 function markers(){return new Promise((resolve,reject)=>{const request=indexedDB.open('connect-push-read-v1',1);request.onupgradeneeded=()=>request.result.createObjectStore('read');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
 async function watermark(user,chat,value){if(!user||!chat)return '';const db=await markers();try{return await new Promise((resolve,reject)=>{const tx=db.transaction('read',value?'readwrite':'readonly'),store=tx.objectStore('read'),request=store.get(user+':'+chat);let result='';request.onsuccess=()=>{result=request.result||'';if(value&&Date.parse(value)>Date.parse(result||'1970-01-01')){result=value;store.put(value,user+':'+chat);}};tx.oncomplete=()=>resolve(result);tx.onabort=tx.onerror=()=>reject(tx.error);});}finally{db.close();}}
 async function clearRead(d){await watermark(d.userId,d.conversationId,d.readAt);await badgeRead(d.userId,d.conversationId,d.readAt).catch(()=>{});for(const alert of await self.registration.getNotifications())if(alert.data?.kind==='message'&&alert.data?.conversationId===d.conversationId&&Date.parse(alert.data.createdAt)<=Date.parse(d.readAt))alert.close();}
-self.addEventListener('message',event=>{if(event.data?.type==='CONNECT_DIAGNOSTICS_PING'){event.ports?.[0]?.postMessage({type:'CONNECT_DIAGNOSTICS_READY'});return;}if(event.data?.type==='CONNECT_BADGE_SNAPSHOT')event.waitUntil(badgeSnapshot(event.data).catch(()=>{}));if(event.data?.type==='CONNECT_READ')event.waitUntil(clearRead(event.data));if(event.data?.type==='CONNECT_CALLS_VIEWED')event.waitUntil((async()=>{const d=event.data;await watermark(d.userId,'#calls',d.viewedAt);await badgeCallsViewed(d.userId,d.viewedAt).catch(()=>{});for(const alert of await self.registration.getNotifications())if(alert.data?.kind==='missed-call'&&alert.data?.userId===d.userId)alert.close();})());});
+self.addEventListener('message',event=>{if(event.data?.type==='CONNECT_SESSION'){const user=typeof event.data.userId==='string'?event.data.userId:'';event.waitUntil(changePushSession(user).catch(()=>{}));return;}if(event.data?.type==='CONNECT_DIAGNOSTICS_PING'){event.ports?.[0]?.postMessage({type:'CONNECT_DIAGNOSTICS_READY'});return;}if(event.data?.type==='CONNECT_BADGE_SNAPSHOT')event.waitUntil(badgeSnapshot(event.data).catch(()=>{}));if(event.data?.type==='CONNECT_READ')event.waitUntil(clearRead(event.data));if(event.data?.type==='CONNECT_CALLS_VIEWED')event.waitUntil((async()=>{const d=event.data;await watermark(d.userId,'#calls',d.viewedAt);await badgeCallsViewed(d.userId,d.viewedAt).catch(()=>{});for(const alert of await self.registration.getNotifications())if(alert.data?.kind==='missed-call'&&alert.data?.userId===d.userId)alert.close();})());});
 self.addEventListener('push',event=>{let d={};try{d=event.data?.json()||{};}catch{}event.waitUntil((async()=>{
+ if(d.kind!=='read'&&d.kind!=='call-ended'){const active=await activePushUser().catch(()=>'');if(!active||d.userId!==active)return;}
  /* CONNECT_PWA_PUSH_DIAGNOSTICS_V1: diagnostic push never changes unread badges/call states. */
  if(d.kind==='connect-push-diagnostic'){
   const id=typeof d.requestId==='string'?d.requestId:'';
@@ -140,4 +151,4 @@ if(details.kind==='connect-push-diagnostic'){event.waitUntil((async()=>{
  for(const client of await clients.matchAll({type:'window',includeUncontrolled:true}))if(new URL(client.url).origin===self.location.origin){await client.focus();return;}
  await clients.openWindow('/');
 })());return;}
-event.waitUntil((async()=>{for(const client of await clients.matchAll({type:'window',includeUncontrolled:true}))if(new URL(client.url).origin===self.location.origin){await client.focus();client.postMessage(details.kind==='incoming-call'?{type:'CONNECT_INCOMING_CALL',callId:details.callId}:details.kind==='missed-call'?{type:'CONNECT_OPEN_CALLS'}:{type:'CONNECT_OPEN_CHAT',conversationId:details.conversationId});return;}await clients.openWindow(details.kind==='missed-call'?'/?calls=missed':details.conversationId?'/?conversation='+encodeURIComponent(details.conversationId):'/');})());});
+event.waitUntil((async()=>{for(const client of await clients.matchAll({type:'window',includeUncontrolled:true}))if(new URL(client.url).origin===self.location.origin){await client.focus();client.postMessage(details.kind==='incoming-call'?{type:'CONNECT_INCOMING_CALL',callId:details.callId}:details.kind==='missed-call'?{type:'CONNECT_OPEN_CALLS'}:{type:'CONNECT_OPEN_CHAT',conversationId:details.conversationId,userId:details.userId||''});return;}await clients.openWindow(details.kind==='missed-call'?'/?calls=missed':details.conversationId?'/?conversation='+encodeURIComponent(details.conversationId)+'&connect_user='+encodeURIComponent(details.userId||''):'/');})());});

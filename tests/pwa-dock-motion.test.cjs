@@ -5,7 +5,7 @@ const path=require('node:path');
 const ts=require('typescript');
 const root=process.cwd();
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-const page=read('app/page.tsx');
+const page=require('./helpers/app-source.cjs')();
 const liquid=read('app/liquid-glass.css');
 const previous=read('tests/pwa-list-parity-gesture.test.cjs');
 const marker='CONNECT_PWA_DOCK_MOTION_NESTED_GESTURES_V1_20261114';

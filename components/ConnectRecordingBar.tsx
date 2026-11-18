@@ -1,5 +1,5 @@
 'use client';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo,useEffect,useRef,useState } from 'react';
 /** Mic amplitude stays outside the chat's React render path. */
 export default memo(function RecordingBar({ started, stream, onCancel, onSend }: {
     started: number;

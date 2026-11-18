@@ -5,7 +5,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const root=path.join(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
-const page=read('app/page.tsx');
+const page=require('./helpers/app-source.cjs')();
 const pkg=JSON.parse(read('package.json'));
 test('one authoritative Supabase path for send, read, edit, delete and history',()=>{
   assert.match(page,/supabase\.from\('messages'\)\.insert/);
@@ -34,7 +34,6 @@ test('Neon client libraries are removed, essential Supabase services unchanged',
     assert.equal(pkg.dependencies[name],undefined,name+' no longer needed');
   }
   assert.equal(pkg.dependencies['@supabase/supabase-js'],'2.57.0');
-  assert.match(pkg.scripts.test,/pwa-logout-regression\.test\.cjs/);
-  assert.match(pkg.scripts.test,/media-cache-stale-error\.test\.cjs/);
-  assert.match(pkg.scripts.test,/supabase-only-rollback\.test\.cjs/);
+  const discovered=require('../scripts/test-all.cjs').discover(path.join(root,'tests'));
+  for(const name of ['pwa-logout-regression.test.cjs','media-cache-stale-error.test.cjs','supabase-only-rollback.test.cjs'])assert(discovered.some(file=>file.endsWith(name)),name);
 });

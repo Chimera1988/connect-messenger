@@ -1,71 +1,60 @@
 'use client';
+import { AvatarCropper,PendingAttachment,type CropState } from '../components/chat/AvatarEditor';
+import { Avatar,Icon,MessageChecks,PresenceAvatar } from '../components/chat/Primitives';
+import { ConnectInlineAutoplayVideo,VideoNoteBubble,VideoThumbnail } from '../components/chat/VideoMessages';
+import { VideoNoteRecorder } from '../components/chat/VideoNoteRecorder';
+import { VoicePlayer } from '../components/chat/VoicePlayer';
+import { ConnectCallButton } from '../components/ConnectAudioCalls';
+import ConnectCallBridge from '../components/ConnectCallBridge';
+import { waveStyles } from '../components/ConnectDynamicTheme';
+import { useConnectSession } from '../components/ConnectSessionProvider';
+import ConnectUiCoordinator from '../components/ConnectUiCoordinator';
+import { useUiSlot } from '../components/ConnectUiSlots';
+import { cachedChatPoster,connectPhotoFrameStyle,connectUpdatePhotoSize,connectVideoFrameStyle,refreshMediaUrl } from '../lib/chat/media-preview';
+import { ALBUM_PREFIX,dayKey,dayLabel,formatPresence,forwardBody,forwardedMessage,IOS_FAVORITE_PACK,isPlayableAudioFile,isVideoNote,listTimeLabel,MESSAGE_COLUMNS,messagePreview,parseAlbum,timeLabel,VISUAL_SCENES,type AlbumItem,type ChatReadingEntry,type Conversation,type CustomPack,type CustomSticker,type Gesture,type IconName,type Message,type Profile,type SettingsPage,type Tab,type VisualScene } from '../lib/chat/model';
+import { useChatComposer } from '../lib/chat/use-composer';
+import { useInbox } from '../lib/chat/use-inbox';
+import { usePushNavigation } from '../lib/chat/use-push-navigation';
+import type { Database } from '../lib/database';
+import { retireCurrentPush,setPushSession } from '../lib/push/session';
+import { createReconciler } from '../lib/realtime/reconciler';
+import { sessionScope } from '../lib/session-scope';
 // CONNECT_PWA_UNIFIED_CHAT_MEDIA_V1_20261112
 // CONNECT_PWA_CHAT_ACTIVITY_STATUS_V1_20261115
 // CONNECT_PWA_COMPACT_AUDIO_NO_TRANSCRIPTION_20261112
 // CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
 // CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
 
-import RecordingBar from '../components/ConnectRecordingBar';
-import CacheSettings from '../components/ConnectCacheSettings';
-import { settingsMenuSegmentClasses } from '../lib/settings-menu-groups';
 import ConnectAdminUsage from '../components/ConnectAdminUsage';
-import {mediaIdentity, mediaCacheOwner, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia, storeGeneratedChatPoster} from '../lib/media-cache';
-import {readChatWave, rememberChatWave, prewarmChatWave, getHotChatPoster, rememberChatPoster, forgetUserChatPresentation, isNativeMediaRuntime} from '../lib/chat-media-presentation';
-import { prefetchCachedMedia, prefetchChatAudio, prefetchStickerWebp } from '../lib/media-cache'; // CONNECT_PWA_CHAT_SPEED_STICKER_VOICE_V1_20261115
-import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
-import {compareChatMessages,chatTimeKey} from '../lib/chat-order';
-import { makePhotoPreview, photoPreviewPath, supportsPhotoPreview } from '../lib/chat-thumbnails';
-import { connectOptimizeMedia } from '../lib/connect-media-optimizer'; // CONNECT_PWA_SAFE_MEDIA_OPTIMIZATION_V1_20261115
+import CacheSettings from '../components/ConnectCacheSettings';
+import ConnectGalleryViewer from '../components/ConnectGalleryViewer';
+import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
+import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
+import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
+import ConnectProfileMedia,{ type ProfileMediaKind } from '../components/ConnectProfileMedia';
+import ConnectPushGuardian from '../components/ConnectPushGuardian'; // CONNECT_PWA_PUSH_GUARDIAN_20261114
+import RecordingBar from '../components/ConnectRecordingBar';
+import ConnectSplashScreen from '../components/ConnectSplashScreen';
+import { activityTtl,composerActivity,visiblePeerActivity } from '../lib/chat-activity'; // CONNECT_PWA_CHAT_ACTIVITY_STATUS_V1_20261115
+import { dropCachedMessage,dropCachedMessageById,prewarmChatHistory,readChatHistory,readNewerChatHistory,readOlderChatHistory,wipeChatHistory,wipeUserHistory,writeChatHistory } from '../lib/chat-history-cache';
+import { forgetUserChatPresentation,isNativeMediaRuntime } from '../lib/chat-media-presentation';
+import { chatTimeKey,compareChatMessages } from '../lib/chat-order';
+import { photoPreviewPath,supportsPhotoPreview } from '../lib/chat-thumbnails';
+import { clearCachedMedia,installMediaCache,linkMessageMedia,prefetchCachedMedia,prefetchChatAudio,prefetchStickerWebp,purgeDeletedMedia,resolveCachedMedia } from '../lib/media-cache';
+import { warmOwnProfileLibraries,warmPeerProfileLibraries } from '../lib/profile-media-index';
+import { settingsMenuSegmentClasses } from '../lib/settings-menu-groups';
 import { prepareStickerFile } from '../lib/sticker-webp'; // CONNECT_PWA_STICKER_WEBP_EDITOR_20261115
 import { convertStickerWebpOnServer } from '../lib/sticker-webp-transport'; // CONNECT_PWA_STICKER_BINARY_TRANSPORT_FIX4_20261115
-import { composerActivity, visiblePeerActivity, activityTtl } from '../lib/chat-activity'; // CONNECT_PWA_CHAT_ACTIVITY_STATUS_V1_20261115
-import ConnectNotificationSettings from '../components/ConnectNotificationSettings';
-import ConnectPushGuardian from '../components/ConnectPushGuardian'; // CONNECT_PWA_PUSH_GUARDIAN_20261114
-import ConnectHiddenMembers from '../components/ConnectHiddenMembers';
-import ConnectSplashScreen from '../components/ConnectSplashScreen';
-import ConnectProfileMedia, { type ProfileMediaKind } from '../components/ConnectProfileMedia';
-import ConnectGalleryViewer from '../components/ConnectGalleryViewer';
-import { warmOwnProfileLibraries, warmPeerProfileLibraries } from '../lib/profile-media-index';
-import { ConnectMusicStatus } from '../components/ConnectMusicSystem';
-import { STICKER_PACKS, stickerFromBody, stickerBody, stickerUrl, type StickerPackId } from '../lib/stickers';
-import { loadWallpaper, saveWallpaper, clearWallpaper } from '../lib/wallpaper';
+import { STICKER_PACKS,stickerBody,stickerFromBody,stickerUrl,type StickerPackId } from '../lib/stickers';
+import { clearWallpaper,loadWallpaper,saveWallpaper } from '../lib/wallpaper';
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { createClient, type User } from '@supabase/supabase-js';
-import * as tus from 'tus-js-client';
-import type { FormEvent, TouchEvent, KeyboardEvent as ReactKeyboardEvent, CSSProperties } from 'react';
+import type { CSSProperties,FormEvent,KeyboardEvent as ReactKeyboardEvent,TouchEvent } from 'react';
+import { useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState } from 'react';
+import { deliverAttachments } from '../lib/chat/attachments';
+import { deliverMessage,retryMessageOutbox } from '../lib/chat/delivery';
+import { browserSupabase,mediaUrl,supabaseFetch,supabaseKey,supabaseUrl } from '../lib/supabase-browser';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '';
-// On the alternate DuckDNS domain, send Supabase HTTP traffic through Vercel.
-// Keep the original Supabase URL for Realtime WebSockets and the primary domain.
-const useSupabaseProxy = typeof window !== 'undefined' && window.location.hostname === 'connect-chat.duckdns.org';
-const supabaseFetch: typeof fetch = (input, init) => {
-  const original = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-  const proxied = useSupabaseProxy && original.startsWith(supabaseUrl + '/')
-    ? window.location.origin + '/supabase/' + original.slice(supabaseUrl.length + 1)
-    : original;
-  // Preserve headers, method and body when the SDK passes a Request object.
-  return fetch(input instanceof Request ? new Request(proxied, input) : proxied, init);
-};
-// Signed media URLs are used directly by <img>, <audio>, <video> and fetch().
-// The SDK custom fetch cannot intercept those browser requests, so route them
-// through the same-origin Vercel proxy on the DuckDNS domain as well.
-function mediaUrl(url: string): string {
-  if (!useSupabaseProxy || !url) return url;
-  try {
-    const parsed = new URL(url);
-    const base = new URL(supabaseUrl);
-    const storageHost = base.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
-    if (parsed.hostname === base.hostname) {
-      return window.location.origin + '/supabase' + parsed.pathname + parsed.search + parsed.hash;
-    }
-    if (parsed.hostname === storageHost) {
-      return window.location.origin + '/supabase-storage' + parsed.pathname + parsed.search + parsed.hash;
-    }
-  } catch { /* Preserve unexpected URLs without breaking rendering. */ }
-  return url;
-}
+const supabase = browserSupabase();
 
 const CONNECT_LOCAL_LOGOUT_FLAG='connect-local-logout-v1';
 function locallyLoggedOut():boolean {try{return localStorage.getItem(CONNECT_LOCAL_LOGOUT_FLAG)==='1';}catch{return false;}}
@@ -78,985 +67,6 @@ function clearStoredConnectAuth():void {
     if(!/^[a-z0-9-]{4,64}$/.test(ref))return;
     localStorage.removeItem(`sb-${ref}-auth-token`);
   }catch{/* Storage restrictions must never prevent the screen from locking. */}
-}
-
-const supabase = supabaseUrl && supabaseKey
-  ? createClient(supabaseUrl, supabaseKey, {
-      auth: { detectSessionInUrl: true, persistSession: true, autoRefreshToken: true },
-      global: { fetch: supabaseFetch },
-    })
-  : null;
-
-// Signed storage links expire independently of authentication. Renew only the
-// failing object through the existing session, never make a private bucket public.
-async function refreshMediaUrl(source: string): Promise<string | undefined> {
-  const identity = mediaIdentity(source);
-  if (!supabase || !identity) return;
-  const slash = identity.indexOf('/'), bucket = identity.slice(0, slash);
-  if (slash < 1 || !['connect-avatars', 'connect-attachments', 'connect-stickers', 'connect-profile-media'].includes(bucket)) return;
-  const {data} = await supabase.storage.from(bucket).createSignedUrl(identity.slice(slash + 1), 3600);
-  return data?.signedUrl ? mediaUrl(data.signedUrl) : undefined;
-}
-
-type AlbumItem = {path:string;name:string;kind:'image'|'video'};
-const ALBUM_PREFIX = '[[connect-album:';
-function parseAlbum(body:string):AlbumItem[] {
-  const text=forwardedMessage(body).text;
-  if(!text.startsWith(ALBUM_PREFIX)||!text.endsWith(']]'))return [];
-  try {const v:unknown=JSON.parse(text.slice(ALBUM_PREFIX.length,-2));
-    return Array.isArray(v)&&v.length>0&&v.length<=20&&v.every(x=>x&&typeof x.path==='string'&&typeof x.name==='string'&&(x.kind==='image'||x.kind==='video'))?v as AlbumItem[]:[];
-  }catch{return []}
-}
-const MESSAGE_COLUMNS = 'id,conversation_id,sender_id,body,created_at,edited_at,deleted_at,reply_to,attachment_path,attachment_name,attachment_type,attachment_size,attachment_kind';
-// CONNECT_PWA_WEBP_HISTORY_THUMBS_AUDIO_HOLD_V1
-// CONNECT_PWA_INSTANT_CACHE_V3_20261111
-
-type Tab = 'chats' | 'contacts' | 'settings';
-type SettingsPage = 'home' | 'appearance' | 'notifications' | 'stickers' | 'members' | 'usage' | 'data' | 'privacy' | 'about';
-type VisualScene = 'waves' | 'aurora' | 'moon' | 'sunset' | 'lagoon' | 'nebula' | 'minimal';
-const VISUAL_SCENES: ReadonlyArray<{ id: VisualScene; title: string; description: string }> = [
-  { id: 'waves', title: 'Волны', description: 'Текущая тема' },
-  { id: 'aurora', title: 'Сияние', description: 'Мягкие переливы' },
-  { id: 'moon', title: 'Лунный свет', description: 'Холодные линии' },
-  { id: 'sunset', title: 'Закат', description: 'Тёплые волны' },
-  { id: 'lagoon', title: 'Лагуна', description: 'Бирюзовые потоки' },
-  { id: 'nebula', title: 'Туманность', description: 'Фиолетовый свет' },
-  { id: 'minimal', title: 'Минимализм', description: 'Без волн и свечения' },
-];
-type CustomPack = {id:string;name:string;emoji:string;owner_id:string;is_public:boolean;created_at:string};
-type CustomSticker = {id:string;pack_id:string;name:string;storage_path:string;position:number};
-const IOS_FAVORITE_PACK = 'Избранное из чатов · Connect';
-type Profile = { id: string; display_name: string; is_blocked: boolean; bio: string; avatar_path: string | null; last_seen_at: string | null; online_until: string | null };
-type Conversation = { id: string; user_a: string; user_b: string; created_at: string };
-type Message = {
-  id: string; conversation_id: string; sender_id: string; body: string; created_at: string;
-  edited_at: string | null; deleted_at: string | null; reply_to: string | null;
-  attachment_path: string | null; attachment_name: string | null; attachment_type: string | null;
-  attachment_size: number | null; attachment_kind: 'image' | 'video' | 'audio' | 'file' | null;
-};
-function isPlayableAudioFile(m: Message): boolean {
-  if (m.attachment_kind !== 'file') return false;
-  return (m.attachment_type || '').toLowerCase().startsWith('audio/') ||
-    /\.(?:mp3|m4a|aac|wav|ogg|oga|opus|flac|aif|aiff)$/i.test(m.attachment_name || '');
-}
-
-type ChatReadingEntry = { chatId: string; readAt: string; firstUnreadId: string | null; anchorId: string | null };
-type Gesture = { id: string; x: number; y: number; dx: number; dy: number; timer: number | null; opened: boolean };
-type IconName = 'chats' | 'contacts' | 'settings' | 'smile' | 'back' | 'search' | 'write' | 'send' | 'reply' |
-  'edit' | 'copy' | 'trash' | 'close' | 'check' | 'moon' | 'sun' | 'logout' | 'shield' | 'info' | 'chevron' | 'arrow' | 'message' | 'camera' | 'user' | 'plus' | 'mic' | 'stop' | 'file' | 'play' | 'dots' | 'forward';
-
-function Icon({ name, size = 22, stroke = 1.9 }: { name: IconName; size?: number; stroke?: number }) {
-  const common = { fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const };
-  const paths: Record<IconName, React.ReactNode> = {
-    chats: <><path d="M4.6 9.8c-1.7 1.5-2.3 3.9-1.5 6.1.3.8.7 1.4 1.2 2l-1 2.6 3.1-.9c1.1.5 2.2.6 3.3.5"/><path d="M12.7 3.3c4.2 0 7.6 3.3 7.6 7.4 0 1.5-.4 2.9-1.1 4.1l.9 3.5-3.5-1.1c-1.2.7-2.6 1.1-4 1.1-4.2 0-7.6-3.3-7.6-7.6s3.4-7.4 7.7-7.4Z"/></>,
-    contacts: <><circle cx="7.7" cy="8.2" r="2.3"/><circle cx="16.2" cy="7.9" r="2.55"/><path d="M3.1 18.7v-.6c0-2.7 2.1-4.6 4.6-4.6 1.1 0 2.1.3 2.9.9"/><path d="M11.3 19.3v-.7c0-2.8 2.2-4.7 4.9-4.7s4.9 1.9 4.9 4.7v.7h-9.8Z"/></>,
-    settings: <><path d="M10.4 2.4h3.2l.65 2.2c.64.2 1.25.46 1.8.78l2.1-.97 2.25 2.25-.98 2.08c.32.56.58 1.16.77 1.8l2.21.66v3.2l-2.21.65c-.19.65-.45 1.25-.77 1.81l.98 2.08-2.25 2.25-2.1-.97c-.55.32-1.16.58-1.8.77l-.65 2.21h-3.2l-.65-2.21c-.64-.19-1.25-.45-1.81-.77l-2.08.97-2.25-2.25.97-2.08c-.32-.56-.58-1.16-.77-1.81l-2.21-.65v-3.2l2.21-.66c.19-.64.45-1.24.77-1.8l-.97-2.08 2.25-2.25 2.08.97c.56-.32 1.17-.58 1.81-.78z"/><circle cx="12" cy="12.8" r="2.9"/></>,
-    back: <path d="m14.7 5-7 7 7 7"/>,
-    search: <><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.3 15.3 5 5"/></>,
-    write: <><path d="M11 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="m12 12 8-8a2.1 2.1 0 0 0-3-3l-8 8-.8 3.8z"/></>,
-    send: <><path d="m3.2 3.7 17.5 8.3-17.5 8.3 2.6-8.3z"/><path d="M5.8 12H20"/></>,
-    reply: <><path d="M9.5 9 4 14l5.5 5"/><path d="M4 14h9c5 0 7 2 7 6"/></>,
-    edit: <><path d="M11 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6"/><path d="m12 12 8-8a2.1 2.1 0 0 0-3-3l-8 8-.8 3.8z"/></>,
-    copy: <><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/></>,
-    trash: <><path d="M4 7h16M9 7V4h6v3M6.5 7l.8 13h9.4l.8-13"/><path d="M10 11v6m4-6v6"/></>,
-    close: <path d="M5 5 19 19M19 5 5 19"/>,
-    check: <path d="m4 12 5.5 5.5L20 6"/>,
-    moon: <path d="M20.4 15.8A8.7 8.7 0 0 1 8.2 3.6 8.7 8.7 0 1 0 20.4 15.8Z"/>,
-    sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M19 5l-1.5 1.5m-11 11L5 19"/></>,
-    logout: <><path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5"/><path d="M13 8l4 4-4 4m4-4H9"/></>,
-    shield: <><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="m9 11 2 2 4-4"/></>,
-    info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></>,
-    chevron: <path d="m9 5 7 7-7 7"/>,
-    arrow: <path d="m5 12 14 0m-6-6 6 6-6 6"/>,
-    camera: <><path d="M3.6 7h3.1l1.7-2.5h7.2L17.3 7h3.1c.85 0 1.5.65 1.5 1.5v10.4c0 .9-.65 1.6-1.5 1.6H3.6c-.85 0-1.5-.7-1.5-1.6V8.5c0-.85.65-1.5 1.5-1.5Z"/><circle cx="12" cy="13.4" r="3.65"/></>,
-    user: <><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></>,
-    smile: <><circle cx="12" cy="12" r="9.1"/><circle cx="8.4" cy="9.6" r="1" fill="currentColor" stroke="none"/><circle cx="15.6" cy="9.6" r="1" fill="currentColor" stroke="none"/><path d="M7.8 14.2h8.4c-.7 2.35-2.25 3.8-4.2 3.8s-3.5-1.45-4.2-3.8Z" fill="currentColor" stroke="none"/></>,
-    plus: <path d="M12 3.4v17.2M3.4 12h17.2"/>,
-    mic: <><rect x="9.2" y="2" width="5.6" height="13.2" rx="2.8"/><path d="M5.3 10.2v1.2a6.7 6.7 0 0 0 13.4 0v-1.2M12 18v4m-3.7 0h7.4"/></>,
-    stop: <rect x="5" y="5" width="14" height="14" rx="3"/>,
-    file: <><path d="M6 2h8l5 5v15H6zM14 2v5h5"/></>,
-    play: <path d="m8 5 11 7-11 7z"/>,
-    dots: <><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></>,
-    forward: <><path d="M13 5l7 7-7 7M20 12H9a5 5 0 0 0-5 5v2"/></>,
-    message: <><path d="M20 11.4a7.5 7.5 0 0 1-7.9 7.5 8.2 8.2 0 0 1-3.3-.7L4 20l1.2-4.5A7.6 7.6 0 1 1 20 11.4Z"/><path d="M8 11h8"/></>,
-  };
-  return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>{paths[name]}</svg>;
-}
-
-const avatarColors = ['#2369b1', '#985ab2', '#b56e48', '#327e89', '#6c73b7', '#599467'];
-function Avatar({ name, id, size = 'md', url }: { name: string; id?: string; size?: 'sm' | 'md' | 'lg'; url?: string }) {
-  let seed = 0; for (const char of id || name) seed += char.charCodeAt(0);
-  const color = avatarColors[seed % avatarColors.length];
-  return <span className={'person-avatar avatar-' + size} style={{ background: `linear-gradient(140deg,${color},#1b283d)` }} aria-hidden="true">{url ? <img src={url} alt="" loading="lazy"/> : (Array.from(name.trim())[0]?.toLocaleUpperCase('ru-RU') || '?')}</span>;
-}
-// CONNECT_PWA_ONLINE_BADGES_V1_20261114: reuse the chat header presence lease.
-// Offline/native entries render the original Avatar without an extra wrapper.
-function PresenceAvatar({ name, id, url, online }: { name:string; id?:string; url?:string; online:boolean }) {
-  if (!online) return <Avatar name={name} id={id} url={url}/>;
-  return <span className="connect-presence-avatar"><Avatar name={name} id={id} url={url}/><span className="connect-presence-dot" role="img" aria-label="В сети"/></span>;
-}
-
-function timeLabel(iso: string) { return new Date(iso).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }); }
-function listTimeLabel(iso: string) {
-  const date = new Date(iso); const today = new Date();
-  if (date.toDateString() === today.toDateString()) return timeLabel(iso);
-  const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-  if (date.toDateString() === yesterday.toDateString()) return 'Вчера';
-  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-}
-function dayKey(iso:string){const d=new Date(iso);return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;}
-function dayLabel(iso:string){
-  const d=new Date(iso),now=new Date(),yesterday=new Date(now);yesterday.setDate(now.getDate()-1);
-  if(dayKey(iso)===dayKey(now.toISOString()))return 'Сегодня';
-  if(dayKey(iso)===dayKey(yesterday.toISOString()))return 'Вчера';
-  return d.toLocaleDateString('ru-RU',{day:'numeric',month:'long',...(d.getFullYear()!==now.getFullYear()?{year:'numeric' as const}:{})});
-}
-function formatPresence(p:{last_seen_at:string|null;online_until:string|null}|undefined,now:number){
-  if(!p?.last_seen_at)return 'Не был(а) в сети';
-  if(p.online_until && new Date(p.online_until).getTime()>now)return 'В сети';
-  return 'Был(а) '+dayLabel(p.last_seen_at).toLocaleLowerCase('ru-RU')+' в '+timeLabel(p.last_seen_at);
-}
-function MessageChecks({delivered,read}:{delivered:boolean;read:boolean}){
-  return <span className={'delivery-checks'+(read?' is-read':'')} aria-label={read?'Прочитано':delivered?'Доставлено':'Отправлено'}>
-    <svg viewBox="0 0 22 16" width="19" height="15" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="m2 8 4 4 7-8"/>{delivered&&<path d="m8 8 4 4 8-9"/>}</svg>
-  </span>;
-}
-// Forwarding metadata is encoded in the body for compatibility with the current database schema.
-const FORWARD_PREFIX = '[[connect-forward:';
-function forwardedMessage(body: string): { from: string | null; text: string } {
-  if (!body.startsWith(FORWARD_PREFIX)) return { from: null, text: body };
-  const end = body.indexOf(']]\n', FORWARD_PREFIX.length);
-  if (end < 0) return { from: null, text: body };
-  try {
-    const from = decodeURIComponent(body.slice(FORWARD_PREFIX.length, end));
-    if (!from || from.length > 100) return { from: null, text: body };
-    return { from, text: body.slice(end + 3) };
-  } catch { return { from: null, text: body }; }
-}
-function forwardBody(from: string, body: string): string {
-  return `${FORWARD_PREFIX}${encodeURIComponent(from.slice(0, 60))}]]\n${forwardedMessage(body).text}`;
-}
-
-function messagePreview(m?: Message, selfId?: string) {
-  if (!m) return 'Начните переписку';
-  return (m.sender_id === selfId ? 'Вы: ' : '') + (m.deleted_at ? 'Нет сообщений' : (isVideoNote(m) ? 'Видеокружок' : parseAlbum(m.body).length ? `Альбом (${parseAlbum(m.body).length})` : (stickerFromBody(forwardedMessage(m.body).text) || (m.attachment_kind==='image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || ''))) ? 'Стикер' : forwardedMessage(m.body).text || ({image:'Фото',video:'Видео',audio:'Голосовое сообщение',file:'Файл'}[m.attachment_kind || 'file'])).replace(/\s+/g, ' '));
-}
-
-
-function voiceTime(seconds: number) {
-  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-  const whole = Math.floor(seconds);
-  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
-}
-
-const voiceWaveformCache = new Map<string, {bars:number[];duration:number}>();
-const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, mine, delivered, read, fileName, onSave }: { src:string;path:string;byteSize?:number;sentAt:string;mine:boolean;delivered:boolean;read:boolean;fileName?:string;onSave?:()=>void }) {
-  const waveOwner=mediaCacheOwner();
-  const savedWave=readChatWave(waveOwner,path);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [playing, setPlaying] = useState(false);
-  const [duration, setDuration] = useState(()=>savedWave?.duration||0);
-  const [position, setPosition] = useState(0);
-  const [bars, setBars] = useState<number[]>(()=>savedWave?.bars||Array(43).fill(0.28));
-  const [error, setError] = useState(false);
-  const [buffering,setBuffering] = useState(false);
-  const [playSrc,setPlaySrc] = useState(src||'');
-  const seeking = useRef(false);
-  useEffect(()=>{
-    let current=true;
-    setPlaySrc(src||'');setError(false);
-    // Resolve a previously warmed IndexedDB copy before the user presses play.
-    // Do not await anything inside the click handler: iOS needs user activation.
-    if(waveOwner&&path){
-      const identity='/storage/v1/object/sign/connect-attachments/'+path;
-      void resolveCachedMedia(identity,waveOwner).then(local=>{
-        if(current&&local.startsWith('blob:')&&(!audioRef.current||(audioRef.current.paused&&audioRef.current.currentTime===0)))setPlaySrc(local);
-      }).catch(()=>{});
-    }
-    return()=>{current=false;};
-  },[src,path,waveOwner]);
-  const wavePointer=useRef<{x:number;y:number;started:number}|null>(null);
-
-  // CONNECT_PWA_VOICE_WAVE_LAZY_RESTORE_20261116
-  useEffect(() => {
-    const syncWave=()=>{
-      const saved=isNativeMediaRuntime()?voiceWaveformCache.get(path):readChatWave(waveOwner,path);
-      if(saved){setBars(saved.bars);setDuration(saved.duration);return true;}
-      return false;
-    };
-    if(syncWave())return;
-    setBars(Array(43).fill(0.28));setDuration(0);
-    // Only a small, visible audio item can trigger a waveform download.
-    // Never walk the entire history or decode on chat mount.
-    if(isNativeMediaRuntime()||!waveOwner||!path||!src||!byteSize||byteSize>2*1024*1024)return;
-    let disposed=false;
-    const updated=(event:Event)=>{
-      const detail=(event as CustomEvent<{user:string;path:string}>).detail;
-      if(!disposed&&detail?.user===waveOwner&&detail.path===path)syncWave();
-    };
-    window.addEventListener('connect:chat-wave',updated);
-    const generate=async()=>{
-      try{
-        // Shares the existing bounded media-cache job with the audio prefetch;
-        // no second full-object GET if it was already being cached.
-        if(byteSize<=1024*1024)await prefetchChatAudio(src,waveOwner,byteSize);
-        if(disposed)return;
-        const identity='/storage/v1/object/sign/connect-attachments/'+path;
-        const local=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
-        if(disposed)return;
-        await prewarmChatWave(waveOwner,path,local.startsWith('blob:')?local:src,byteSize);
-        if(!disposed)syncWave();
-      }catch{/* Waveform is optional; playback must remain available. */}
-    };
-    const node=audioRef.current?.parentElement;
-    if(typeof IntersectionObserver==='undefined'||!node){void generate();return()=>{disposed=true;window.removeEventListener('connect:chat-wave',updated);};}
-    const observer=new IntersectionObserver(entries=>{
-      if(entries.some(entry=>entry.isIntersecting)){observer.disconnect();void generate();}
-    },{root:node.closest('.message-scroll'),rootMargin:'100px 0px'});
-    observer.observe(node);
-    return()=>{disposed=true;observer.disconnect();window.removeEventListener('connect:chat-wave',updated);};
-  }, [src,path,waveOwner,byteSize]);
-
-  async function toggle() {
-    const audio=audioRef.current;
-    if(!audio||buffering)return;
-    if(!audio.paused){audio.pause();return;}
-    document.querySelectorAll<HTMLAudioElement>('audio[data-connect-voice]').forEach(other=>{
-      if(other!==audio)other.pause();
-    });
-    setError(false);
-    setBuffering(true);
-    try {
-      const identity='/storage/v1/object/sign/connect-attachments/'+path;
-      let current=playSrc||src||'';
-      if(!current){
-        const cached=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
-        current=cached.startsWith('blob:')?cached:(await refreshMediaUrl(identity)||'');
-        if(!current)throw new Error('Voice message URL is not ready');
-        audio.src=current;setPlaySrc(current);
-      }
-      try {
-        // For normal, already-signed files play() runs in the user click gesture.
-        await audio.play();
-      } catch(firstError) {
-        if(!navigator.onLine||audio.error?.code===3||audio.error?.code===4)throw firstError;
-        const renewed=await refreshMediaUrl(identity);
-        if(!renewed||renewed===current)throw firstError;
-        audio.src=renewed;setPlaySrc(renewed);audio.load();
-        await audio.play();
-      }
-    } catch {setError(true);}
-    finally {setBuffering(false);}
-  }
-  function seek(e: React.PointerEvent<HTMLDivElement>) {
-    const audio = audioRef.current;
-    if (!audio || !Number.isFinite(audio.duration) || audio.duration <= 0) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    audio.currentTime = fraction * audio.duration;
-    setPosition(audio.currentTime);
-  }
-  const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
-  return <div className="voice-player">
-    <audio ref={audioRef} data-connect-voice src={playSrc||undefined} preload="none"
-      onLoadedMetadata={e => { setError(false); const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
-      onDurationChange={e => { const d=e.currentTarget.duration; if(Number.isFinite(d))setDuration(d); }}
-      onTimeUpdate={e => setPosition(e.currentTarget.currentTime)}
-      onPlay={() => {setPlaying(true);setError(false);setBuffering(false);}} onPause={() => setPlaying(false)}
-      onEnded={() => {setPlaying(false);setPosition(0);}} onError={() => {setError(true);setBuffering(false);}}/>
-    <button type="button" className="voice-play" onClick={e => {e.stopPropagation();void toggle();}} aria-label={playing ? 'Пауза' : 'Воспроизвести голосовое'} disabled={buffering}>
-      {playing ? <span className="voice-pause-icon"/> : <Icon name="play" size={21}/>}
-    </button>
-    <div className="voice-content connect-voice-v4-content">
-      <div className={'connect-voice-v4-top'+(fileName?' has-file':'')}>
-        {fileName&&<div className="voice-file-name" title={fileName}>{fileName}</div>}
-        <div className="voice-wave" role="slider" tabIndex={0} aria-label="Перемотка голосового сообщения" aria-valuemin={0} aria-valuemax={Math.max(0,Math.round(duration))} aria-valuenow={Math.round(position)}
-        onPointerDown={e => {e.stopPropagation();seeking.current=false;wavePointer.current={x:e.clientX,y:e.clientY,started:performance.now()};e.currentTarget.setPointerCapture(e.pointerId);}}
-        onPointerMove={e => {const p=wavePointer.current;if(!p)return;if(Math.abs(e.clientY-p.y)>Math.abs(e.clientX-p.x)+8){wavePointer.current=null;seeking.current=false;return;}if(Math.abs(e.clientX-p.x)>8)seeking.current=true;if(seeking.current)seek(e);}}
-        onPointerUp={e => {const p=wavePointer.current;if(p&&(seeking.current||performance.now()-p.started<480))seek(e);wavePointer.current=null;seeking.current=false;e.stopPropagation();}}
-        onPointerCancel={() => {wavePointer.current=null;seeking.current=false;}}
-        onKeyDown={e => {const audio=audioRef.current;if(!audio)return;if(e.key==='ArrowRight'||e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();audio.currentTime=Math.max(0,Math.min(duration,audio.currentTime+(e.key==='ArrowRight'?5:-5)));}}}>
-        {bars.map((height,i) => <span key={i} className={'voice-bar'+(i / bars.length <= progress ? ' listened' : '')} style={{height:`${Math.round(4+height*22)}px`}}/>)}
-        </div>
-      </div>
-      <div className="voice-bottom connect-voice-v4-bottom"><span>{buffering ? 'Загружаю аудио…' : error ? 'Не удалось воспроизвести' : `${voiceTime(playing || position > 0 ? position : duration)}${playing || position > 0 ? ' / '+voiceTime(duration) : ''}`}</span>{onSave&&<button className="voice-save" type="button" onClick={e=>{e.stopPropagation();onSave();}}>Сохранить</button>}<span className="voice-message-meta">{timeLabel(sentAt)}{mine && <MessageChecks delivered={delivered} read={read}/>}</span></div>
-    </div>
-  </div>;
-});
-
-type CropState = { file: File; url: string };
-function AvatarCropper({ url, onCancel, onSave, saving }: { url: string; onCancel: () => void; onSave: (blob: Blob) => void; saving: boolean }) {
-  const imgRef = useRef<HTMLImageElement | null>(null);
-  const dragRef = useRef<{ x: number; y: number; ox: number; oy: number } | null>(null);
-  const pointers = useRef<Map<number, { x: number; y: number }>>(new Map());
-  const pinchRef = useRef<{ distance: number; zoom: number } | null>(null);
-  const [zoom, setZoom] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState('');
-  const zoomRef = useRef(zoom); zoomRef.current = zoom;
-  const offsetRef = useRef(offset); offsetRef.current = offset;
-  const clamp = (x: number, y: number, z: number) => {
-    const img = imgRef.current;
-    if (!img?.naturalWidth) return { x: 0, y: 0 };
-    const base = Math.max(280 / img.naturalWidth, 280 / img.naturalHeight);
-    const boundX = Math.max(0, (img.naturalWidth * base * z - 280) / 2);
-    const boundY = Math.max(0, (img.naturalHeight * base * z - 280) / 2);
-    return { x: Math.max(-boundX, Math.min(boundX, x)), y: Math.max(-boundY, Math.min(boundY, y)) };
-  };
-  function changeZoom(z: number) {
-    const next = Math.max(1, Math.min(4, z));
-    setZoom(next); setOffset(prev => clamp(prev.x, prev.y, next));
-  }
-  function moveStart(e: React.PointerEvent<HTMLDivElement>) {
-    e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId);
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.current.size === 1) dragRef.current = { x: e.clientX, y: e.clientY, ox: offsetRef.current.x, oy: offsetRef.current.y };
-    if (pointers.current.size === 2) {
-      const [a,b] = Array.from(pointers.current.values());
-      pinchRef.current = { distance: Math.hypot(a.x-b.x,a.y-b.y), zoom: zoomRef.current };
-      dragRef.current = null;
-    }
-  }
-  function move(e: React.PointerEvent<HTMLDivElement>) {
-    if (!pointers.current.has(e.pointerId)) return;
-    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.current.size === 2 && pinchRef.current) {
-      const [a,b] = Array.from(pointers.current.values());
-      changeZoom(pinchRef.current.zoom * Math.hypot(a.x-b.x,a.y-b.y) / Math.max(1,pinchRef.current.distance));
-    } else if (dragRef.current && pointers.current.size === 1) {
-      const d = dragRef.current;
-      setOffset(clamp(d.ox + e.clientX-d.x, d.oy + e.clientY-d.y, zoomRef.current));
-    }
-  }
-  function moveEnd(e: React.PointerEvent<HTMLDivElement>) {
-    pointers.current.delete(e.pointerId); dragRef.current = null; pinchRef.current = null;
-  }
-  async function save() {
-    const img = imgRef.current;
-    if (!img?.naturalWidth || saving) return;
-    try {
-      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 512;
-      const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas недоступен');
-      const base = Math.max(280/img.naturalWidth, 280/img.naturalHeight);
-      const width = img.naturalWidth*base*zoom*512/280;
-      const height = img.naturalHeight*base*zoom*512/280;
-      ctx.fillStyle='#fff';ctx.fillRect(0,0,512,512);
-      ctx.drawImage(img,(512-width)/2+offset.x*512/280,(512-height)/2+offset.y*512/280,width,height);
-      const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve,'image/jpeg',.88));
-      if (!blob) throw new Error('Не удалось обработать фото');
-      onSave(blob);
-    } catch (e) { setError(e instanceof Error ? e.message : 'Ошибка обработки фото'); }
-  }
-  return <div className="avatar-crop-overlay" role="dialog" aria-modal="true" aria-label="Редактор аватара">
-    <div className="avatar-crop-panel">
-      <header><button type="button" onClick={onCancel} disabled={saving}>Отмена</button><strong>Фото профиля</strong><button type="button" disabled={!ready || saving} onClick={()=>void save()}>{saving?'Сохраняю…':'Готово'}</button></header>
-      <p>Переместите фотографию, чтобы выбрать нужную область</p>
-      <div className="avatar-crop-stage" onPointerDown={moveStart} onPointerMove={move} onPointerUp={moveEnd} onPointerCancel={moveEnd}>
-        <img ref={imgRef} src={url} alt="Выбранное фото" draggable={false} onLoad={()=>setReady(true)} onError={()=>setError('Не удалось открыть изображение')} style={ready?{width:`${(imgRef.current?.naturalWidth||280)*Math.max(280/(imgRef.current?.naturalWidth||280),280/(imgRef.current?.naturalHeight||280))*zoom}px`,height:`${(imgRef.current?.naturalHeight||280)*Math.max(280/(imgRef.current?.naturalWidth||280),280/(imgRef.current?.naturalHeight||280))*zoom}px`,transform:`translate(calc(-50% + ${offset.x}px),calc(-50% + ${offset.y}px))`}:undefined}/>
-        <div className="avatar-crop-mask" aria-hidden="true"/>
-        <div className="avatar-crop-ring" aria-hidden="true"/>
-      </div>
-      <div className="avatar-crop-zoom"><span>−</span><input aria-label="Увеличение" type="range" min="1" max="4" step=".01" value={zoom} onChange={e=>changeZoom(Number(e.target.value))}/><span>+</span></div>
-      <small>Можно увеличивать двумя пальцами. Сохраняется только выбранная область.</small>
-      {error && <p className="avatar-crop-error">{error}</p>}
-    </div>
-  </div>;
-}
-
-function PendingAttachment({file,onRemove}:{file:File;onRemove:()=>void}){
-  const [url,setUrl]=useState('');
-  useEffect(()=>{if(!file.type.startsWith('image/')&&!file.type.startsWith('video/'))return;
-    const next=URL.createObjectURL(file);setUrl(next);return()=>URL.revokeObjectURL(next);
-  },[file]);
-  return <div className="connect-album-preview">
-    {url?(file.type.startsWith('image/')?<img src={url} alt={file.name}/>:<video src={url} muted playsInline preload="metadata"/>):<span className="connect-file-placeholder">📎</span>}
-    <span className="connect-album-filename" title={file.name}>{file.name}</span>
-    <button type="button" onClick={onRemove} aria-label={`Убрать ${file.name}`}>×</button>
-  </div>;
-}
-
-// Use the video's decoded dimensions rather than forcing every preview to 16:9.
-// Only change the standalone message thumbnail; album grid cells keep their own layout.
-function syncVideoThumbnailSize(video: HTMLVideoElement) {
-  const width=video.videoWidth, height=video.videoHeight;
-  if(width<=0||height<=0)return;
-  const button=video.closest<HTMLButtonElement>('button.connect-media-thumb');
-  if(!button||button.closest('.connect-album-grid'))return;
-  const ratio=Math.max(0.25,Math.min(4,width/height));
-  button.style.setProperty('--connect-video-ratio', `${width} / ${height}`);
-  button.style.setProperty('--connect-video-width', `${Math.round(Math.min(300,340*ratio))}px`);
-}
-
-type ConnectPhotoSize = { width: number; height: number };
-const connectPhotoSizeCache = new Map<string, ConnectPhotoSize>();
-
-function connectPhotoDimensions(path: string): ConnectPhotoSize | null {
-  const match = /__img_(\d{1,5})x(\d{1,5})$/.exec(path);
-  if (match) {
-    const width = Number(match[1]), height = Number(match[2]);
-    if (width > 0 && height > 0) return { width, height };
-  }
-  return connectPhotoSizeCache.get(path) ?? null;
-}
-
-function connectPhotoFrameValues(size: ConnectPhotoSize): { width: string; ratio: string } {
-  // The image stays proportionate and fits within 280 x 340 CSS pixels.
-  const ratio = Math.max(0.35, Math.min(4, size.width / size.height));
-  return { width: `${Math.round(Math.min(280, 340 * ratio))}px`, ratio: String(ratio) };
-}
-
-function connectPhotoFrameStyle(path: string): CSSProperties | undefined {
-  const dimensions = connectPhotoDimensions(path);
-  if (!dimensions) return undefined;
-  const values = connectPhotoFrameValues(dimensions);
-  return { '--connect-photo-width': values.width, '--connect-photo-ratio': values.ratio } as CSSProperties;
-}
-
-async function connectImageFileSize(file: File): Promise<ConnectPhotoSize | null> {
-  if (!file.type.startsWith('image/')) return null;
-  const url = URL.createObjectURL(file);
-  try {
-    return await new Promise(resolve => {
-      const img = new Image();
-      img.onload = () => resolve(img.naturalWidth > 0 && img.naturalHeight > 0
-        ? { width: img.naturalWidth, height: img.naturalHeight } : null);
-      img.onerror = () => resolve(null);
-      img.src = url;
-    });
-  } finally { URL.revokeObjectURL(url); }
-}
-
-function connectUpdatePhotoSize(image: HTMLImageElement, path: string) {
-  if (!image.naturalWidth || !image.naturalHeight) return;
-  const frame = image.closest<HTMLElement>('.attachment-preview.connect-adaptive-photo');
-  if (!frame) return;
-  const dimensions = { width: image.naturalWidth, height: image.naturalHeight };
-  connectPhotoSizeCache.set(path, dimensions);
-  const values = connectPhotoFrameValues(dimensions);
-  if (frame.style.getPropertyValue('--connect-photo-width') === values.width &&
-      frame.style.getPropertyValue('--connect-photo-ratio') === values.ratio) return;
-
-  const scroll = frame.closest<HTMLElement>('.message-scroll');
-  const viewport = scroll?.getBoundingClientRect();
-  const anchor = scroll && viewport
-    ? Array.from(scroll.querySelectorAll<HTMLElement>('.message-day-group'))
-        .find(el => el.getBoundingClientRect().bottom > viewport.top + 8)
-    : undefined;
-  const originalTop = anchor?.getBoundingClientRect().top;
-  const nearBottom = scroll ? scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 100 : false;
-
-  frame.style.setProperty('--connect-photo-width', values.width);
-  frame.style.setProperty('--connect-photo-ratio', values.ratio);
-  // The first view of older files lacks dimensions. Keep the reading position
-  // steady while correcting their footprint on image decode.
-  if (scroll) {
-    if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
-    else if (anchor && originalTop !== undefined)
-      scroll.scrollTop += anchor.getBoundingClientRect().top - originalTop;
-  }
-}
-
-
-type ConnectVideoPreview = { size: ConnectPhotoSize; poster: Blob | null };
-const connectVideoSizeCache = new Map<string, ConnectPhotoSize>();
-
-function connectVideoFrameStyle(path: string): CSSProperties | undefined {
-  const found = /__vid_(\d{1,5})x(\d{1,5})$/.exec(path);
-  const dimensions = found
-    ? {width:Number(found[1]),height:Number(found[2])}
-    : connectVideoSizeCache.get(path);
-  if (!dimensions || dimensions.width <= 0 || dimensions.height <= 0) return undefined;
-  const layout = connectPhotoFrameValues(dimensions);
-  return { '--connect-video-card-width': layout.width, '--connect-video-card-ratio': layout.ratio } as CSSProperties;
-}
-
-function connectUpdateVideoFrame(video: HTMLVideoElement, path: string) {
-  if (!video.videoWidth || !video.videoHeight) return;
-  const frame = video.closest<HTMLElement>('.attachment-preview.connect-adaptive-video');
-  if (!frame) return;
-  const size = {width:video.videoWidth,height:video.videoHeight};
-  connectVideoSizeCache.set(path, size);
-  const values = connectPhotoFrameValues(size);
-  if (frame.style.getPropertyValue('--connect-video-card-width') === values.width &&
-      frame.style.getPropertyValue('--connect-video-card-ratio') === values.ratio) return;
-  const scroll = frame.closest<HTMLElement>('.message-scroll');
-  const view = scroll?.getBoundingClientRect();
-  const anchor = scroll && view
-    ? Array.from(scroll.querySelectorAll<HTMLElement>('.message-day-group'))
-        .find(node => node.getBoundingClientRect().bottom > view.top + 8)
-    : undefined;
-  const originalTop = anchor?.getBoundingClientRect().top;
-  const nearBottom = scroll ? scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= 100 : false;
-  frame.style.setProperty('--connect-video-card-width', values.width);
-  frame.style.setProperty('--connect-video-card-ratio', values.ratio);
-  // Old videos did not store dimensions: preserve the reading position on first decode.
-  if (scroll) {
-    if (nearBottom) scroll.scrollTop = scroll.scrollHeight;
-    else if (anchor && originalTop !== undefined)
-      scroll.scrollTop += anchor.getBoundingClientRect().top - originalTop;
-  }
-}
-
-async function connectVideoFilePreview(file: File): Promise<ConnectVideoPreview | null> {
-  if (!file.type.startsWith('video/')) return null;
-  const url = URL.createObjectURL(file);
-  return await new Promise(resolve => {
-    const video = document.createElement('video');
-    video.preload = 'auto'; video.muted = true; video.playsInline = true;
-    let settled = false, captured = false;
-    let size: ConnectPhotoSize | null = null;
-    const timer = window.setTimeout(() => finish(null), 5500);
-    function finish(poster: Blob | null) {
-      if (settled) return;
-      settled = true; window.clearTimeout(timer);
-      video.pause(); video.removeAttribute('src'); video.load();
-      URL.revokeObjectURL(url);
-      resolve(size ? {size, poster} : null);
-    }
-    function capture() {
-      if (!size || captured || video.readyState < 2) return;
-      captured = true;
-      try {
-        const canvas = document.createElement('canvas');
-        const scale = Math.min(1, 480 / size.width, 480 / size.height);
-        canvas.width = Math.max(1, Math.round(size.width * scale));
-        canvas.height = Math.max(1, Math.round(size.height * scale));
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {finish(null);return;}
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob(blob => finish(blob && blob.size > 0 ? blob : null), 'image/jpeg', .76);
-      } catch { finish(null); }
-    }
-    video.onloadedmetadata = () => {
-      if (video.videoWidth > 0 && video.videoHeight > 0) {
-        size = {width: video.videoWidth, height: video.videoHeight};
-      }
-      try {
-        const target = Number.isFinite(video.duration) && video.duration > .3
-          ? Math.min(1.2, Math.max(.3, video.duration * .12), video.duration * .8) : 0;
-        if (target > 0) video.currentTime = target;
-        else if (video.readyState >= 2) capture();
-      } catch { if (video.readyState >= 2) capture(); }
-    };
-    video.onseeked = capture;
-    video.onloadeddata = () => {
-      if (!Number.isFinite(video.duration) || video.duration <= .3 || video.currentTime > .05)
-        capture();
-    };
-    video.onerror = () => finish(null);
-    video.src = url;
-    video.load();
-  });
-}
-
-/** Share one stable IndexedDB-backed JPEG poster across videos, albums and video notes. */
-async function cachedChatPoster(path:string):Promise<string|null>{
-  if(!supabase||!path)return null;
-  if(isNativeMediaRuntime()){
-    const viewer=mediaCacheOwner(),identity='/storage/v1/object/sign/connect-attachments/'+path+'__poster.jpg';
-    if(viewer){const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);if(local.startsWith('blob:'))return local;}
-    const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600);
-    if(error||!data?.signedUrl)return null;
-    const signed=mediaUrl(data.signedUrl);
-    if(viewer)void prefetchCachedMedia(signed,viewer);
-    return signed;
-  }
-  const viewer=mediaCacheOwner();
-  const hot=getHotChatPoster(viewer,path);
-  if(hot)return hot;
-  const identity='/storage/v1/object/sign/connect-attachments/'+path+'__poster.jpg';
-  if(viewer){
-    const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
-    if(local.startsWith('blob:')){rememberChatPoster(viewer,path,local);return local;}
-  }
-  const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600);
-  if(error||!data?.signedUrl)return null;
-  const signed=mediaUrl(data.signedUrl);
-  if(viewer){
-    await prefetchCachedMedia(signed,viewer);
-    const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
-    if(local.startsWith('blob:')){rememberChatPoster(viewer,path,local);return local;}
-    rememberChatPoster(viewer,path,signed);
-  }
-  return signed;
-}
-
-// CONNECT_PWA_VIDEO_STILLS_FIX4_20261113
-/** Save the most recent nonempty decoded frame as a stable attachment poster.
- * PWA only. Cross-origin/tainted video falls back to its uploaded poster.
- */
-function preserveVisibleChatFrame(video:HTMLVideoElement,path:string,display:(url:string)=>void,squareCrop=false):boolean{
-  if(isNativeMediaRuntime()||!path||!mediaCacheOwner()||video.readyState<2||video.currentTime<.12||!video.videoWidth||!video.videoHeight)return false;
-  try{
-    const canvas=document.createElement('canvas');
-    // Fit the actual pixels, not the intrinsic portrait/landscape frame, to the
-    // fixed circular viewport. Other video posters keep their original ratio.
-    const width=video.videoWidth,height=video.videoHeight,edge=Math.min(width,height);
-    const cropSquare=squareCrop&&edge>0;
-    const sourceWidth=cropSquare?edge:width,sourceHeight=cropSquare?edge:height;
-    const scale=Math.min(1,420/sourceWidth,420/sourceHeight);
-    canvas.width=Math.max(1,Math.round(sourceWidth*scale));
-    canvas.height=Math.max(1,Math.round(sourceHeight*scale));
-    const ctx=canvas.getContext('2d',{willReadFrequently:true});if(!ctx)return false;
-    const x=cropSquare?(width-edge)/2:0,y=cropSquare?(height-edge)/2:0;
-    ctx.drawImage(video,x,y,sourceWidth,sourceHeight,0,0,canvas.width,canvas.height);
-    // Avoid persisting a decoder's all-black placeholder on iOS.
-    const pixels=ctx.getImageData(0,0,canvas.width,canvas.height).data;
-    let sampled=0,lit=0;
-    for(let i=0;i<pixels.length;i+=128){sampled++;if(pixels[i]+pixels[i+1]+pixels[i+2]>65)lit++;}
-    if(sampled&&!lit)return false;
-    const url=canvas.toDataURL('image/jpeg',.76);if(url.length<180)return false;
-    const viewer=mediaCacheOwner();
-    rememberChatPoster(viewer,path,url);
-    display(url);
-    canvas.toBlob(blob=>{if(blob&&viewer===mediaCacheOwner())void storeGeneratedChatPoster(viewer,path,blob).catch(()=>{});},'image/jpeg',.76);
-    return true;
-  }catch{return false;}
-}
-
-function VideoThumbnail({src,path}:{src:string;path?:string}) {
-  const [poster,setPoster]=useState<string|null>(null);
-  const [uploadedPoster,setUploadedPoster]=useState<string|null>(()=>path?getHotChatPoster(mediaCacheOwner(),path):null);
-  const [failed,setFailed]=useState(false);
-  const [posterChecked,setPosterChecked]=useState(false),[near,setNear]=useState(false);
-  const frameRef=useRef<HTMLSpanElement|null>(null);
-  const videoRef=useRef<HTMLVideoElement|null>(null);
-  useEffect(()=>{const frame=frameRef.current;if(!frame)return;const io=new IntersectionObserver(items=>setNear(Boolean(items[0]?.isIntersecting)),{root:frame.closest('.message-scroll'),rootMargin:'120px'});io.observe(frame);return()=>io.disconnect();},[]);
-  useEffect(()=>{setPoster(null);setFailed(false)},[src]);
-  useEffect(() => {
-    setUploadedPoster(path?getHotChatPoster(mediaCacheOwner(),path):null);setPosterChecked(false);
-    if (!path || !/__vid_\d{1,5}x\d{1,5}$/.test(path) || !supabase) {setPosterChecked(true);return;}
-    if(!near)return;
-    let cancelled = false;
-    void cachedChatPoster(path).then(url=>{if(!cancelled){if(url)rememberChatPoster(mediaCacheOwner(),path,url);setUploadedPoster(url);setPosterChecked(true);}})
-      .catch(()=>{if(!cancelled)setPosterChecked(true);});
-    return () => {cancelled = true;};
-  }, [path,near]);
-  function capture(video:HTMLVideoElement){
-    if(!video.videoWidth||!video.videoHeight)return;
-    if(!isNativeMediaRuntime()&&path){
-      preserveVisibleChatFrame(video,path,url=>{setPoster(url);setUploadedPoster(url);});
-      return;
-    }
-    try{
-      const canvas=document.createElement('canvas');
-      const scale=Math.min(1,480/video.videoWidth,480/video.videoHeight);
-      canvas.width=Math.max(1,Math.round(video.videoWidth*scale));
-      canvas.height=Math.max(1,Math.round(video.videoHeight*scale));
-      canvas.getContext('2d')?.drawImage(video,0,0,canvas.width,canvas.height);
-      const url=canvas.toDataURL('image/jpeg',.78);
-      if(url.length>100){setPoster(url);if(path)rememberChatPoster(mediaCacheOwner(),path,url);}
-    }catch{setFailed(true)}
-  }
-  return <span ref={frameRef} className={isNativeMediaRuntime()?"connect-video-preview":"connect-video-preview connect-pwa-frame-fit"}>
-    {(uploadedPoster || poster) && <img src={uploadedPoster || poster || ''} alt="Предпросмотр видео" onError={()=>{setUploadedPoster(null);setPosterChecked(true);}}/>}
-    {near&&posterChecked&&!uploadedPoster&&!poster&&<video ref={videoRef} src={src} playsInline muted preload="metadata"
-      onLoadedMetadata={e=>{const v=e.currentTarget;if(path)connectUpdateVideoFrame(v,path);else syncVideoThumbnailSize(v);try{v.currentTime=path && Number.isFinite(v.duration) && v.duration>.3 ? Math.min(1.2,Math.max(.3,v.duration*.12),v.duration*.8) : Math.min(.2,Math.max(0,(Number.isFinite(v.duration)?v.duration:1)-.01))}catch{setFailed(true)}}}
-      onSeeked={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);capture(e.currentTarget)}}
-      onLoadedData={e=>{if(path)connectUpdateVideoFrame(e.currentTarget,path);else syncVideoThumbnailSize(e.currentTarget);if(!poster)capture(e.currentTarget)}}
-      onError={()=>setFailed(true)}
-      style={poster?{visibility:'hidden'}:undefined}/>}
-    {failed&&!poster&&<span className="connect-video-fallback">Видео</span>}
-  </span>;
-}
-
-// Keep decoder/network ownership outside render; only one visible inline video owns it.
-type VisibleVideo={visible:boolean;paused:()=>boolean;activate:(active:boolean)=>void};
-const visibleVideos=new Map<HTMLVideoElement,VisibleVideo>();
-let preferredVideo:HTMLVideoElement|null=null;
-let inlineVideoForeground=true;
-if(typeof window!=='undefined')window.addEventListener('connect:native-lifecycle',event=>{inlineVideoForeground=(event as CustomEvent).detail==='active';reconcileVisibleVideos();});
-function claimVisibleVideo(video:HTMLVideoElement){preferredVideo=video;reconcileVisibleVideos();}
-function reconcileVisibleVideos(){
- const candidates=[...visibleVideos].filter(([,item])=>item.visible&&!item.paused()&&inlineVideoForeground&&document.visibilityState==='visible');
- candidates.sort(([a],[b])=>Number(b===preferredVideo)-Number(a===preferredVideo)||Math.abs(a.getBoundingClientRect().top-innerHeight/2)-Math.abs(b.getBoundingClientRect().top-innerHeight/2));
- const winner=candidates[0]?.[0];for(const[video,item]of visibleVideos)item.activate(video===winner);
-}
-function useVisibleVideo(ref:{current:HTMLVideoElement|null},src:string,userPaused:{current:boolean},muted:{current:boolean},onBeforeDetach?:(video:HTMLVideoElement)=>void){
-  const onBeforeDetachRef=useRef(onBeforeDetach);
-  onBeforeDetachRef.current=onBeforeDetach;
-  const resumePosition=useRef(0);
- useEffect(()=>{
-  const video=ref.current;if(!video)return;let attached=false;
-  const resume=()=>{if(resumePosition.current>0&&Number.isFinite(video.duration))video.currentTime=Math.min(resumePosition.current,Math.max(0,video.duration-.05));};
-  video.addEventListener('loadedmetadata',resume);
-  const item:VisibleVideo={visible:false,paused:()=>userPaused.current,activate(active){
-   if(active){video.muted=muted.current;if(!attached){attached=true;video.src=src;video.load();}if(video.paused)void video.play().catch(()=>{});}
-   else if(attached){if(!isNativeMediaRuntime())onBeforeDetachRef.current?.(video);resumePosition.current=video.currentTime||resumePosition.current;attached=false;video.pause();video.removeAttribute('src');video.load();}
-  }};
-  visibleVideos.set(video,item);
-  const observer=new IntersectionObserver(entries=>{item.visible=Boolean(entries[0]?.isIntersecting);reconcileVisibleVideos();},{root:video.closest('.message-scroll'),threshold:.35});
-  observer.observe(video);document.addEventListener('visibilitychange',reconcileVisibleVideos);
-  return()=>{observer.disconnect();document.removeEventListener('visibilitychange',reconcileVisibleVideos);visibleVideos.delete(video);if(preferredVideo===video)preferredVideo=null;item.activate(false);video.removeEventListener('loadedmetadata',resume);reconcileVisibleVideos();};
- },[ref,src,userPaused,muted]);
-}
-
-// Connect inline autoplay video and separate audio controls v1
-function ConnectSoundGlyph({muted}:{muted:boolean}) {
-  return <svg aria-hidden="true" viewBox="0 0 24 24" width="19" height="19" fill="none"
-      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M4 9h4l4-3v12l-4-3H4z"/>
-    {muted ? <path d="m16 9 5 6m0-6-5 6"/> : <><path d="M16 9c1.5 1.1 1.5 4.9 0 6"/><path d="M19 6c3.5 3 3.5 9 0 12"/></>}
-  </svg>;
-}
-
-function ConnectInlineAutoplayVideo({src,path,onOpen}:{src:string;path:string;onOpen:()=>void}) {
-  const ref=useRef<HTMLVideoElement|null>(null);
-  const soundRef=useRef(true);
-  const [muted,setMuted]=useState(true);
-  const [poster,setPoster]=useState<string|null>(()=>getHotChatPoster(mediaCacheOwner(),path));
-  const [error,setError]=useState(false);
-  const [frameReady,setFrameReady]=useState(false);
-  const firstFrameStored=useRef(false);
-  const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster);};
-
-  useEffect(()=>{
-    setPoster(getHotChatPoster(mediaCacheOwner(),path));setError(false);setFrameReady(false);firstFrameStored.current=false;
-    if(!supabase || !/__vid_\d{1,5}x\d{1,5}$/.test(path))return;
-    let cancelled=false;
-    void cachedChatPoster(path).then(url=>{if(!cancelled&&url)setPoster(previous=>previous?.startsWith('data:')?previous:url);}).catch(()=>{});
-    return()=>{cancelled=true;};
-  },[path]);
-
-  const userPaused=useRef(false);
-  useVisibleVideo(ref,src,userPaused,soundRef,freezeFrame);
-
-  return <div className={isNativeMediaRuntime()?"connect-inline-autoplay-video":"connect-inline-autoplay-video connect-pwa-frame-fit"}>
-    <button type="button" className="connect-inline-autoplay-video-open" aria-label="Открыть видео на весь экран"
-      onClick={event=>{event.stopPropagation();onOpen();}}>
-      {!isNativeMediaRuntime()&&(poster?<img className="connect-inline-video-still" src={poster} alt="" aria-hidden="true"/>:<span className="connect-inline-video-still-fallback" aria-hidden="true">▶</span>)}
-      <video ref={ref} poster={poster||undefined} muted={muted} loop playsInline preload="none" crossOrigin={isNativeMediaRuntime()?undefined:'anonymous'}
-        style={isNativeMediaRuntime()?undefined:{opacity:frameReady?1:0}}
-        onLoadedMetadata={event=>connectUpdateVideoFrame(event.currentTarget,path)}
-        onEmptied={()=>{if(!isNativeMediaRuntime())setFrameReady(false);}}
-        onTimeUpdate={event=>{if(isNativeMediaRuntime())return;const video=event.currentTarget;if(video.currentTime>.12){setFrameReady(true);if(!firstFrameStored.current){firstFrameStored.current=preserveVisibleChatFrame(video,path,setPoster);}}}}
-        onError={()=>setError(true)}/>
-      {error&&<span className="connect-inline-video-error">Видео недоступно</span>}
-    </button>
-    <button type="button" className="connect-inline-video-sound" aria-label={muted?'Включить звук':'Выключить звук'}
-      title={muted?'Включить звук':'Выключить звук'}
-      onClick={event=>{
-        event.stopPropagation();const video=ref.current;if(!video)return;
-        const next=!video.muted;
-        soundRef.current=next;video.muted=next;setMuted(next);
-        if(!next){userPaused.current=false;claimVisibleVideo(video);}
-      }}><ConnectSoundGlyph muted={muted}/></button>
-  </div>;
-}
-
-// Video notes use the existing video attachments schema, but have a distinct presentation.
-function isVideoNote(m: Message): boolean {
-  return m.attachment_kind === 'video' && /^connect-video-note-\d+\.(?:mp4|webm)$/i.test(m.attachment_name || '');
-}
-
-// Connect video-note sound control v3: round progress and mute below the circle
-function VideoNoteBubble({src,name,path,sentAt,mine,delivered,read}:{src:string;name:string;path:string;sentAt:string;mine:boolean;delivered:boolean;read:boolean}) {
-  const [poster,setPoster] = useState<string|undefined>(()=>getHotChatPoster(mediaCacheOwner(),path)||undefined);
-  const [videoFrameReady,setVideoFrameReady]=useState(false);
-  const firstFrameStored=useRef(false);
-  useEffect(()=>{
-    let alive=true;
-    setPoster(getHotChatPoster(mediaCacheOwner(),path)||undefined);firstFrameStored.current=false;
-    if(supabase)void cachedChatPoster(path).then(url=>{if(alive&&url)setPoster(url);}).catch(()=>{});
-    return()=>{alive=false;};
-  },[path]);
-  const ref=useRef<HTMLVideoElement|null>(null);
-  const [muted,setMuted]=useState(true);
-  const [duration,setDuration]=useState(0);
-  const [expanded,setExpanded]=useState(false);
-  const [progress,setProgress]=useState(0);
-  const userPaused=useRef(false),mutedRef=useRef(true);
-  const freezeFrame=(video:HTMLVideoElement)=>{preserveVisibleChatFrame(video,path,setPoster,true);};
-  useVisibleVideo(ref,src,userPaused,mutedRef,freezeFrame);
-  const circumference=2*Math.PI*47;
-  const toggleNote=(event:React.MouseEvent)=>{
-    event.stopPropagation();
-    const video=ref.current;
-    if(!video)return;
-    if(!expanded){
-      setExpanded(true);
-      userPaused.current=false;
-      claimVisibleVideo(video);
-      void video.play().catch(()=>{});
-      return;
-    }
-    userPaused.current=!video.paused;
-    if(!userPaused.current)claimVisibleVideo(video);else reconcileVisibleVideos();
-  };
-  const closeNote=(event:React.MouseEvent)=>{
-    event.stopPropagation();
-    setExpanded(false);
-    userPaused.current=true;
-    ref.current?.pause();
-  };
-  return <div className={'connect-v4-video-note connect-v5-video-note'+(expanded?' is-expanded':'')+(!isNativeMediaRuntime()?' connect-pwa-frame-fit':'')}>
-    <div className="connect-v5-note-stage">
-      <div className="connect-v4-note-circle">
-        {!isNativeMediaRuntime()&&(poster?<img className="connect-note-still" src={poster} alt="" aria-hidden="true"/>:<span className="connect-note-still connect-note-still-fallback" aria-hidden="true">▶</span>)}
-        <video ref={ref} className="connect-v4-note-video" poster={poster} crossOrigin={isNativeMediaRuntime()?undefined:'anonymous'} muted={muted} playsInline loop preload="none" aria-label={name} style={isNativeMediaRuntime()?undefined:{opacity:videoFrameReady?1:0}}
-          onLoadedData={()=>{/* Wait for a drawable frame instead of revealing iOS decoder black. */}}
-          onEmptied={()=>{if(!isNativeMediaRuntime())setVideoFrameReady(false);}}
-          onLoadedMetadata={event=>{const d=event.currentTarget.duration;if(Number.isFinite(d)&&d>0)setDuration(d);}}
-          onTimeUpdate={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));if(!isNativeMediaRuntime()&&v.currentTime>.12){setVideoFrameReady(true);if(!firstFrameStored.current)firstFrameStored.current=preserveVisibleChatFrame(v,path,setPoster,true);}}}
-          onSeeked={event=>{const v=event.currentTarget,d=v.duration;if(Number.isFinite(d)&&d>0)setProgress(Math.max(0,Math.min(1,v.currentTime/d)));}}/>
-        <button type="button" className="connect-v4-note-hit" aria-label={expanded?'Приостановить или воспроизвести видеокружок':'Увеличить и воспроизвести видеокружок'} onClick={toggleNote}/>
-        <svg className="connect-v4-note-progress" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-          <circle className="connect-v4-note-track" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"/>
-          <circle className="connect-v4-note-progress-fill" cx="50" cy="50" r="47" fill="none" strokeWidth="1.0"
-            strokeDasharray={circumference} strokeDashoffset={circumference*(1-progress)}/>
-        </svg>
-        {duration>0&&<span className="connect-v4-note-length">{Math.floor(duration/60)}:{String(Math.floor(duration%60)).padStart(2,'0')}</span>}
-      </div>
-      {expanded&&<button type="button" className="connect-v4-note-close connect-v5-note-close" aria-label="Свернуть видеокружок" onClick={closeNote}>
-        <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 5l14 14M19 5 5 19"/></svg>
-      </button>}
-      <button type="button" className="connect-v4-note-sound connect-v5-note-sound" aria-label={muted?'Включить звук видеокружка':'Выключить звук видеокружка'}
-        title={muted?'Включить звук':'Выключить звук'} onClick={event=>{
-          event.stopPropagation();
-          const video=ref.current;if(!video)return;
-          const next=!video.muted;
-          mutedRef.current=next;video.muted=next;setMuted(next);
-          if(!next){userPaused.current=false;claimVisibleVideo(video);}
-        }}><ConnectSoundGlyph muted={muted}/></button>
-      <span className="connect-v4-note-time connect-v5-note-time">{timeLabel(sentAt)}{mine&&<MessageChecks delivered={delivered} read={read}/>}</span>
-    </div>
-  </div>;
-}
-
-type VideoNotePhase = 'loading'|'ready'|'recording'|'review'|'error';
-function VideoNoteRecorder({onClose,onSend,onRecordingChange}:{onClose:()=>void;onSend:(file:File)=>void;onRecordingChange:(recording:boolean)=>void}) {
-  const live=useRef<HTMLVideoElement|null>(null);
-  const streamRef=useRef<MediaStream|null>(null);
-  const recorderRef=useRef<MediaRecorder|null>(null);
-  const chunksRef=useRef<Blob[]>([]);
-  const timerRef=useRef<number|null>(null);
-  const startRef=useRef(0);
-  const previewRef=useRef<string|null>(null);
-  const savedRef=useRef<File|null>(null);
-  // Connect video-note orientation normalization v1
-  const normalizedStreamRef=useRef<MediaStream|null>(null);
-  const frameRequestRef=useRef<number|null>(null);
-  const [phase,setPhase]=useState<VideoNotePhase>('loading');
-  const [facing,setFacing]=useState<'user'|'environment'>('user');
-  const [seconds,setSeconds]=useState(0);
-  const [preview,setPreview]=useState<string|null>(null);
-  const [error,setError]=useState('');
-  function stopCamera(){streamRef.current?.getTracks().forEach(t=>t.stop());streamRef.current=null;}
-  function clearClock(){if(timerRef.current!==null){window.clearInterval(timerRef.current);timerRef.current=null;}}
-  function stopNormalizedFrames(){
-    if(frameRequestRef.current!==null){window.cancelAnimationFrame(frameRequestRef.current);frameRequestRef.current=null;}
-    normalizedStreamRef.current?.getTracks().forEach(track=>track.stop());
-    normalizedStreamRef.current=null;
-  }
-  function normalizedRecordingStream(camera:MediaStream):MediaStream{
-    const source=live.current;
-    if(!source || !source.videoWidth || !source.videoHeight)throw Error('Камера ещё не готова, повторите запись');
-    const canvas=document.createElement('canvas');
-    canvas.width=480;canvas.height=480;
-    const context=canvas.getContext('2d',{alpha:false});
-    if(!context)throw Error('Не удалось подготовить запись видео');
-    // Preserve recording on older browsers that lack canvas.captureStream.
-    if(typeof canvas.captureStream!=='function')return camera;
-    const draw=()=>{
-      if(source.readyState>=2&&source.videoWidth>0&&source.videoHeight>0){
-        const crop=Math.min(source.videoWidth,source.videoHeight);
-        const x=(source.videoWidth-crop)/2;
-        const y=(source.videoHeight-crop)/2;
-        context.drawImage(source,x,y,crop,crop,0,0,480,480);
-      }
-      frameRequestRef.current=window.requestAnimationFrame(draw);
-    };
-    draw();
-    const pixels=canvas.captureStream(24);
-    normalizedStreamRef.current=pixels;
-    const track=pixels.getVideoTracks()[0];
-    if(!track)throw Error('Не удалось получить видео для записи');
-    return new MediaStream([track,...camera.getAudioTracks()]);
-  }
-  useEffect(()=>{
-    let disposed=false;
-    void (async()=>{
-      try{
-        if(!navigator.mediaDevices?.getUserMedia||typeof MediaRecorder==='undefined')throw Error('Запись видеокружков не поддерживается браузером');
-        const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:480},height:{ideal:480}},audio:{echoCancellation:true,noiseSuppression:true}});
-        if(disposed){stream.getTracks().forEach(t=>t.stop());return;}
-        streamRef.current=stream;
-        if(live.current){live.current.srcObject=stream;void live.current.play().catch(()=>{});}
-        setPhase('ready');
-      }catch(e){if(!disposed){setError(e instanceof Error?e.message:'Не удалось открыть камеру');setPhase('error');}}
-    })();
-    return()=>{
-      disposed=true;clearClock();onRecordingChange(false);
-      const recorder=recorderRef.current;
-      if(recorder&&recorder.state!=='inactive')try{recorder.onstop=null;recorder.stop();}catch{}
-      stopNormalizedFrames();
-      stopCamera();
-      if(previewRef.current)URL.revokeObjectURL(previewRef.current);
-    };
-  },[]);
-  function start(){
-    const stream=streamRef.current;if(!stream||phase!=='ready')return;
-    try{
-      const formats=['video/mp4;codecs=h264,aac','video/mp4','video/webm;codecs=vp8,opus','video/webm;codecs=vp9,opus','video/webm'];
-      const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
-      const recordingStream=normalizedRecordingStream(stream);
-      const recorder=new MediaRecorder(recordingStream,{...(mime?{mimeType:mime}:{}),videoBitsPerSecond:isNativeMediaRuntime()?800000:720000,audioBitsPerSecond:isNativeMediaRuntime()?64000:56000});
-      chunksRef.current=[];recorderRef.current=recorder;savedRef.current=null;
-      recorder.ondataavailable=e=>{if(e.data.size>0)chunksRef.current.push(e.data)};
-      recorder.onerror=()=>{onRecordingChange(false);setError('Ошибка записи видео');setPhase('error');clearClock();stopNormalizedFrames();stopCamera()};
-      recorder.onstop=()=>{
-        onRecordingChange(false);clearClock();stopNormalizedFrames();stopCamera();
-        const type=recorder.mimeType||chunksRef.current[0]?.type||'video/webm';
-        const blob=new Blob(chunksRef.current,{type});
-        if(blob.size<100){setError('Видео не записалось. Попробуйте ещё раз.');setPhase('error');return;}
-        const ext=type.includes('mp4')?'mp4':'webm';
-        savedRef.current=new File([blob],`connect-video-note-${Date.now()}.${ext}`,{type});
-        const url=URL.createObjectURL(blob);previewRef.current=url;setPreview(url);setPhase('review');
-      };
-      recorder.start(1000);startRef.current=Date.now();setSeconds(0);setPhase('recording');onRecordingChange(true);
-      timerRef.current=window.setInterval(()=>{
-        const time=Math.floor((Date.now()-startRef.current)/1000);
-        setSeconds(Math.min(60,time));
-        if(time>=60&&recorder.state==='recording')recorder.stop();
-      },250);
-    }catch(e){onRecordingChange(false);stopNormalizedFrames();setError(e instanceof Error?e.message:'Не удалось начать запись');setPhase('error')}
-  }
-  function stop(){if(recorderRef.current?.state==='recording')recorderRef.current.stop()}
-  async function flipCamera() {
-    if(phase!=='ready' || !streamRef.current) return;
-    const nextFacing=facing==='user'?'environment':'user';
-    try {
-      const stream=await navigator.mediaDevices.getUserMedia({
-        video:{facingMode:{ideal:nextFacing},width:{ideal:480},height:{ideal:480}},
-        audio:{echoCancellation:true,noiseSuppression:true}
-      });
-      streamRef.current.getTracks().forEach(track=>track.stop());
-      streamRef.current=stream;
-      if(live.current){live.current.srcObject=stream;void live.current.play().catch(()=>{});}
-      setFacing(nextFacing);setError('');
-    } catch(e) {setError('Не удалось переключить камеру: '+(e instanceof Error?e.message:String(e)));}
-  }
-  function cancel(){onRecordingChange(false);onClose()}
-  return <div className="connect-vnote-backdrop" role="dialog" aria-modal="true" aria-label="Запись видеокружка">
-    <div className="connect-vnote-panel">
-      <div className="connect-vnote-header"><strong>Видеокружок</strong><button type="button" onClick={cancel} aria-label="Закрыть">✕</button></div>
-      <div className={'connect-vnote-preview'+(phase==='recording'?' is-recording':'')}>
-        <video ref={live} autoPlay muted playsInline style={{display:preview?'none':undefined}}/>
-        {preview&&<video src={preview} controls playsInline preload="auto"/>}
-        {phase==='loading'&&<span className="connect-vnote-hint">Открываем камеру…</span>}
-      </div>
-      {phase==='recording'&&<p className="connect-vnote-timer">● {Math.floor(seconds/60)}:{String(seconds%60).padStart(2,'0')} / 1:00</p>}
-      {phase==='error'&&<p className="connect-vnote-error">{error}</p>}
-      <div className="connect-vnote-actions">
-        <button type="button" onClick={cancel}>Отмена</button>
-        {phase==='ready'&&<button type="button" onClick={()=>void flipCamera()}>↻ Камера</button>}
-        {phase==='ready'&&<button type="button" className="connect-vnote-primary" onClick={start}>● Записать</button>}
-        {phase==='recording'&&<button type="button" className="connect-vnote-primary" onClick={stop}>■ Остановить</button>}
-        {phase==='review'&&<button type="button" className="connect-vnote-primary" onClick={()=>{const file=savedRef.current;if(file)onSend(file)}}>Отправить</button>}
-      </div>
-    </div>
-  </div>;
 }
 
 // CONNECT_PWA_NAV_MENUS_CALL_V1_20261114: edge gestures navigate screen history,
@@ -1084,6 +94,8 @@ function connectAllowHistorySwipe(current: ConnectGestureView | undefined, targe
 }
 
 export default function Home() {
+  const mainSlot=useUiSlot('main'),navSlot=useUiSlot('nav'),settingsSlot=useUiSlot('settings');
+  const closeChatMenu=useCallback(()=>setChatActions(false),[]),closeListMenu=useCallback(()=>setListActions(null),[]);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [visualScene, setVisualScene] = useState<VisualScene>('waves');
   useEffect(()=>{void window.ConnectNative?.request('appearance',{scene:visualScene}).catch(()=>{});},[visualScene]);
@@ -1109,16 +121,14 @@ export default function Home() {
   const [packName,setPackName] = useState('');
   const [packEmoji,setPackEmoji] = useState('🎨');
   const [packPublic,setPackPublic] = useState(false);
-  const [inviteEmail,setInviteEmail] = useState('');
-  const [inviteLink,setInviteLink] = useState('');
-  const [admin,setAdmin] = useState(false);
   // Sticker input lives inside each pack's label; native iOS picker retains the tap gesture.
 
-  const [user, setUser] = useState<User | null>(null);
+  const {user,setUser,admin,setAdmin,setConversation}=useConnectSession();
   // CONNECT_PWA_AUTH_FAIL_CLOSED_20261117: stored session alone is never authorization.
   const [authGate, setAuthGate] = useState<'checking'|'verified'|'denied'|'offline'>('checking');
   // CONNECT_PWA_SEAMLESS_SESSION_20261118: only a server-verified in-memory session can remain visible.
   const verifiedSessionRef = useRef(false);
+  const verifiedIdentityRef=useRef<string|null>(null);
   const [connectionStatus,setConnectionStatus] = useState<'online'|'offline'|'reconnecting'>('online');
   const authSequence = useRef(0);
   const passwordRecoveryPending = useRef(false);
@@ -1192,12 +202,12 @@ export default function Home() {
   const [peerActivity,setPeerActivity]=useState<{chat:string;kind:string;until:number}|null>(null);
   const activitySupported=useRef(false),activityLast=useRef({chat:'',kind:'',at:0});
   const activityWriteQueue=useRef<Promise<void>>(Promise.resolve());
-  useEffect(()=>{let live=true;activitySupported.current=false;if(supabase&&user)void supabase.rpc('connect_unified_capabilities').then(({data})=>{if(live)activitySupported.current=data?.activity===1;});return()=>{live=false;};},[user?.id]);
+  useEffect(()=>{let live=true;activitySupported.current=false;if(supabase&&user)void supabase.rpc('connect_unified_capabilities').then(({data})=>{if(live)activitySupported.current=!!data&&typeof data==='object'&&!Array.isArray(data)&&data.activity===1;});return()=>{live=false;};},[user?.id]);
   useEffect(()=>{if(!peerActivity)return;const timer=setTimeout(()=>setPeerActivity(null),Math.max(0,peerActivity.until-Date.now()));return()=>clearTimeout(timer);},[peerActivity]);
   const [peerStates, setPeerStates] = useState<Record<string,{delivered:string|null;read:string|null}>>({});
   const [presence, setPresence] = useState<Record<string,{last_seen_at:string|null;online_until:string|null}>>({});
   const [clock, setClock] = useState(Date.now());
-  const [draft, setDraft] = useState('');
+  const {draft,setDraft,pendingFiles,setPendingFiles}=useChatComposer(user?.id||null,activeChat);
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string,string>>({});
   function imageInChat(path:string):string|undefined {
     const preview=photoPreviews[path];
@@ -1214,7 +224,6 @@ export default function Home() {
   const mediaTouchStart = useRef<{x:number;y:number}|null>(null);
   const [savingMedia, setSavingMedia] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [pendingFiles,setPendingFiles]=useState<File[]>([]);
   const [videoNoteOpen,setVideoNoteOpen]=useState(false);
   const [recording, setRecording] = useState(false);
   useEffect(()=>{if(!user?.id)return;return installMediaCache(user.id, refreshMediaUrl);},[user?.id]);
@@ -1371,6 +380,14 @@ export default function Home() {
   const activeChatRef = useRef<string | null>(null);
   const readCache = useRef<Record<string, string>>({});
   const deliveredCache = useRef<Record<string, string>>({});
+  useEffect(()=>{
+    if(!user?.id)return;
+    return sessionScope.onReset(()=>{
+      readCache.current={};deliveredCache.current={};readSyncBusy.current={};readSyncPending.current={};
+      pendingReadReceipt.current=null;if(readReceiptTimer.current!==null)clearTimeout(readReceiptTimer.current);readReceiptTimer.current=null;
+      savedChatAnchors.current={};viewportAnchor.current=null;
+    });
+  },[user?.id]);
   const lastKeypress = useRef(0); const lastTypingSent = useRef(0);
   const previousLast = useRef(''); const stickToBottom = useRef(true);
   const invited = typeof window !== 'undefined' && /type=(invite|recovery)/.test(window.location.hash + window.location.search);
@@ -1478,6 +495,7 @@ export default function Home() {
     verifiedSessionRef.current = false;
     setConnectionStatus('online');
     setUser(null);setSetup(false);setAuthGate('denied');setLoading(false);
+    verifiedIdentityRef.current=null;
     setActiveChat(null);setProfileView(null);setMessages([]);
     setConversations([]);setProfiles([]);setAvatarUrls({});
     setLatest({});setUnread({});setAdmin(false);setSettingsPage('home');
@@ -1517,6 +535,7 @@ export default function Home() {
         if (code !== 'AuthSessionMissingError' && code !== 'AuthApiError') throw error;
       }
       const session = data.session;
+      if(verifiedIdentityRef.current&&session?.user.id!==verifiedIdentityRef.current){denyPrivateAccess();setAuthGate('checking');setLoading(true);}
       if (!session?.access_token) {
         clearStoredConnectAuth();
         denyPrivateAccess();
@@ -1550,9 +569,10 @@ export default function Home() {
       if (sequence !== authSequence.current) return;
       await window.__connectPrepareSession?.(session);
       if (sequence !== authSequence.current) return;
+      verifiedIdentityRef.current=session.user.id;
       verifiedSessionRef.current = true;
       setConnectionStatus('online');
-      setUser(session.user); setAuthGate('verified'); setLoading(false);
+      setUser(session.user);setAdmin(result.isAdmin===true); setAuthGate('verified'); setLoading(false);
       if (invited || passwordRecoveryPending.current) setSetup(true);
       passwordRecoveryPending.current=false;
     } catch (error) {
@@ -1583,6 +603,7 @@ export default function Home() {
         denyPrivateAccess();
         void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
       } else if(event==='INITIAL_SESSION'||event==='SIGNED_IN'||event==='TOKEN_REFRESHED'||event==='USER_UPDATED'||event==='PASSWORD_RECOVERY'){
+        if(verifiedIdentityRef.current&&session.user.id!==verifiedIdentityRef.current){++authSequence.current;denyPrivateAccess();}
         if(event==='PASSWORD_RECOVERY')passwordRecoveryPending.current=true;
         // Supabase auth callbacks must not await other auth methods synchronously.
         queueMicrotask(()=>{if(active)void verifyAuth();});
@@ -1692,7 +713,6 @@ export default function Home() {
     await Promise.all(Array.from({length:Math.min(4,queue.length)},()=>worker()));
   },[user?.id]);
   useEffect(()=>{void loadCustomStickers()},[loadCustomStickers]);
-  useEffect(()=>{if(user)void authenticatedRequest('/api/admin/invite').then(r=>setAdmin(Boolean(r.admin))).catch(()=>setAdmin(false));else setAdmin(false)},[user?.id]);
   async function createCustomPack(){
     if(!supabase||!user||!packName.trim()||busy)return;
     setBusy(true);
@@ -1828,12 +848,6 @@ export default function Home() {
     const {error}=await supabase.from('messages').insert({conversation_id:activeChat,sender_id:user.id,body:`[[connect-custom-sticker:${st.id}]]`,reply_to:replyTo?.id||null});
     setBusy(false);if(error)setNotice(error.message);else{setStickerPicker(false);setReplyTo(null);}
   }
-  async function inviteMember(){
-    if(!inviteEmail.trim()||busy)return;
-    setBusy(true);setInviteLink('');
-    try{const r=await authenticatedRequest('/api/admin/invite',{email:inviteEmail.trim()});setInviteLink(r.link);setNotice('Ссылка создана. Отправьте её приглашённому.');}
-    catch(e){setNotice(e instanceof Error?e.message:'Ошибка приглашения');}finally{setBusy(false);}
-  }
   async function deleteMyAccount(){
     if(!user||busy)return;
     if(!window.confirm('Удалить аккаунт навсегда? Вы исчезнете из контактов, а отправленные сообщения сохранятся у собеседников под именем «Удалённый пользователь».'))return;
@@ -1848,10 +862,12 @@ export default function Home() {
   }
   const loadDirectory = useCallback(async () => {
     if (!supabase || !user) return;
+    const operation=sessionScope.capture();
     const [p, c] = await Promise.all([
       supabase.from('profiles').select('id,display_name,is_blocked,bio,avatar_path,last_seen_at,online_until'),
       supabase.from('conversations').select('id,user_a,user_b,created_at').order('created_at', { ascending: false }),
     ]);
+    if(!sessionScope.current(operation))return;
     if (p.error) setNotice(p.error.message); else {
       const directory = (p.data || []) as Profile[];
       setProfiles(directory);
@@ -1910,17 +926,20 @@ export default function Home() {
 
   const markDelivered = useCallback(async (id:string, iso:string)=>{
     if(!supabase || !user || document.visibilityState!=='visible')return;
+    const operation=sessionScope.capture();if(operation.userId!==user.id)return;
     if(deliveredCache.current[id] && deliveredCache.current[id]>=iso)return;
     deliveredCache.current[id]=iso;
     const {error}=await supabase.from('conversation_user_state').upsert(
       {conversation_id:id,user_id:user.id,last_delivered_at:iso},
       {onConflict:'conversation_id,user_id'}
     );
+    if(!sessionScope.current(operation))return;
     if(error){delete deliveredCache.current[id];console.error('Delivery:',error.message);}
   },[user?.id]);
 
   const markRead = useCallback(async (id: string, iso: string) => {
     if (!supabase || !user || document.visibilityState!=='visible') return;
+    const operation=sessionScope.capture();if(operation.userId!==user.id)return;
     readSyncPending.current[id]=readSyncPending.current[id]>iso?readSyncPending.current[id]:iso;
     if(readSyncBusy.current[id])return;
     readSyncBusy.current[id]=true;
@@ -1928,24 +947,26 @@ export default function Home() {
     iso=readSyncPending.current[id];delete readSyncPending.current[id];
     if (readCache.current[id] && readCache.current[id] >= iso) continue;
     readCache.current[id] = iso;
-    const remaining=recentMessagesRef.current.filter(m=>m.conversation_id===id && m.sender_id!==user.id && m.created_at>iso).length;
-    setUnread(prev => prev[id]!==remaining ? { ...prev, [id]:remaining } : prev);
+    // A one-row-per-chat summary cannot count a partially read history window.
+    // Keep exact server totals until the next explicit invalidation resolves.
     const { error } = await supabase.from('conversation_user_state').upsert(
       { conversation_id: id, user_id: user.id, last_read_at: iso },
       { onConflict: 'conversation_id,user_id' },
     );
+    if(!sessionScope.current(operation))return;
     if (error) { delete readCache.current[id]; console.error('Read receipt:', error.message); }
     else {
       window.ConnectAndroid?.dismissConversationNotifications(id,iso);
       navigator.serviceWorker?.controller?.postMessage({type:'CONNECT_READ',userId:user.id,conversationId:id,readAt:iso});
       // A signed-in read receipt also clears Android notifications on other devices.
       const {data:{session}}=await supabase.auth.getSession();
-      if(session) void fetch('/api/push/read',{
+      if(session?.user.id===user.id&&sessionScope.current(operation)) void fetch('/api/push/read',{
         method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},
         body:JSON.stringify({conversationId:id,readAt:iso})
       }).catch(()=>{});
     }
-    }} finally {readSyncBusy.current[id]=false;}
+    window.dispatchEvent(new Event('connect:inbox-invalidated'));
+    }} finally {if(sessionScope.current(operation))readSyncBusy.current[id]=false;}
   }, [user?.id]);
 
   // Android native notifications follow the chat the user is actually viewing.
@@ -1967,7 +988,7 @@ export default function Home() {
     if(last.chat===id&&last.kind===(kind||'')&&now-last.at<4000)return Promise.resolve();
     activityLast.current={chat:id,kind:kind||'',at:now};
     const until=kind?new Date(now+activityTtl(kind)).toISOString():null;
-    const values:Record<string,unknown>={conversation_id:id,user_id:user.id,typing_until:kind==='typing'?until:null,recording_until:kind==='voice'?until:null};
+    const values:Database['public']['Tables']['conversation_user_state']['Insert']={conversation_id:id,user_id:user.id,typing_until:kind==='typing'?until:null,recording_until:kind==='voice'?until:null};
     if(activitySupported.current){values.activity_kind=kind;values.activity_until=until;}
     // Serialize status writes so a delayed cleanup cannot overwrite the next status.
     const client=supabase;
@@ -1995,59 +1016,31 @@ export default function Home() {
     document.addEventListener('visibilitychange',hidden);
     return()=>{clearInterval(pulse);document.removeEventListener('visibilitychange',hidden);void updateActivity(activeChat,null);};
   },[activeChat,videoNoteRecording,stickerPicker,filePickerOpen,updateActivity]);
-  // Realtime has a 3s polling fallback for mobile Safari when WebSockets are suspended.
-  useEffect(() => {
-    if (!supabase || !user) return;
-    let alive = true, refreshing=false;
-    const refresh = async () => {
-      if (!alive || refreshing || document.visibilityState === 'hidden') return;
-      refreshing=true;
-      try {
-      const [msgResult, statesResult] = await Promise.all([
-        supabase.from('messages').select(MESSAGE_COLUMNS).is('deleted_at',null).order('created_at', { ascending: false }).limit(1000),
-        supabase.from('conversation_user_state').select('*'),
-      ]);
-      if (!alive) return;
-      if (msgResult.error || statesResult.error) { setNotice(msgResult.error?.message || statesResult.error?.message || 'Ошибка обновления'); return; }
-      const {hiddenMessages:hidden,clearedChats:cleared}=visibilityFilter.current;
-      const recent = ((msgResult.data || []) as Message[]).filter(m=>!m.deleted_at && !hidden.includes(m.id) && (!cleared[m.conversation_id] || m.created_at>cleared[m.conversation_id]));
-      recentMessagesRef.current=recent;
-      const states = statesResult.data || [];
-      setPeerStates(Object.fromEntries(states.filter(st=>st.user_id!==user.id).map(st=>[st.conversation_id,{delivered:st.last_delivered_at,read:st.last_read_at}])));
-      const {data:seenProfiles}=await supabase.from('profiles').select('id,last_seen_at,online_until');
-      if(alive && seenProfiles)setPresence(Object.fromEntries(seenProfiles.map(p=>[p.id,{last_seen_at:p.last_seen_at,online_until:p.online_until}])));
-      const newest: Record<string, Message> = {}; const counts: Record<string, number> = {};
-      const serverRead: Record<string, string> = {};
-      for (const row of states) if (row.user_id === user.id) serverRead[row.conversation_id] = row.last_read_at;
-      for (const [id, at] of Object.entries(serverRead)) if (!readCache.current[id] || readCache.current[id] < at) readCache.current[id] = at;
-      // Clear notifications for chats read on another device, on the next visible sync.
-      const newestIncoming: Record<string, string> = {};
-      for (const m of recent) if (m.sender_id !== user.id && !newestIncoming[m.conversation_id])
-        newestIncoming[m.conversation_id] = m.created_at;
-      for (const [id, at] of Object.entries(serverRead))
-        if (at && newestIncoming[id] && newestIncoming[id] <= at)
-          window.ConnectAndroid?.dismissConversationNotifications(id,at);
-      const current = activeChatRef.current;
-      const action=states.find(st=>st.conversation_id===current&&st.user_id!==user.id&&st.activity_kind&&Date.parse(st.activity_until)>Date.now());
-      setPeerActivity(action?{chat:current||"",kind:action.activity_kind,until:Date.parse(action.activity_until)}:null);
-      setTyping(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.typing_until && new Date(st.typing_until).getTime() > Date.now())));
-      setPeerRecording(Boolean(current && states.some(st => st.conversation_id === current && st.user_id !== user.id && st.recording_until && new Date(st.recording_until).getTime() > Date.now())));
-      for (const m of recent) {
-        if (!newest[m.conversation_id]) newest[m.conversation_id] = m;
-        if (m.sender_id !== user.id && m.created_at > (readCache.current[m.conversation_id] || '')) counts[m.conversation_id] = (counts[m.conversation_id] || 0) + 1;
+  useInbox(supabase,user?.id||null,{
+    read:readCache,visibility:visibilityFilter,
+    onRows:(rows,changed)=>{
+      if(!user)return;
+      const states=rows.flatMap(row=>row.states);
+      for(const state of states)if(state.user_id===user.id&&state.last_read_at>(readCache.current[state.conversation_id]||''))readCache.current[state.conversation_id]=state.last_read_at;
+      for(const row of rows){
+        if(row.incoming_at)void markDelivered(row.conversation_id,row.incoming_at);
+        const at=readCache.current[row.conversation_id];
+        if(at&&row.incoming_at&&row.incoming_at<=at)window.ConnectAndroid?.dismissConversationNotifications(row.conversation_id,at);
       }
-      setLatest(newest); setUnread(counts);
-      const deliveredByChat:Record<string,string>={};
-      for(const m of recent)if(m.sender_id!==user.id && (!deliveredByChat[m.conversation_id] || deliveredByChat[m.conversation_id]<m.created_at))deliveredByChat[m.conversation_id]=m.created_at;
-      for(const [id,iso] of Object.entries(deliveredByChat))void markDelivered(id,iso);
-      } catch(error) { if(alive)setNotice(error instanceof Error?error.message:'Ошибка обновления'); }
-      finally {refreshing=false;}
-    };
-    void refresh(); const interval = window.setInterval(() => { void refresh(); }, 3000);
-    const onVisible = () => { if (document.visibilityState === 'visible') { void refresh(); void loadDirectory(); } };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => { alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisible); };
-  }, [user?.id, loadDirectory, markDelivered]);
+      const current=activeChatRef.current;
+      const peer=states.find(st=>st.conversation_id===current&&st.user_id!==user.id);
+      setPeerActivity(peer?.activity_kind&&Date.parse(peer.activity_until||'')>Date.now()?{chat:current!,kind:peer.activity_kind,until:Date.parse(peer.activity_until!)}:null);
+      setTyping(Date.parse(peer?.typing_until||'')>Date.now());setPeerRecording(Date.parse(peer?.recording_until||'')>Date.now());
+      if(!changed)return;
+      recentMessagesRef.current=rows.flatMap(row=>row.latest?[row.latest]:[]);
+      setLatest(Object.fromEntries(rows.filter(row=>row.latest).map(row=>[row.conversation_id,row.latest!])));
+      setUnread(Object.fromEntries(rows.map(row=>[row.conversation_id,Number(row.unread_count)])));
+      setPeerStates(Object.fromEntries(states.filter(st=>st.user_id!==user.id).map(st=>[st.conversation_id,{delivered:st.last_delivered_at,read:st.last_read_at}])));
+    },
+    onDirectory:()=>{void loadDirectory();},
+    onError:()=>setConnectionStatus(navigator.onLine===false?'offline':'reconnecting'),
+    onProfile:p=>{setPresence(prev=>({...prev,[p.id]:{last_seen_at:p.last_seen_at,online_until:p.online_until}}));setProfiles(prev=>prev.some(row=>row.id===p.id)?prev.map(row=>row.id===p.id?p:row):prev);}
+  });
 
   // Seed the latest chat windows from the already fetched inbox feed. No extra
   // Supabase queries, no bulk media reads, and no changes to call/push handling.
@@ -2212,6 +1205,7 @@ export default function Home() {
       setChatHistoryLoading(false);setHistoryReadyChat(id);
       setHistoryHasMore(true);
     }).catch(()=>{}).finally(()=>{cacheHydrated=true;if(alive)void refresh();});
+    const reconciliation=createReconciler(refresh,{visible:()=>document.visibilityState!=='hidden'});
     const channel = supabase.channel('connect-chat-' + id).on('postgres_changes', {
       event: '*', schema: 'public', table: 'messages', filter: 'conversation_id=eq.' + id,
     }, payload => {
@@ -2238,13 +1232,13 @@ export default function Home() {
         return exists?without.map(x=>x.id===m.id?m:x):[...without,m].sort(compareChatMessages);
       });
       // The viewport scan acknowledges messages only after they are actually shown.
-    }).subscribe(status => { if (status === 'SUBSCRIBED') void refresh(); });
-    const interval = window.setInterval(() => { void refresh(); }, 3000);
-    const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    }).subscribe(status => {reconciliation.setHealthy(status==='SUBSCRIBED');if(status==='SUBSCRIBED')void reconciliation.trigger();});
+    void reconciliation.trigger();
+    const onVisible = () => { if (document.visibilityState === 'visible') void reconciliation.trigger(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       historyGeneration.current++;
-      alive = false; window.clearInterval(interval); document.removeEventListener('visibilitychange', onVisible);
+      alive = false; reconciliation.stop(); document.removeEventListener('visibilitychange', onVisible);
       if (scrollCheckFrame.current !== null) cancelAnimationFrame(scrollCheckFrame.current);
       scrollCheckFrame.current = null;
       void supabase.removeChannel(channel);
@@ -2513,7 +1507,8 @@ export default function Home() {
     if (!items.length) { setForwardIds([]); return; }
     setBusy(true);
     try {
-      let chat = conversations.find(c => (c.user_a === user.id && c.user_b === contact.id) || (c.user_b === user.id && c.user_a === contact.id));
+      const operation=sessionScope.capture();if(operation.userId!==user.id)return;
+    let chat = conversations.find(c => (c.user_a === user.id && c.user_b === contact.id) || (c.user_b === user.id && c.user_a === contact.id));
       if (!chat) {
         const [a,b] = [user.id, contact.id].sort();
         const {data,error} = await supabase.from('conversations').upsert({user_a:a,user_b:b},{onConflict:'user_a,user_b'}).select('id,user_a,user_b,created_at').single();
@@ -2634,6 +1629,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   const activePeerKind=visiblePeerActivity(peerActivity,activeChat,Date.now());
   const peerStatus = activePeerKind?activityText[activePeerKind]||formatPresence(peerPresence,clock):peerRecording?'Записывает голосовое…':typing?'Печатает…':formatPresence(peerPresence,clock);
   const currentPeerState=activeChat?peerStates[activeChat]:undefined;
+  useEffect(()=>{setConversation(selected?.other&&user?{conversationId:selected.id,peerId:selected.other.id,peerName:selected.other.display_name}:null);},[user?.id,selected?.id,selected?.other?.id,selected?.other?.display_name,setConversation]);
   const filteredChats = chats.filter(c => (c.other?.display_name || '').toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
   useEffect(()=>{if(chatSearchOpen&&chatQuery.trim()&&searchMatches.length){const match=searchMatches[Math.min(searchPosition,searchMatches.length-1)];requestAnimationFrame(()=>document.getElementById('msg-'+match.id)?.scrollIntoView({behavior:'smooth',block:'center'}));}},[chatQuery,chatSearchOpen,searchMatches.length]);
   const filteredContacts = contacts.filter(p => p.display_name.toLocaleLowerCase('ru-RU').includes(search.toLocaleLowerCase('ru-RU')));
@@ -2686,7 +1682,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     if (activeChat===id) exitChat();
     setNotice('Переписка скрыта на этом устройстве');
   }
-  function enterChat(id: string) { setPeerActivity(null);setTyping(false);setPeerRecording(false);setFilePickerOpen(false);setVideoNoteRecording(false);setChatDisplayReady(user?.id&&(warmedChatWindows.current.get(user.id+":"+id)||0)>Date.now()?id:null); resetChatTools(); setListActions(null); setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); }
+  function enterChat(id: string) { sessionScope.setChat(id); setPeerActivity(null);setTyping(false);setPeerRecording(false);setFilePickerOpen(false);setVideoNoteRecording(false);setChatDisplayReady(user?.id&&(warmedChatWindows.current.get(user.id+":"+id)||0)>Date.now()?id:null); resetChatTools(); setListActions(null); setActiveChat(id); setTab('chats'); setSearch(''); setReplyTo(null); setEditing(null); setMenuMessage(null); }
   useEffect(() => {
     function openFromAndroid() {
       const chatId=window.__connectAndroidPendingChat;
@@ -2699,7 +1695,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     return ()=>window.removeEventListener('connect:android-open-chat',openFromAndroid);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[conversations,user?.id]);
-  function exitChat() { setFilePickerOpen(false);setVideoNoteRecording(false);setPeerActivity(null);setPeerRecording(false);captureChatAnchor(); flushVisibleRead(); resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setDraft(''); setMenuMessage(null); setTyping(false); }
+  function exitChat() { sessionScope.setChat(null); setFilePickerOpen(false);setVideoNoteRecording(false);setPeerActivity(null);setPeerRecording(false);captureChatAnchor(); flushVisibleRead(); resetChatTools(); setActiveChat(null); setReplyTo(null); setEditing(null); setMenuMessage(null); setTyping(false); }
+  usePushNavigation(user?.id||null,conversations.map(chat=>chat.id),directoryReady,enterChat);
   function switchTab(t: Tab) { setSettingsPage('home'); setFilePickerOpen(false);setStickerPicker(false); setTab(t); setSearch(''); setNotice(''); setProfileView(null); setProfileMediaOpen(null); }
   // Keep one in-memory navigation stack. Swipe restoration must not create new entries.
   useEffect(() => {
@@ -2780,11 +1777,13 @@ const currentName = selected?.other?.display_name || 'Собеседник';
 
   async function openContact(p: Profile) {
     if (!supabase || !user || busy) return;
+    const operation=sessionScope.capture();if(operation.userId!==user.id)return;
     setBusy(true); setNotice('');
     let chat = conversations.find(c => (c.user_a === user.id && c.user_b === p.id) || (c.user_b === user.id && c.user_a === p.id));
     if (!chat) {
       const [a, b] = [user.id, p.id].sort();
       const { data, error } = await supabase.from('conversations').upsert({ user_a: a, user_b: b }, { onConflict: 'user_a,user_b' }).select('id,user_a,user_b,created_at').single();
+      if(!sessionScope.current(operation))return;
       if (error || !data) { setBusy(false); setNotice('Не удалось открыть чат: ' + (error?.message || 'Ошибка')); return; }
       chat = data as Conversation; setConversations(prev => [chat!, ...prev.filter(c => c.id !== chat!.id)]);
     }
@@ -2818,14 +1817,18 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     e.preventDefault();
     if (!supabase || !user || !activeChat || !draft.trim() || busy) return;
     const body=draft.trim(),chat=activeChat,reply=replyTo?.id||null;
+    const operation=sessionScope.capture(chat),ownerOperation=sessionScope.capture();
+    if(operation.userId!==user.id||!sessionScope.current(operation))return;
     setBusy(true);setNotice('');
     if(editing){
       const {error}=await supabase.from('messages').update({body}).eq('id',editing.id).eq('sender_id',user.id);
-      setBusy(false);if(error){setNotice('Не удалось изменить: '+error.message);return;}
+      if(!sessionScope.current(ownerOperation))return;
+      setBusy(false);if(!sessionScope.current(operation))return;
+      if(error){setNotice('Не удалось изменить: '+error.message);return;}
       setMessages(prev=>prev.map(m=>m.id===editing.id?{...m,body,edited_at:new Date().toISOString()}:m));
       cancelCompose();return;
     }
-    const tempId='local-'+crypto.randomUUID(),at=new Date().toISOString();
+    const messageId=crypto.randomUUID(),tempId='local-'+messageId,at=new Date().toISOString();
     optimisticSend.current={id:tempId,chat,body,reply,at};
     const optimistic:Message={id:tempId,conversation_id:chat,sender_id:user.id,body,created_at:at,
       edited_at:null,deleted_at:null,reply_to:reply,attachment_path:null,attachment_name:null,
@@ -2833,24 +1836,35 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     setMessages(prev=>[...prev,optimistic].sort(compareChatMessages));
     setDraft('');setReplyTo(null);lastKeypress.current=0;void updateTyping(chat,false);
     requestAnimationFrame(()=>{const el=scrollRef.current;if(el&&activeChat===chat)el.scrollTop=el.scrollHeight;});
-    const {data,error}=await supabase.from('messages').insert({conversation_id:chat,sender_id:user.id,body,reply_to:reply}).select(MESSAGE_COLUMNS).single();
+    const {data,error,pending}=await deliverMessage(supabase,{id:messageId,conversation_id:chat,sender_id:user.id,body,reply_to:reply});
+    if(!sessionScope.current(ownerOperation))return;
     setBusy(false);
+    if(pending){if(sessionScope.current(operation))setNotice('Сообщение сохранено и ожидает соединения');return;}
     if(error||!data){
       setMessages(prev=>prev.filter(m=>m.id!==tempId));
-      if(activeChat===chat){setDraft(current=>current||body);setReplyTo(current=>current||replyTo);}
-      setNotice('Не удалось отправить: '+(error?.message||'Ошибка'));
+      if(sessionScope.current(operation)){setDraft(current=>current||body);setReplyTo(current=>current||replyTo);}
+      if(sessionScope.current(operation))setNotice('Не удалось отправить: '+(error?.message||'Ошибка'));
       if(optimisticSend.current?.id===tempId)optimisticSend.current=null;
       return;
     }
     const m=data as Message;
     if(optimisticSend.current?.id===tempId)optimisticSend.current=null;
-    setMessages(prev=>{
+    if(sessionScope.current(operation))setMessages(prev=>{
       const without=prev.filter(x=>x.id!==tempId);
       return without.some(x=>x.id===m.id)?without:[...without,m].sort(compareChatMessages);
     });
     setLatest(prev=>({...prev,[chat]:m}));
   }
 
+
+  useEffect(()=>{
+    if(!supabase||!user)return;
+    const ticket=sessionScope.capture();let running=false;
+    const retry=async()=>{if(running||document.visibilityState==='hidden'||!sessionScope.current(ticket))return;running=true;
+      try{await retryMessageOutbox(supabase,user.id,row=>{if(!sessionScope.current(ticket))return;const m=row as Message;setLatest(prev=>({...prev,[m.conversation_id]:m}));if(activeChatRef.current===m.conversation_id)setMessages(prev=>[...prev.filter(x=>x.id!==m.id&&x.id!=='local-'+m.id),m].sort(compareChatMessages));});}catch{}finally{running=false;}};
+    const timer=setInterval(()=>{void retry();},15000);window.addEventListener('online',retry);void retry();
+    return()=>{clearInterval(timer);window.removeEventListener('online',retry);};
+  },[user?.id]);
 
   // CONNECT_PWA_CHAT_MEDIA_ENTRY_V2
   useEffect(() => {
@@ -3087,204 +2101,85 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     if(media.length&&docs.length){setNotice('Выберите отдельно медиа для альбома и документы');return}
     if(files.some(f=>f.size<1||f.size>100*1024*1024)){setNotice('Максимальный размер одного файла — 100 МБ');return}
     if(docs.length){
-      for(const file of docs)await sendAttachment(file);
-      setPendingFiles([]);
+      for(const file of docs){if(!await sendAttachment(file))break;setPendingFiles(prev=>prev.filter(item=>item!==file));}
       return;
     }
-    if(media.length===1){await sendAttachment(media[0]);setPendingFiles([]);return}
+    if(media.length===1){if(await sendAttachment(media[0]))setPendingFiles(prev=>prev.filter(item=>item!==media[0]));return}
     await sendAlbum(media);
   }
-  async function sendAlbum(files:File[]){
-    if(!supabase||!user||!activeChat||busy||files.length<2)return;
-    const client=supabase,uid=user.id,chatId=activeChat;
+  async function sendAlbum(files:File[]){return submitAttachments(files);}
+  async function sendAttachment(file:File,kindOverride?:'audio'){return submitAttachments([file],kindOverride);}
+  async function submitAttachments(files:File[],kindOverride?:'audio'){
+    if(!supabase||!user||!activeChat||busy)return false;
+    if(!files.length||files.some(file=>file.size<1||file.size>100*1024**2)){setNotice('Максимальный размер файла — 100 МБ');return false;}
+    const chat=activeChat,operation=sessionScope.capture(chat),ownerOperation=sessionScope.capture();
+    if(operation.userId!==user.id||!sessionScope.current(operation))return false;
     setBusy(true);setUploadProgress(0);setNotice('');
-    const items:AlbumItem[]=[];
     try{
-      const {data:{session}}=await client.auth.getSession();
-      if(!session)throw Error('Сессия завершена');
-      for(let i=0;i<files.length;i++){
-        let file=files[i];
-        // Reduce supported media BEFORE creating thumbnails, uploading, or recording album MIME.
-        const prepared=await connectOptimizeMedia(file,{native:isNativeMediaRuntime(),onProgress:f=>setUploadProgress(Math.round(((i+f*.35)/files.length)*100))});
-        file=prepared.file;
-        let path=`${chatId}/${uid}/${crypto.randomUUID()}`;
-        let thumb:Blob|null=null,poster:Blob|null=null;
-        if(file.type.startsWith('image/') && file.type!=='image/gif'){
-          const size=await connectImageFileSize(file);
-          if(size&&size.width<100000&&size.height<100000){
-            path+=`__img_${size.width}x${size.height}`;
-            thumb=await makePhotoPreview(file);
-          }
-        } else if(file.type.startsWith('video/')){
-          const info=await connectVideoFilePreview(file);
-          if(info&&info.size.width<100000&&info.size.height<100000){
-            path+=`__vid_${info.size.width}x${info.size.height}`;
-            poster=info.poster;
-          }
-        }
-        if(file.size<=6*1024*1024){
-          const {error}=await client.storage.from('connect-attachments').upload(path,file,{contentType:file.type||'application/octet-stream',upsert:false});
-          if(error)throw error;
-        }else{
-          await new Promise<void>((resolve,reject)=>{
-            const upload=new tus.Upload(file,{
-              endpoint:useSupabaseProxy?window.location.origin+'/supabase-storage/storage/v1/upload/resumable':`${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
-              retryDelays:[0,3000,5000,10000,20000],headers:{authorization:`Bearer ${session.access_token}`,'x-upsert':'false'},
-              uploadDataDuringCreation:true,removeFingerprintOnSuccess:true,
-              metadata:{bucketName:'connect-attachments',objectName:path,contentType:file.type||'application/octet-stream'},chunkSize:6*1024*1024,
-              onError:reject,onSuccess:()=>resolve(),onProgress:(done,total)=>setUploadProgress(Math.round(((i+done/total)/files.length)*100))
-            });upload.start();
-          });
-        }
-        if(thumb)await client.storage.from('connect-attachments').upload(photoPreviewPath(path),thumb,{contentType:'image/webp',upsert:false}).catch(()=>{});
-        if(poster)await client.storage.from('connect-attachments').upload(path+'__poster.jpg',poster,{contentType:'image/jpeg',upsert:false}).catch(()=>{});
-        items.push({path,name:file.name.slice(0,240),kind:file.type.startsWith('video/')?'video':'image'});
-        setUploadProgress(Math.round((i+1)/files.length*100));
+      const result=await deliverAttachments(supabase,user.id,chat,files,replyTo?.id||null,value=>{if(sessionScope.current(operation))setUploadProgress(value);},kindOverride);
+      if(!sessionScope.current(ownerOperation))return true;
+      if(result.data){const m=result.data as Message;setLatest(prev=>({...prev,[chat]:m}));if(sessionScope.current(operation))setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);}
+      if(sessionScope.current(operation)){
+        if(result.pending)setNotice('Вложение сохранено и ожидает соединения');
+        setReplyTo(null);setPendingFiles(prev=>prev.filter(file=>!files.includes(file)));
+        setAttachmentUrls(prev=>({...prev,...result.urls}));
+        requestAnimationFrame(()=>{if(sessionScope.current(operation)&&scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight;});
       }
-      const {data,error}=await client.from('messages').insert({conversation_id:chatId,sender_id:uid,body:ALBUM_PREFIX+JSON.stringify(items)+']]',reply_to:replyTo?.id||null}).select(MESSAGE_COLUMNS).single();
-      if(error||!data)throw error||Error('Не удалось создать альбом');
-      const m=data as Message;
-      setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
-      setLatest(prev=>({...prev,[chatId]:m}));
-      setReplyTo(null);setPendingFiles([]);
-      const urls=await Promise.all(items.map(async x=>({path:x.path,result:await client.storage.from('connect-attachments').createSignedUrl(x.path,3600)})));
-      setAttachmentUrls(prev=>{const next={...prev};urls.forEach(x=>{if(x.result.data?.signedUrl)next[x.path]=mediaUrl(x.result.data.signedUrl)});return next});
-      requestAnimationFrame(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight});
-    }catch(e){setNotice('Не удалось отправить альбом: '+(e instanceof Error?e.message:String(e)))}
-    finally{setBusy(false);setUploadProgress(null)}
-  }
-  async function sendAttachment(file: File, kindOverride?: 'audio') {
-    if (!supabase || !user || !activeChat || busy) return;
-    if (file.size < 1 || file.size > 100*1024*1024) {setNotice('Максимальный размер файла — 100 МБ');return;}
-    const chatId=activeChat;
-    const kind = kindOverride || (file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':'file');
-    let path=`${chatId}/${user.id}/${crypto.randomUUID()}`;
-    setBusy(true);setUploadProgress(0);setNotice('');
-    try {
-      // The same preparation is used for a single file and every item in an album.
-      // It retains the original file when iOS cannot safely encode the audio/video.
-      const prepared=await connectOptimizeMedia(file,{native:isNativeMediaRuntime(),onProgress:f=>setUploadProgress(Math.round(f*35))});
-      file=prepared.file;
-      // Locally recorded PWA audio already exists in memory: build its wave
-      // without downloading the uploaded object again.
-      if(kind==='audio'&&!isNativeMediaRuntime()&&file.size>0&&file.size<=2*1024*1024){
-        const localVoiceUrl=URL.createObjectURL(file);
-        void prewarmChatWave(user.id,path,localVoiceUrl,file.size).finally(()=>URL.revokeObjectURL(localVoiceUrl));
-      }
-      // The dimensions travel with the storage path, so the recipient can reserve
-      // an accurate layout before downloading a newly sent photo.
-      if (kind === 'image' && !/^sticker-\d+\.(?:png|webp|gif|jpe?g)$/i.test(file.name)) {
-        const size = await connectImageFileSize(file);
-        if (size && size.width < 100000 && size.height < 100000)
-          path += `__img_${size.width}x${size.height}`;
-      }
-      // Create a reliable first-frame preview once for each ordinary video.
-      // The dimensions go in its storage path so layout is stable before downloading.
-      let photoPreview: Blob | null = null;
-      if(kind==='image' && supportsPhotoPreview(path))photoPreview=await makePhotoPreview(file);
-      let videoPoster: Blob | null = null;
-      if (kind === 'video') {
-        const preview = await connectVideoFilePreview(file);
-        if (preview && preview.size.width < 100000 && preview.size.height < 100000) {
-          if(!/^connect-video-note-\d+\.(?:mp4|webm)$/i.test(file.name))path += `__vid_${preview.size.width}x${preview.size.height}`;
-          videoPoster = preview.poster;
-        }
-      }
-      const {data:{session}}=await supabase.auth.getSession();
-      if(!session) throw new Error('Сессия завершена. Войдите снова.');
-      if (file.size <= 6*1024*1024) {
-        const {error}=await supabase.storage.from('connect-attachments').upload(path,file,{contentType:file.type || 'application/octet-stream',upsert:false});
-        if(error) throw error;
-      } else {
-        await new Promise<void>((resolve,reject)=>{
-          const upload=new tus.Upload(file,{
-            endpoint:useSupabaseProxy ? window.location.origin + '/supabase-storage/storage/v1/upload/resumable' : `${supabaseUrl.replace('.supabase.co','.storage.supabase.co')}/storage/v1/upload/resumable`,
-            retryDelays:[0,3000,5000,10000,20000],
-            headers:{authorization:`Bearer ${session.access_token}`,'x-upsert':'false'},
-            uploadDataDuringCreation:true,
-            removeFingerprintOnSuccess:true,
-            metadata:{bucketName:'connect-attachments',objectName:path,contentType:file.type || 'application/octet-stream'},
-            chunkSize:6*1024*1024,
-            onError:reject,
-            onSuccess:()=>resolve(),
-            onProgress:(done,total)=>setUploadProgress(Math.round(done/total*100)),
-          });
-          upload.start();
-        });
-      }
-      // Preview uploads are optional and never invalidate the original.
-      if(photoPreview && kind==='image'){
-        await supabase.storage.from('connect-attachments').upload(photoPreviewPath(path),photoPreview,
-          {contentType:'image/webp',upsert:false}).catch(()=>{});
-      }
-      // The still image is optional: upload failures must not block video messages.
-      if (videoPoster && kind === 'video') {
-        await supabase.storage.from('connect-attachments').upload(path + '__poster.jpg', videoPoster,
-          {contentType:'image/jpeg',upsert:false}).catch(() => {});
-      }
-      const {data,error}=await supabase.from('messages').insert({
-        conversation_id:chatId,sender_id:user.id,body:'',reply_to:replyTo?.id || null,
-        attachment_path:path,attachment_name:file.name.slice(0,240),attachment_type:file.type || 'application/octet-stream',
-        attachment_size:file.size,attachment_kind:kind
-      }).select(MESSAGE_COLUMNS).single();
-      if(error || !data) throw error || new Error('Сообщение не создано');
-      const m=data as Message;
-      setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
-      setLatest(prev=>({...prev,[chatId]:m}));
-      setReplyTo(null);
-      const signed=await supabase.storage.from('connect-attachments').createSignedUrl(path,3600);
-      if(signed.data?.signedUrl)setAttachmentUrls(prev=>({...prev,[path]:mediaUrl(signed.data!.signedUrl)}));
-      requestAnimationFrame(()=>{const el=scrollRef.current;if(el)el.scrollTop=el.scrollHeight;});
-    } catch(e) {
-      setNotice('Не удалось отправить вложение: '+(e instanceof Error?e.message:String(e)));
-    } finally {setBusy(false);setUploadProgress(null);}
+      return true;
+    }catch(error){if(sessionScope.current(operation))setNotice('Не удалось отправить вложение: '+(error instanceof Error?error.message:String(error)));return false;}
+    finally{if(sessionScope.current(ownerOperation))setBusy(false);if(sessionScope.current(operation))setUploadProgress(null);}
   }
   async function beginRecording() {
     if(window.ConnectNative){
       if(!activeChat||recording||recordingFinalizing.current)return;
       recordingFinalizing.current=true;
-      const chat=activeChat;
+      const chat=activeChat,operation=sessionScope.capture(activeChat);
       try{
         await window.ConnectNative.request('recordVoice:start');
-        if(activeChatRef.current!==chat){await window.ConnectNative.request('recordVoice:cancel');return;}
+        if(!sessionScope.current(operation)){await window.ConnectNative.request('recordVoice:cancel');return;}
         recordingChat.current=chat;recordingStarted.current=performance.now();setRecording(true);setRecordSeconds(0);
         void updateRecording(activeChat,true);
         recordInterval.current=window.setInterval(()=>{setRecordSeconds(Math.floor((performance.now()-recordingStarted.current)/1000));const chat=recordingChat.current;if(chat)void updateRecording(chat,true);},1000);
-      }catch(e){setNotice(e instanceof Error?e.message:'Не удалось включить микрофон');}
-      finally{recordingFinalizing.current=false;}
+      }catch(e){if(sessionScope.current(operation))setNotice(e instanceof Error?e.message:'Не удалось включить микрофон');}
+      finally{if(sessionScope.current(operation))recordingFinalizing.current=false;}
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder==='undefined') {
       setNotice('Запись звука недоступна в этом браузере');return;
     }
-    if (!activeChat || recordingFinalizing.current) return;
+    if (!activeChat || recording || recordingFinalizing.current) return;
+    recordingFinalizing.current=true;
+    const operation=sessionScope.capture(activeChat);
     let stream:MediaStream|null=null;
     try {
       stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      if(!sessionScope.current(operation)){stream.getTracks().forEach(track=>track.stop());return;}
       // Android WebView records/plays Opus in WebM more reliably than MP4 audio.
       const formats=window.ConnectAndroid
         ? ['audio/webm;codecs=opus','audio/webm','audio/mp4;codecs=mp4a.40.2','audio/mp4']
         : ['audio/mp4;codecs=mp4a.40.2','audio/mp4','audio/webm;codecs=opus','audio/webm'];
       const mime=formats.find(x=>MediaRecorder.isTypeSupported(x));
       const recorder=new MediaRecorder(stream,{...(mime?{mimeType:mime}:{}),...(!isNativeMediaRuntime()?{audioBitsPerSecond:56000}:{})});
-      audioChunks.current=[];recordingStream.current=stream;mediaRecorder.current=recorder;
+      const recordedChunks:Blob[]=[];
+      audioChunks.current=recordedChunks;recordingStream.current=stream;mediaRecorder.current=recorder;
       recordingChat.current=activeChat;recordingStarted.current=performance.now();
       let failed=false;let sendOnStop=true;
-      recorder.ondataavailable=e=>{if(e.data.size>0)audioChunks.current.push(e.data);};
+      recorder.ondataavailable=e=>{if(e.data.size>0)recordedChunks.push(e.data);};
       recorder.onerror=()=>{failed=true;setNotice('Ошибка записи аудио. Попробуйте ещё раз.');};
       recorder.onstop=()=>{
-        const chunks=audioChunks.current;
+        const chunks=recordedChunks;
         const durationMs=performance.now()-recordingStarted.current;
         const chat=recordingChat.current;
         const type=recorder.mimeType || mime || 'audio/webm';
         const blob=new Blob(chunks,{type});
         stream?.getTracks().forEach(track=>track.stop());
+        if(mediaRecorder.current!==recorder)return;
         recordingStream.current=null;mediaRecorder.current=null;recordingChat.current=null;
         recordingFinalizing.current=false;recordingSend.current=null;
         if(recordInterval.current!==null)window.clearInterval(recordInterval.current);
         recordInterval.current=null;setRecording(false);setRecordSeconds(0);
         if(chat)void updateRecording(chat,false);
-        if(!sendOnStop)return;
+        if(!sendOnStop||!sessionScope.current(operation))return;
         if(failed || blob.size<1000 || durationMs<700){
           setNotice('Голосовое не записалось полностью. Попробуйте ещё раз.');return;
         }
@@ -3302,17 +2197,17 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     } catch(e){
       stream?.getTracks().forEach(track=>track.stop());
       recordingFinalizing.current=false;
-      setNotice('Не удалось включить микрофон: '+(e instanceof Error?e.message:String(e)));
-    }
+      if(sessionScope.current(operation))setNotice('Не удалось включить микрофон: '+(e instanceof Error?e.message:String(e)));
+    } finally {if(sessionScope.current(operation))recordingFinalizing.current=false;}
   }
   function finishRecording(send:boolean) {
     if(window.ConnectNative){
       if(recordingFinalizing.current)return;
       recordingFinalizing.current=true;
-      const chat=recordingChat.current;
-      void window.ConnectNative.request('recordVoice:stop',{send}).then((file:File|null)=>{if(file&&chat===activeChatRef.current)void sendAttachment(file,'audio');})
+      const chat=recordingChat.current,operation=sessionScope.capture(recordingChat.current);
+      void window.ConnectNative.request('recordVoice:stop',{send}).then((file:File|null)=>{if(file&&sessionScope.current(operation))void sendAttachment(file,'audio');})
         .catch(e=>setNotice(e instanceof Error?e.message:'Не удалось завершить запись'))
-        .finally(()=>{recordingFinalizing.current=false;recordingChat.current=null;setRecording(false);setRecordSeconds(0);if(recordInterval.current!==null)clearInterval(recordInterval.current);recordInterval.current=null;if(chat)void updateRecording(chat,false);});
+        .finally(()=>{if(!sessionScope.current(operation))return;recordingFinalizing.current=false;recordingChat.current=null;setRecording(false);setRecordSeconds(0);if(recordInterval.current!==null)clearInterval(recordInterval.current);recordInterval.current=null;if(chat)void updateRecording(chat,false);});
       return;
     }
     const recorder=mediaRecorder.current;
@@ -3325,19 +2220,33 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   }
   async function openNativeVideoNote(){
     if(!window.ConnectNative){setVideoNoteOpen(true);return;}
-    const chat=activeChat;
+    const chat=activeChat,operation=sessionScope.capture(activeChat);
     if(chat)void updateActivity(chat,'video');
-    const pulse=setInterval(()=>{if(chat)void updateActivity(chat,'video');},4000);
-    try{const file:File|null=await window.ConnectNative.request('recordVideo:open');if(file&&chat===activeChatRef.current)await sendAttachment(file);}
-    catch(e){setNotice(e instanceof Error?e.message:'Не удалось записать видеокружок');}
-    finally{clearInterval(pulse);if(chat)void updateActivity(chat,null);}
+    const pulse=setInterval(()=>{if(!sessionScope.current(operation)){clearInterval(pulse);return;}if(chat)void updateActivity(chat,'video');},4000);
+    const release=sessionScope.onReset(()=>clearInterval(pulse));
+    try{const file:File|null=await window.ConnectNative.request('recordVideo:open');if(file&&sessionScope.current(operation))await sendAttachment(file);}
+    catch(e){if(sessionScope.current(operation))setNotice(e instanceof Error?e.message:'Не удалось записать видеокружок');}
+    finally{release();clearInterval(pulse);if(chat&&sessionScope.current(operation))void updateActivity(chat,null);}
   }
   useEffect(()=>{
     const stopped=(event:Event)=>{const state=(event as CustomEvent).detail;if(state?.kind!=='voice'||state.recording)return;const chat=recordingChat.current;if(recordInterval.current!==null)clearInterval(recordInterval.current);recordInterval.current=null;setRecording(false);setRecordSeconds(0);if(chat)void updateRecording(chat,false);};
     window.addEventListener('connect:native-recording',stopped);
     return()=>window.removeEventListener('connect:native-recording',stopped);
   },[user?.id]);
-  useEffect(()=>()=>{if(window.ConnectNative&&recordingChat.current){const chat=recordingChat.current;void window.ConnectNative.request('recordVoice:cancel').catch(()=>{});void updateRecording(chat,false);recordingChat.current=null;if(recordInterval.current!==null)clearInterval(recordInterval.current);recordInterval.current=null;setRecording(false);}},[activeChat]);
+  useEffect(()=>{
+    const stop=()=>{
+      if(window.ConnectNative&&recordingChat.current)void window.ConnectNative.request('recordVoice:cancel').catch(()=>{});
+      recordingSend.current?.(false);
+      const recorder=mediaRecorder.current;
+      if(recorder&&recorder.state!=='inactive')try{recorder.stop();}catch{}
+      recordingStream.current?.getTracks().forEach(track=>track.stop());recordingStream.current=null;
+      mediaRecorder.current=null;recordingChat.current=null;recordingFinalizing.current=false;audioChunks.current=[];
+      if(recordInterval.current!==null)clearInterval(recordInterval.current);recordInterval.current=null;
+      setRecording(false);setRecordSeconds(0);
+    };
+    const unsubscribe=sessionScope.onReset(stop);
+    return()=>{unsubscribe();stop();};
+  },[activeChat,user?.id]);
   useEffect(()=>{const error=(event:Event)=>setNotice(String((event as CustomEvent).detail||'Ошибка Android'));window.addEventListener('connect:native-error',error);return()=>window.removeEventListener('connect:native-error',error);},[]);
   useEffect(()=>{
     const root=scrollRef.current;
@@ -3492,8 +2401,10 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     ++authSequence.current;
     verifiedSessionRef.current = false;
     setConnectionStatus('online');
+    verifiedIdentityRef.current=null;
     const accountId=user?.id;
     try{localStorage.setItem(CONNECT_LOCAL_LOGOUT_FLAG,'1');}catch{}
+    setPushSession(null);
     setAuthGate('denied');setUser(null); setLoading(false); setSetup(false);
     setBusy(true);setNotice('');
     exitChat();setProfiles([]);setConversations([]);setMessages([]);
@@ -3504,6 +2415,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     warmedChatWindows.current.clear();signedMediaLifetimes.current.clear();
     let signoutTimeout:ReturnType<typeof setTimeout>|undefined;
     try {
+      if(accountId)await retireCurrentPush(supabase,accountId);
       const {error}=await Promise.race([
         supabase.auth.signOut({ scope: 'local' }),
         new Promise<{error:Error}>((resolve)=>{signoutTimeout=setTimeout(()=>resolve({error:new Error('signout_timeout')}),4500);}),
@@ -3525,7 +2437,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
 
   const keyboardOpen = frame ? window.innerHeight - frame.height - frame.top > 130 : false;
   const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
-  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
+  return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle,...waveStyles(accent), '--accent':accent,'--accent2':accent} as CSSProperties}>
+    <ConnectUiCoordinator root={shellRef} closeChat={closeChatMenu} closeList={closeListMenu}/><ConnectCallBridge/>
     {splashVisible && <ConnectSplashScreen ready={!loading && (!user || directoryReady)} onComplete={finishSplash}/>}
     {user && authGate==='verified' && connectionStatus!=='online' && <div role="status" aria-live="polite"
       style={{position:'fixed',zIndex:1500,top:'calc(env(safe-area-inset-top, 0px) + 10px)',left:'50%',transform:'translateX(-50%)',
@@ -3544,7 +2457,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
           <form className="login-form" onSubmit={setup ? savePassword : login}>
             <h2>{setup ? 'Создать пароль' : 'Вход в Connect'}</h2>
             {setup ? <input className="field" type="password" autoComplete="new-password" minLength={8} required value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Новый пароль (от 8 символов)"/>
-              : <><input className="field" type="email" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="Электронная почта"/><input className="field" type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль"/></>}
+              : <><input className="field" type="email" aria-label="Электронная почта" autoComplete="email" required value={email} onChange={e => setEmail(e.target.value)} placeholder="Электронная почта"/><input className="field" type="password" aria-label="Пароль" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} placeholder="Пароль"/></>}
             <button className="primary-action" disabled={busy} type="submit">{busy ? 'Подключение…' : setup ? 'Сохранить пароль' : 'Войти'}</button>
             <p className="login-hint">Вход доступен только участникам с учётной записью.</p>
           </form>
@@ -3582,6 +2495,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                 <Avatar name={currentName} id={selected.other?.id} url={selected.other ? avatarUrls[selected.other.id] : undefined}/>
                 <span className="chat-header-person"><strong>{currentName}</strong><small className={typing || peerRecording || peerActivity ? 'typing-label' : ''}>{peerStatus}</small></span>
               </button>
+              <ConnectCallButton peerName={currentName} disabled={!selected.other} target={selected.other?{conversationId:selected.id,peerId:selected.other.id,peerName:currentName}:undefined}/>
               <button type="button" className="icon-btn chat-clear-btn" aria-label="Меню чата" onClick={()=>setChatActions(v=>!v)}><Icon name="dots" size={23}/></button>
               {chatActions&&<div className="chat-actions-menu"><button type="button" onClick={()=>{setChatSearchOpen(true);setChatActions(false);}}>Найти в чате</button><button type="button" onClick={()=>startSelection()}>Выбрать сообщения</button><button type="button" className="destructive" onClick={()=>{setChatActions(false);clearConversation(activeChat);}}>Удалить переписку</button></div>}
             </header>
@@ -3674,7 +2588,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
               <div className="compose-line"><button type="button" className="composer-extra" onClick={()=>{setFilePickerOpen(false);setStickerPicker(x=>!x);}} aria-label="Стикеры"><Icon name="smile" size={24}/></button><button className="composer-extra" type="button" disabled={busy || recording || Boolean(editing)} onClick={()=>{setStickerPicker(false);filePickerOpenedAt.current=Date.now();setFilePickerOpen(true);if(activeChat)void updateActivity(activeChat,'file');attachmentInput.current?.click();}} aria-label="Прикрепить фото, видео или файл"><Icon name="plus" size={23}/></button><input ref={inputRef} type="text" autoComplete="off" enterKeyHint="send" aria-label="Сообщение" maxLength={10000} value={draft} onChange={e => changeDraft(e.target.value)} onPaste={handleComposerPaste} placeholder={editing ? 'Изменить сообщение…' : 'Сообщение…'}/><button className="send-button" type="submit" disabled={busy || !draft.trim()} aria-label={editing ? 'Сохранить' : 'Отправить'}><Icon name={editing ? 'check' : 'send'} size={23}/></button>{!draft.trim() && !editing && !recording && <button className="composer-extra" type="button" disabled={busy} onClick={()=>void openNativeVideoNote()} aria-label="Записать видеокружок"><Icon name="camera" size={22}/></button>}{!draft.trim() && !editing && <button className="composer-extra" type="button" disabled={busy} onClick={()=>recording?finishRecording(true):void beginRecording()} aria-label="Записать голосовое"><Icon name={recording?'stop':'mic'} size={22}/></button>}</div>
             </form>
           </div>
-            : <><div className="main-view">
+            : <><div className="main-view" ref={mainSlot}>
               {tab === 'chats' && <>
                 <header className="home-header"><div className="home-brand"><img src="/icon-192.png" alt=""/><h1>Connect</h1></div><button type="button" className="icon-btn new-chat" aria-label="Начать новый чат" onClick={() => switchTab('contacts')}><Icon name="write" size={24}/></button></header>
                 <div className="section-heading"><h2>Чаты</h2>{unreadTotal > 0 && <span className="heading-count">{unreadTotal > 99 ? '99+' : unreadTotal}</span>}</div>
@@ -3703,7 +2617,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                 <div className="scroll-content settings-content">
                   {settingsPage==='home' && <>
                     <button type="button" className="settings-profile" onClick={()=>showProfile(user.id)}><Avatar size="lg" name={ownProfile?.display_name||'Мой профиль'} id={user.id} url={avatarUrls[user.id]}/><div><strong>{ownProfile?.display_name||'Мой профиль'}</strong><span>{ownProfile?.bio||user.email}</span></div><Icon name="chevron" size={19}/></button>
-                    <div className="settings-group settings-menu">
+                    <div ref={settingsSlot} className="settings-group settings-menu">
                       {([{id:'appearance',icon:'sun',title:'Оформление',subtitle:'Тема, цвет и фон чатов'},{id:'stickers',icon:'message',title:'Стикеры',subtitle:'Наборы и избранное'},...(admin?[{id:'members' as SettingsPage,icon:'contacts' as IconName,title:'Управление участниками',subtitle:'Приглашения в Connect'},{id:'usage' as SettingsPage,icon:'file' as IconName,title:'Хранилище и трафик',subtitle:'Статистика Supabase'}]:[]),{id:'notifications',icon:'info',title:'Уведомления',subtitle:'Звуки и push-уведомления'},{id:'data',icon:'file',title:'Данные и хранилище',subtitle:'Экспорт и очистка'},{id:'privacy',icon:'shield',title:'Приватность',subtitle:'Безопасность переписок'},{id:'about',icon:'info',title:'О приложении',subtitle:'Версия и разработчики'}] as {id:SettingsPage;icon:IconName;title:string;subtitle:string}[]).map((item,i,items)=><div key={item.id} className={settingsMenuSegmentClasses(items,i)}>{i>0&&<div className="setting-divider"/>}<button type="button" className="settings-menu-row" onClick={()=>setSettingsPage(item.id)}><span className="setting-icon"><Icon name={item.icon} size={19}/></span><span><strong>{item.title}</strong><small>{item.subtitle}</small></span><Icon name="chevron" size={19}/></button></div>)}
                     </div><button type="button" className="logout-button" onClick={()=>void logout()}><Icon name="logout" size={20}/> Выйти из аккаунта</button>
                   </>}
@@ -3781,7 +2695,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
                   {settingsPage==='about' && <div className="settings-group data-settings"><strong>Connect Messenger</strong><p>Версия 3.0</p><p><strong>Разработчики: Алина и Кирилл</strong></p><p className="settings-hint">Мессенджер для личного общения.</p></div>}
                 </div>
               </>}
-            </div><nav className="bottom-nav" aria-label="Основная навигация">
+            </div><nav ref={navSlot} className="bottom-nav" aria-label="Основная навигация">
               {([{ id: 'chats' as const, label: 'Чаты', icon: 'chats' as const }, { id: 'contacts' as const, label: 'Контакты', icon: 'contacts' as const }, { id: 'settings' as const, label: 'Настройки', icon: 'settings' as const }]).map(item => <button type="button" key={item.id} className={'nav-tab' + (tab === item.id ? ' selected' : '')} onClick={() => switchTab(item.id)}><span className="nav-symbol"><Icon name={item.icon} size={24}/>{item.id === 'chats' && unreadTotal > 0 && <em className="connect-nav-count" aria-hidden="true">{unreadTotal > 99 ? '99+' : unreadTotal}</em>}</span><small>{item.label}</small></button>)}
             </nav></>}
     {authGate==='verified' && user && crop && <AvatarCropper url={crop.url} saving={busy} onCancel={closeCrop} onSave={blob=>void uploadAvatar(new File([blob],'avatar.jpg',{type:'image/jpeg'}))}/>}

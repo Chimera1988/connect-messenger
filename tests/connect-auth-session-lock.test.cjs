@@ -3,7 +3,7 @@ const root=path.resolve(__dirname,'..');
 const read=(p)=>fs.readFileSync(path.join(root,p),'utf8');
 
 test('cached session cannot unlock Connect without server-side verification',()=>{
- const page=read('app/page.tsx');
+ const page=require('./helpers/app-source.cjs')();
  assert.match(page,/CONNECT_PWA_AUTH_FAIL_CLOSED_20261117/);
  assert.match(page,/fetch\('\/api\/auth\/verify'/);
  assert.match(page,/response\.status === 401 \|\| response\.status === 403/);
@@ -15,7 +15,7 @@ test('cached session cannot unlock Connect without server-side verification',()=
 });
 
 test('local logout locks the private UI even when Supabase says session missing',()=>{
- const page=read('app/page.tsx');
+ const page=require('./helpers/app-source.cjs')();
  const logout=page.split('  async function logout() {')[1].split('\n  const keyboardOpen')[0];
  assert.match(logout,/setAuthGate\('denied'\);setUser\(null\)/);
  assert.match(logout,/error\.name!=='AuthSessionMissingError'/);
@@ -44,7 +44,7 @@ test('server-side database function checks Supabase auth.sessions and is not pub
 });
 
 test('modals outside the main screen cannot show media, message actions or contacts without verified auth',()=>{
- const page=read('app/page.tsx');
+ const page=require('./helpers/app-source.cjs')();
  for(const exposed of ['crop && <AvatarCropper','forwardIds.length>0&&<div','videoNoteOpen && <VideoNoteRecorder','mediaViewer && <ConnectGalleryViewer','menuMessage && <div']){
   assert(page.includes("authGate==='verified' && user && "+exposed),exposed);
  }

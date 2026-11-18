@@ -3,7 +3,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict'),fs=requir
 const root=path.resolve(__dirname,'..');
 const read=p=>fs.readFileSync(path.join(root,p),'utf8');
 test('admin-only page is linked in PWA settings and not in Android',()=>{
- const source=read('app/page.tsx');
+ const source=require('./helpers/app-source.cjs')();
  assert.match(source,/type SettingsPage = [^\n]*'usage'/);
  assert.match(source,/id:'usage' as SettingsPage/);
  assert.match(source,/settingsPage==='usage' && admin && <ConnectAdminUsage/);

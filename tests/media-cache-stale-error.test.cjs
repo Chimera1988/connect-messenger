@@ -1,3 +1,4 @@
+const {waitForPage}=require('./helpers/wait-for-page.cjs');
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -30,7 +31,7 @@ test('delayed image error must not evict verified media blob', {timeout:45000}, 
       document.getElementById('fixtures').appendChild(img);
       await img.decode();
     });
-    await page.waitForFunction(async()=> (await cache.cacheStats()).system>0,null,{timeout:12000});
+    await waitForPage(page,async()=> (await cache.cacheStats()).system>0,null,{timeout:12000});
     await page.evaluate(async()=>{
       const src=await cache.resolveCachedMedia('/storage/v1/object/sign/connect-avatars/a.png?token=fresh');
       if(!src.startsWith('blob:')) throw Error('Expected indexed cached avatar before error simulation');

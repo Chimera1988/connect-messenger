@@ -1,30 +1,24 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { getApps, initializeApp, cert } from 'firebase-admin/app';
+import { cert,getApps,initializeApp } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
+import { NextRequest,NextResponse } from 'next/server';
+import { authenticatedUser,fail,requireRateLimit } from '../../../../lib/server/admin';
 
 export const runtime = 'nodejs';
 
 /** Notifies the signed-in user's own Android devices that a chat has been read. */
 export async function POST(req: NextRequest) {
-  const url=process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publicKey=process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-  const serviceKey=process.env.SUPABASE_SERVICE_ROLE_KEY;
+  let context;
+  try { context=await authenticatedUser(req); } catch(error) { return fail(error); }
+  const {client:db,user}=context;
   const credentials=process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (!url || !publicKey || !serviceKey || !credentials)
-    return NextResponse.json({error:'Not configured'},{status:503});
-  const token=req.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
-  if (!token) return NextResponse.json({error:'Unauthorized'},{status:401});
-  const auth=createClient(url,publicKey,{auth:{persistSession:false,autoRefreshToken:false}});
-  const {data:{user}}=await auth.auth.getUser(token);
-  if (!user) return NextResponse.json({error:'Unauthorized'},{status:401});
+  if(!credentials)return NextResponse.json({error:'Not configured'},{status:503});
+  try { await requireRateLimit(db,user.id,'read-push',240); } catch(error) { return fail(error); }
   const body=await req.json().catch(()=>null);
   const conversationId=body?.conversationId;
   const readAt=body?.readAt;
   if (typeof conversationId!=='string' || !/^[0-9a-f-]{36}$/i.test(conversationId)
     || typeof readAt!=='string' || !Number.isFinite(Date.parse(readAt)))
     return NextResponse.json({error:'Invalid payload'},{status:400});
-  const db=createClient(url,serviceKey,{auth:{persistSession:false,autoRefreshToken:false}});
   const [{data:conversation},{data:state}] = await Promise.all([
     db.from('conversations').select('user_a,user_b').eq('id',conversationId).maybeSingle(),
     db.from('conversation_user_state').select('last_read_at').eq('conversation_id',conversationId)
@@ -33,7 +27,7 @@ export async function POST(req: NextRequest) {
   if (!conversation || ![conversation.user_a,conversation.user_b].includes(user.id) ||
       !state?.last_read_at || Date.parse(state.last_read_at) < Date.parse(readAt))
     return NextResponse.json({ignored:true});
-  const {data:devices}=await db.from('push_devices').select('id,endpoint').eq('user_id',user.id).eq('platform','android');
+  const {data:devices}=await db.rpc('connect_push_targets',{p_user_ids:[user.id]}).eq('platform','android');
   if (!devices?.length)return NextResponse.json({ok:true,sent:0});
   if (!getApps().length) initializeApp({credential:cert(JSON.parse(credentials))});
   let sent=0;

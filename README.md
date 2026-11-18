@@ -9,3 +9,9 @@
 - Рисунок и хитбокс воздушных препятствий используют одну высоту, поэтому враги больше не «прилипают» к земле логически.
 
 Требуется тест на реальном iPhone после установки; полная сборка Next.js не запускалась.
+
+## Архитектура и проверки
+
+Описание границ модулей: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Порядок безопасного применения схемы: [docs/BACKEND.md](docs/BACKEND.md). Самостоятельный workflow: [docs/INSTALL_WORKFLOW.md](docs/INSTALL_WORKFLOW.md). Отчёт: [reports/ARCHITECTURE_REMEDIATION.md](reports/ARCHITECTURE_REMEDIATION.md).
+
+Node 22, зависимости по `package-lock.json`. `npm test` автоматически обнаруживает regression и integration тесты; `npm run test:e2e` обнаруживает отдельные сквозные тесты собранной PWA. Перед браузерными проверками: `npx --no-install playwright-core install --with-deps chromium`. CI также проверяет архитектурные циклы, TypeScript, Deno и production build.
