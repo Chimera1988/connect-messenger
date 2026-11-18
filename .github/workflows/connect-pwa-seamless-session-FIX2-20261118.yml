@@ -1,0 +1,402 @@
+name: Connect PWA | Seamless session and secure logout FIX2 2026-11-18
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: connect-pwa-seamless-session-main
+  cancel-in-progress: false
+jobs:
+  verify-and-apply:
+    name: Test, patch, regressions, build, commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+    - name: Checkout the current PWA main
+      uses: actions/checkout@v4
+      with:
+        ref: main
+        fetch-depth: 1
+    - name: Guard repository, main branch and source files
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+        test "$GITHUB_REF" = 'refs/heads/main'
+        test -s app/page.tsx
+        test -s package.json
+        test -s package-lock.json
+        test -s tests/pwa-logout-regression.test.cjs
+        test -z "$(git status --porcelain)"
+    - name: Set up Node.js 22 with npm cache
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: npm
+    - name: Install dependencies from the lockfile
+      shell: bash
+      run: |
+        npm ci --no-audit --no-fund
+    - name: Create targeted executable regression tests
+      shell: bash
+      run: |
+        set -euo pipefail
+        cat > tests/pwa-seamless-session.test.cjs <<'CONNECT_SEAMLESS_TEST'
+        'use strict';
+        const {test}=require('node:test');
+        const assert=require('node:assert/strict');
+        const fs=require('node:fs');
+        const path=require('node:path');
+        const ts=require('typescript');
+        const source=fs.readFileSync(path.join(__dirname,'../app/page.tsx'),'utf8');
+        const begin=source.indexOf('  const verifyAuth = useCallback(async () => {');
+        const end=source.indexOf('\n\n  useEffect(() => {\n    if(!supabase)',begin);
+        assert(begin>=0&&end>begin,'SOURCE_DRIFT: auth function moved');
+        const compiled=ts.transpileModule(source.slice(begin,end)+'\nreturn verifyAuth;',{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS}});
+
+        function scenario({verified=false,status=200,networkFailure=false,sessionMissing=false,serverMismatch=false,online=true}={}) {
+          const events=[];
+          const verifiedSessionRef={current:verified};
+          const session={access_token:'safe-unit-test-token',user:{id:'demo-user'}};
+          const deps={
+            useCallback:fn=>fn,
+            supabase:{auth:{getSession:async()=>({data:{session:sessionMissing?null:session},error:null})}},
+            verifiedSessionRef,
+            authSequence:{current:0},
+            locallyLoggedOut:()=>false,
+            loginInProgress:{current:false},
+            clearStoredConnectAuth:()=>events.push(['purge']),
+            denyPrivateAccess:()=>{verifiedSessionRef.current=false;events.push(['deny'])},
+            setAuthGate:v=>events.push(['gate',v]),
+            setLoading:v=>events.push(['loading',v]),
+            setUser:v=>events.push(['user',v]),
+            setConnectionStatus:v=>events.push(['status',v]),
+            navigator:{onLine:online},
+            setSetup:v=>events.push(['setup',v]),
+            invited:false,
+            passwordRecoveryPending:{current:false},
+            window:{__connectPrepareSession:async()=>{}},
+            fetch:async()=>{
+              if(networkFailure)throw new TypeError('Failed to fetch');
+              return {status,ok:status>=200&&status<300,json:async()=>({ok:!serverMismatch,userId:serverMismatch?'somebody-else':session.user.id})};
+            },
+          };
+          const verifyAuth=Function(...Object.keys(deps),compiled.outputText)(...Object.values(deps));
+          return {events,verifiedSessionRef,verifyAuth};
+        }
+        const has=(h,k,v)=>h.events.some(([key,value])=>key===k&&(argumentsUnused(v)||value===v));
+        function argumentsUnused(value){return value===undefined;}
+
+        test('a periodic recheck keeps the verified chat visible and mounted',async()=>{
+          const h=scenario({verified:true});
+          await h.verifyAuth();
+          assert.equal(has(h,'gate','checking'),false);
+          assert.equal(has(h,'loading',true),false);
+          assert.equal(has(h,'gate','offline'),false);
+          assert.equal(h.verifiedSessionRef.current,true);
+          assert.equal(has(h,'status','online'),true);
+        });
+
+        test('cold boot remains closed until successful live server verification',async()=>{
+          const h=scenario();
+          const pending=h.verifyAuth();
+          assert.equal(has(h,'gate','checking'),true);
+          assert.equal(has(h,'loading',true),true);
+          await pending;
+          assert.equal(h.verifiedSessionRef.current,true);
+          assert.equal(has(h,'gate','verified'),true);
+        });
+
+        test('a temporary network failure preserves already verified chat in memory',async()=>{
+          const h=scenario({verified:true,networkFailure:true});
+          await h.verifyAuth();
+          assert.equal(h.verifiedSessionRef.current,true);
+          assert.equal(has(h,'gate','checking'),false);
+          assert.equal(has(h,'gate','offline'),false);
+          assert.equal(has(h,'user',null),false);
+          assert.equal(has(h,'status','reconnecting'),true);
+        });
+
+        test('HTTP 503 is transient for an existing verified session',async()=>{
+          const h=scenario({verified:true,status:503});
+          await h.verifyAuth();
+          assert.equal(h.verifiedSessionRef.current,true);
+          assert.equal(has(h,'gate','offline'),false);
+          assert.equal(has(h,'status','reconnecting'),true);
+        });
+
+        test('cold boot with no network does not expose private data',async()=>{
+          const h=scenario({online:false});
+          await h.verifyAuth();
+          assert.equal(has(h,'gate','offline'),true);
+          assert.equal(has(h,'user',null),true);
+          assert.equal(h.verifiedSessionRef.current,false);
+        });
+
+        test('already verified session going offline preserves chat and reports status',async()=>{
+          const h=scenario({verified:true,online:false});
+          await h.verifyAuth();
+          assert.equal(has(h,'gate','offline'),false);
+          assert.equal(has(h,'user',null),false);
+          assert.equal(has(h,'status','offline'),true);
+        });
+
+        test('confirmed 401 and 403 revoke authorization immediately',async()=>{
+          for(const status of [401,403]){
+            const h=scenario({verified:true,status});
+            await h.verifyAuth();
+            assert.equal(has(h,'purge'),true);
+            assert.equal(has(h,'deny'),true);
+            assert.equal(h.verifiedSessionRef.current,false);
+          }
+        });
+
+        test('confirmed missing session and server identity mismatch remain fail closed',async()=>{
+          for(const opts of [{sessionMissing:true},{serverMismatch:true}]){
+            const h=scenario({verified:true,...opts});
+            await h.verifyAuth();
+            assert.equal(has(h,'purge'),true);
+            assert.equal(has(h,'deny'),true);
+          }
+        });
+
+        test('network, logout and signed-out handlers preserve correct security boundaries',()=>{
+          assert.match(source,/const onOffline=\(\)=>\{\s*\+\+authSequence\.current;\s*if\(verifiedSessionRef\.current\)/);
+          assert.match(source,/const denyPrivateAccess = useCallback\(\(\) => \{\s*verifiedSessionRef\.current = false;/);
+          assert.match(source,/async function logout\(\) \{[\s\S]*?\+\+authSequence\.current;\s*verifiedSessionRef\.current = false;/);
+          assert.match(source,/event==='SIGNED_OUT'\|\|!session/);
+          assert.match(source,/connectionStatus!=='online'/);
+          assert.match(source,/const timer=window\.setInterval\(onReturn,60000\)/);
+        });
+        CONNECT_SEAMLESS_TEST
+    - name: Reproduce the old periodic reload before applying the patch
+      shell: bash
+      run: |
+        set -euo pipefail
+        if grep -q 'CONNECT_PWA_SEAMLESS_SESSION_20261118' app/page.tsx; then
+          echo 'Already patched; will validate the installed implementation.'
+          exit 0
+        fi
+        set +e
+        node --test tests/pwa-seamless-session.test.cjs > "$RUNNER_TEMP/connect-auth-before.log" 2>&1
+        exit_status=$?
+        set -e
+        if [ "$exit_status" -eq 0 ]; then
+          echo 'SOURCE_DRIFT: baseline unexpectedly passed; refusing blind patch.'
+          exit 1
+        fi
+        if ! grep -Eq 'not ok [0-9]+ - a periodic recheck keeps the verified chat visible and mounted' "$RUNNER_TEMP/connect-auth-before.log"; then
+          cat "$RUNNER_TEMP/connect-auth-before.log"
+          echo 'Baseline regression was not reproduced; stopping.'
+          exit 1
+        fi
+        echo 'Reproduced old behavior: periodic auth recheck showed loading UI.'
+    - name: Apply guarded, idempotent source changes
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 - <<'CONNECT_SEAMLESS_PATCH'
+        from pathlib import Path
+        import json
+
+        page=Path('app/page.tsx')
+        pkg=Path('package.json')
+        original=page.read_text(encoding='utf-8')
+        marker='CONNECT_PWA_SEAMLESS_SESSION_20261118'
+
+        def replace_one(src,old,new):
+            count=src.count(old)
+            if count!=1:
+                raise SystemExit(f'SOURCE_DRIFT: expected 1 match, found {count}: {old[:105]!r}')
+            return src.replace(old,new,1)
+
+        if marker in original:
+            required=[
+              'const verifiedSessionRef = useRef(false);',
+              "const [connectionStatus,setConnectionStatus] = useState<'online'|'offline'|'reconnecting'>('online');",
+              'verifiedSessionRef.current = true;',
+              "if(verifiedSessionRef.current) { setConnectionStatus('offline'); return; }",
+              "connectionStatus!=='online'",
+            ]
+            if not all(p in original for p in required):
+                raise SystemExit('SOURCE_DRIFT: seamless marker exists but its content is incomplete')
+            fixed=original
+            print('Already applied: seamless session patch')
+        else:
+            fixed=original
+            fixed=replace_one(fixed,
+              "  const [authGate, setAuthGate] = useState<'checking'|'verified'|'denied'|'offline'>('checking');",
+              "  const [authGate, setAuthGate] = useState<'checking'|'verified'|'denied'|'offline'>('checking');\n"
+              "  // CONNECT_PWA_SEAMLESS_SESSION_20261118: only a server-verified in-memory session can remain visible.\n"
+              "  const verifiedSessionRef = useRef(false);\n"
+              "  const [connectionStatus,setConnectionStatus] = useState<'online'|'offline'|'reconnecting'>('online');")
+            fixed=replace_one(fixed,
+              "  const denyPrivateAccess = useCallback(() => {\n    setUser(null);",
+              "  const denyPrivateAccess = useCallback(() => {\n"
+              "    verifiedSessionRef.current = false;\n"
+              "    setConnectionStatus('online');\n"
+              "    setUser(null);")
+            fixed=replace_one(fixed,
+              "    setAuthGate('checking'); setLoading(true);\n    let timer:ReturnType<typeof setTimeout> | undefined;",
+              "    // Recheck a running chat silently; never use startup loading for periodic auth.\n"
+              "    if (!verifiedSessionRef.current) { setAuthGate('checking'); setLoading(true); }\n"
+              "    // The network state is only a hint; a fresh boot still requires server verification.\n"
+              "    if (navigator.onLine === false) {\n"
+              "      if (verifiedSessionRef.current) setConnectionStatus('offline');\n"
+              "      else { setUser(null); setAuthGate('offline'); setLoading(false); }\n"
+              "      return;\n"
+              "    }\n"
+              "    let timer:ReturnType<typeof setTimeout> | undefined;\n"
+              "    let serverUnavailable = false;")
+            fixed=replace_one(fixed,
+              "      const response = await fetch('/api/auth/verify', {\n"
+              "        method:'GET',credentials:'same-origin',cache:'no-store',\n"
+              "        headers:{Authorization:`Bearer ${session.access_token}`},signal:controller.signal,\n"
+              "      });",
+              "      const response = await fetch('/api/auth/verify', {\n"
+              "        method:'GET',credentials:'same-origin',cache:'no-store',\n"
+              "        headers:{Authorization:`Bearer ${session.access_token}`},signal:controller.signal,\n"
+              "      }).catch((error:unknown)=>{serverUnavailable=true;throw error;});")
+            fixed=replace_one(fixed,
+              "      if (!response.ok) throw new Error('SESSION_SERVER_UNAVAILABLE');\n"
+              "      const result = await response.json();\n"
+              "      if (!result?.ok || result.userId !== session.user.id) throw new Error('SESSION_NOT_CONFIRMED');",
+              "      if (!response.ok) {\n"
+              "        serverUnavailable = response.status===429 || response.status>=500;\n"
+              "        throw new Error('SESSION_SERVER_UNAVAILABLE');\n"
+              "      }\n"
+              "      const result = await response.json();\n"
+              "      if (!result?.ok || result.userId !== session.user.id) {\n"
+              "        clearStoredConnectAuth(); denyPrivateAccess();\n"
+              "        void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});\n"
+              "        return;\n"
+              "      }")
+            fixed=replace_one(fixed,
+              "      setUser(session.user); setAuthGate('verified'); setLoading(false);",
+              "      verifiedSessionRef.current = true;\n"
+              "      setConnectionStatus('online');\n"
+              "      setUser(session.user); setAuthGate('verified'); setLoading(false);")
+            fixed=replace_one(fixed,
+              "    } catch {\n      if (sequence === authSequence.current) {\n"
+              "        // Network/verification failure: lock the UI without destroying a valid refresh token.\n"
+              "        setUser(null); setAuthGate('offline'); setLoading(false);\n"
+              "      }\n    } finally {if(timer)clearTimeout(timer);controller?.abort();}",
+              "    } catch (error) {\n"
+              "      if (sequence === authSequence.current) {\n"
+              "        // Only genuine transport/timeout failures may keep a previously verified UI mounted.\n"
+              "        const transient = serverUnavailable || (error instanceof Error && (\n"
+              "          error.message==='SESSION_CHECK_TIMEOUT' || error.name==='AbortError' ||\n"
+              "          error.name==='AuthRetryableFetchError'\n"
+              "        ));\n"
+              "        if (verifiedSessionRef.current && transient) {\n"
+              "          setConnectionStatus(navigator.onLine===false?'offline':'reconnecting');\n"
+              "        } else {\n"
+              "          verifiedSessionRef.current = false;\n"
+              "          setUser(null); setAuthGate('offline'); setLoading(false);\n"
+              "        }\n"
+              "      }\n    } finally {if(timer)clearTimeout(timer);controller?.abort();}")
+            fixed=replace_one(fixed,
+              "    const onOffline=()=>{\n      ++authSequence.current;\n      setUser(null);setAuthGate('offline');setLoading(false);\n    };",
+              "    const onOffline=()=>{\n"
+              "      ++authSequence.current;\n"
+              "      if(verifiedSessionRef.current) { setConnectionStatus('offline'); return; }\n"
+              "      setUser(null);setAuthGate('offline');setLoading(false);\n"
+              "    };")
+            fixed=replace_one(fixed,
+              "    const onReturn=()=>{if(document.visibilityState==='visible')void verifyAuth();};",
+              "    const onReturn=()=>{\n"
+              "      if(document.visibilityState!=='visible')return;\n"
+              "      if(navigator.onLine!==false) setConnectionStatus(s=>s==='offline'?'reconnecting':s);\n"
+              "      void verifyAuth();\n"
+              "    };")
+            fixed=replace_one(fixed,
+              "    // A missing remote session is NOT a reason to leave the private UI unlocked.\n    ++authSequence.current;",
+              "    // A missing remote session is NOT a reason to leave the private UI unlocked.\n"
+              "    ++authSequence.current;\n"
+              "    verifiedSessionRef.current = false;\n"
+              "    setConnectionStatus('online');")
+            fixed=replace_one(fixed,
+              "    {supabase && user && authGate==='verified' && !setup && <ConnectPushGuardian supabase={supabase} userId={user.id}/>}",
+              "    {user && authGate==='verified' && connectionStatus!=='online' && <div role=\"status\" aria-live=\"polite\"\n"
+              "      style={{position:'fixed',zIndex:1500,top:'calc(env(safe-area-inset-top, 0px) + 10px)',left:'50%',transform:'translateX(-50%)',\n"
+              "        background:'rgba(22,27,34,.9)',color:'#fff',border:'1px solid rgba(255,255,255,.16)',borderRadius:20,\n"
+              "        padding:'5px 12px',fontSize:12,lineHeight:1.4,whiteSpace:'nowrap',pointerEvents:'none',boxShadow:'0 3px 14px rgba(0,0,0,.17)'}}>\n"
+              "      {connectionStatus==='offline'?'Нет соединения':'Восстанавливаем соединение…'}</div>}\n"
+              "    {supabase && user && authGate==='verified' && !setup && <ConnectPushGuardian supabase={supabase} userId={user.id}/>}")
+            print('Patched periodic auth revalidation, transient offline UI, confirmation-based revocation')
+
+        # Legacy logout regression test compiles logout() in isolation.
+        # Provide the new auth flag and network-status setter in the fixture, and
+        # assert revocation of verified state on explicit logout.
+        legacy=Path('tests/pwa-logout-regression.test.cjs')
+        legacy_source=legacy.read_text(encoding='utf-8')
+        legacy_source=replace_one(legacy_source,
+            '  const events=[];\n  const deps={',
+            '  const events=[];\n  const verifiedSessionRef={current:true};\n  const deps={')
+        legacy_source=replace_one(legacy_source,
+            '    authSequence:{current:0},',
+            '    authSequence:{current:0},\n    verifiedSessionRef,\n    setConnectionStatus:()=>{},')
+        legacy_source=replace_one(legacy_source,
+            '  return {events,logout};',
+            '  return {events,logout,verifiedSessionRef};')
+        legacy_source=replace_one(legacy_source,
+            '  const {events,logout}=makeLogout({error:null});',
+            '  const {events,logout,verifiedSessionRef}=makeLogout({error:null});')
+        legacy_source=replace_one(legacy_source,
+            "  const attempt=logout();\n  assert(events.some(e=>e[0]==='gate'&&e[1]==='denied'));",
+            "  const attempt=logout();\n  assert.equal(verifiedSessionRef.current,false,'verified session must be revoked on logout');\n  assert(events.some(e=>e[0]==='gate'&&e[1]==='denied'));")
+        legacy_source=replace_one(legacy_source,
+            r'assert.match(source,/const denyPrivateAccess = useCallback\(\(\) => \{\s*setUser\(null\)/);',
+            r"assert.match(source,/const denyPrivateAccess = useCallback\(\(\) => \{\s*verifiedSessionRef\.current = false;\s*setConnectionStatus\('online'\);\s*setUser\(null\)/);")
+
+        pkg_source=pkg.read_text(encoding='utf-8')
+        old='node tests/pwa-logout-regression.test.cjs &&'
+        new='node tests/pwa-logout-regression.test.cjs && node tests/pwa-seamless-session.test.cjs &&'
+        if new not in pkg_source:
+            pkg_source=replace_one(pkg_source,old,new)
+            assert new in json.loads(pkg_source)['scripts']['test']
+        pkg.write_text(pkg_source,encoding='utf-8')
+        page.write_text(fixed,encoding='utf-8')
+        legacy.write_text(legacy_source,encoding='utf-8')
+        CONNECT_SEAMLESS_PATCH
+    - name: Verify targeted auth, logout and offline cases
+      shell: bash
+      run: |
+        set -euo pipefail
+        git diff --check
+        node --test tests/pwa-seamless-session.test.cjs tests/pwa-logout-regression.test.cjs
+    - name: Typecheck project
+      shell: bash
+      run: |
+        npm run typecheck
+    - name: Install locked Chromium browser
+      shell: bash
+      run: |
+        npx playwright-core install --with-deps chromium
+    - name: Verify Chromium executable
+      shell: bash
+      run: |
+        node -e "const fs=require('fs');const p=require('playwright-core').chromium.executablePath();if(!fs.existsSync(p))process.exit(1)"
+    - name: Run complete PWA regression suite
+      shell: bash
+      run: |
+        npm test
+    - name: Build the production PWA
+      shell: bash
+      run: |
+        npm run build
+    - name: Commit only tested changes to main
+      shell: bash
+      run: |
+        set -euo pipefail
+        git diff --check
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git add app/page.tsx package.json tests/pwa-seamless-session.test.cjs tests/pwa-logout-regression.test.cjs
+        if git diff --cached --quiet; then
+          echo 'No differences: the fix is already present.'
+          exit 0
+        fi
+        git commit -m 'fix(pwa): keep authenticated chat mounted during revalidation and network loss'
+        git push origin HEAD:main
+        echo 'SUCCESS: verified seamless-session patch committed to main.'
