@@ -6,9 +6,12 @@ function makeLogout(result){
   const end=source.indexOf('\n  const keyboardOpen',begin);
   assert(begin>=0&&end>begin,'Logout body missing or moved');
   const events=[];
+  const verifiedSessionRef={current:true};
   const deps={
     supabase:{auth:{signOut:async opts=>{events.push(['signOut',opts]);return result;}}},
     authSequence:{current:0},
+    verifiedSessionRef,
+    setConnectionStatus:()=>{},
     CONNECT_LOCAL_LOGOUT_FLAG:'connect-local-logout-v1',
     localStorage:{setItem:(k,v)=>events.push(['storage',k,v])},
     user:{id:'00000000-0000-0000-0000-000000000001'},
@@ -25,11 +28,12 @@ function makeLogout(result){
   };
   const body=ts.transpileModule(source.slice(begin,end)+'\nreturn logout;',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
   const logout=Function(...Object.keys(deps),body)(...Object.values(deps));
-  return {events,logout};
+  return {events,logout,verifiedSessionRef};
 }
 test('sign-out immediately locks the UI before the asynchronous network request',async()=>{
-  const {events,logout}=makeLogout({error:null});
+  const {events,logout,verifiedSessionRef}=makeLogout({error:null});
   const attempt=logout();
+  assert.equal(verifiedSessionRef.current,false,'verified session must be revoked on logout');
   assert(events.some(e=>e[0]==='gate'&&e[1]==='denied'));
   assert(events.some(e=>e[0]==='user'&&e[1]===null));
   assert(events.some(e=>e[0]==='storage'&&e[2]==='1'));
@@ -62,5 +66,5 @@ test('SIGNED_OUT auth event locks the UI before the native session bridge',()=>{
   const body=source.slice(start,end);
   assert.match(body,/event==='SIGNED_OUT'/);
   assert.match(body,/denyPrivateAccess\(\)/);
-  assert.match(source,/const denyPrivateAccess = useCallback\(\(\) => \{\s*setUser\(null\)/);
+  assert.match(source,/const denyPrivateAccess = useCallback\(\(\) => \{\s*verifiedSessionRef\.current = false;\s*setConnectionStatus\('online'\);\s*setUser\(null\)/);
 });

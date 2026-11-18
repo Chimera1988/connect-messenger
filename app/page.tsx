@@ -1117,6 +1117,9 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   // CONNECT_PWA_AUTH_FAIL_CLOSED_20261117: stored session alone is never authorization.
   const [authGate, setAuthGate] = useState<'checking'|'verified'|'denied'|'offline'>('checking');
+  // CONNECT_PWA_SEAMLESS_SESSION_20261118: only a server-verified in-memory session can remain visible.
+  const verifiedSessionRef = useRef(false);
+  const [connectionStatus,setConnectionStatus] = useState<'online'|'offline'|'reconnecting'>('online');
   const authSequence = useRef(0);
   const passwordRecoveryPending = useRef(false);
   const loginInProgress = useRef(false);
@@ -1472,6 +1475,8 @@ export default function Home() {
   useEffect(() => { setDirectoryReady(false); }, [user?.id]);
 
   const denyPrivateAccess = useCallback(() => {
+    verifiedSessionRef.current = false;
+    setConnectionStatus('online');
     setUser(null);setSetup(false);setAuthGate('denied');setLoading(false);
     setActiveChat(null);setProfileView(null);setMessages([]);
     setConversations([]);setProfiles([]);setAvatarUrls({});
@@ -1490,8 +1495,16 @@ export default function Home() {
       denyPrivateAccess();
       return;
     }
-    setAuthGate('checking'); setLoading(true);
+    // Recheck a running chat silently; never use startup loading for periodic auth.
+    if (!verifiedSessionRef.current) { setAuthGate('checking'); setLoading(true); }
+    // The network state is only a hint; a fresh boot still requires server verification.
+    if (navigator.onLine === false) {
+      if (verifiedSessionRef.current) setConnectionStatus('offline');
+      else { setUser(null); setAuthGate('offline'); setLoading(false); }
+      return;
+    }
     let timer:ReturnType<typeof setTimeout> | undefined;
+    let serverUnavailable = false;
     let controller:AbortController | undefined;
     try {
       const {data,error} = await Promise.race([
@@ -1516,7 +1529,7 @@ export default function Home() {
       const response = await fetch('/api/auth/verify', {
         method:'GET',credentials:'same-origin',cache:'no-store',
         headers:{Authorization:`Bearer ${session.access_token}`},signal:controller.signal,
-      });
+      }).catch((error:unknown)=>{serverUnavailable=true;throw error;});
       if (sequence !== authSequence.current) return;
       if (response.status === 401 || response.status === 403) {
         clearStoredConnectAuth();
@@ -1524,19 +1537,37 @@ export default function Home() {
         void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
         return;
       }
-      if (!response.ok) throw new Error('SESSION_SERVER_UNAVAILABLE');
+      if (!response.ok) {
+        serverUnavailable = response.status===429 || response.status>=500;
+        throw new Error('SESSION_SERVER_UNAVAILABLE');
+      }
       const result = await response.json();
-      if (!result?.ok || result.userId !== session.user.id) throw new Error('SESSION_NOT_CONFIRMED');
+      if (!result?.ok || result.userId !== session.user.id) {
+        clearStoredConnectAuth(); denyPrivateAccess();
+        void Promise.resolve().then(()=>window.__connectPrepareSession?.(null)).catch(()=>{});
+        return;
+      }
       if (sequence !== authSequence.current) return;
       await window.__connectPrepareSession?.(session);
       if (sequence !== authSequence.current) return;
+      verifiedSessionRef.current = true;
+      setConnectionStatus('online');
       setUser(session.user); setAuthGate('verified'); setLoading(false);
       if (invited || passwordRecoveryPending.current) setSetup(true);
       passwordRecoveryPending.current=false;
-    } catch {
+    } catch (error) {
       if (sequence === authSequence.current) {
-        // Network/verification failure: lock the UI without destroying a valid refresh token.
-        setUser(null); setAuthGate('offline'); setLoading(false);
+        // Only genuine transport/timeout failures may keep a previously verified UI mounted.
+        const transient = serverUnavailable || (error instanceof Error && (
+          error.message==='SESSION_CHECK_TIMEOUT' || error.name==='AbortError' ||
+          error.name==='AuthRetryableFetchError'
+        ));
+        if (verifiedSessionRef.current && transient) {
+          setConnectionStatus('reconnecting');
+        } else {
+          verifiedSessionRef.current = false;
+          setUser(null); setAuthGate('offline'); setLoading(false);
+        }
       }
     } finally {if(timer)clearTimeout(timer);controller?.abort();}
   },[invited,denyPrivateAccess]);
@@ -1560,9 +1591,14 @@ export default function Home() {
     void verifyAuth();
     const onOffline=()=>{
       ++authSequence.current;
+      if(verifiedSessionRef.current) { setConnectionStatus('offline'); return; }
       setUser(null);setAuthGate('offline');setLoading(false);
     };
-    const onReturn=()=>{if(document.visibilityState==='visible')void verifyAuth();};
+    const onReturn=()=>{
+      if(document.visibilityState!=='visible')return;
+      if(navigator.onLine!==false) setConnectionStatus(s=>s==='offline'?'reconnecting':s);
+      void verifyAuth();
+    };
     window.addEventListener('offline',onOffline);
     window.addEventListener('online',onReturn);
     window.addEventListener('focus',onReturn);
@@ -3454,6 +3490,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     if (!supabase) return;
     // A missing remote session is NOT a reason to leave the private UI unlocked.
     ++authSequence.current;
+    verifiedSessionRef.current = false;
+    setConnectionStatus('online');
     const accountId=user?.id;
     try{localStorage.setItem(CONNECT_LOCAL_LOGOUT_FLAG,'1');}catch{}
     setAuthGate('denied');setUser(null); setLoading(false); setSetup(false);
@@ -3489,6 +3527,11 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   const screenStyle: CSSProperties | undefined = frame ? { height: `${frame.height}px`, top: `${frame.top}px`, paddingBottom: keyboardOpen ? '0px' : undefined } : undefined;
   return <div className={'connect-app ' + theme + (keyboardOpen ? ' keyboard-open' : '')} data-visual-scene={visualScene} ref={shellRef} style={{...screenStyle, '--accent':accent,'--accent2':accent} as CSSProperties}>
     {splashVisible && <ConnectSplashScreen ready={!loading && (!user || directoryReady)} onComplete={finishSplash}/>}
+    {user && authGate==='verified' && connectionStatus!=='online' && <div role="status" aria-live="polite"
+      style={{position:'fixed',zIndex:1500,top:'calc(env(safe-area-inset-top, 0px) + 10px)',left:'50%',transform:'translateX(-50%)',
+        background:'rgba(22,27,34,.9)',color:'#fff',border:'1px solid rgba(255,255,255,.16)',borderRadius:20,
+        padding:'5px 12px',fontSize:12,lineHeight:1.4,whiteSpace:'nowrap',pointerEvents:'none',boxShadow:'0 3px 14px rgba(0,0,0,.17)'}}>
+      {connectionStatus==='offline'?'Нет соединения':'Восстанавливаем соединение…'}</div>}
     {supabase && user && authGate==='verified' && !setup && <ConnectPushGuardian supabase={supabase} userId={user.id}/>}
     {!supabase ? <div className="connection-error"><Icon name="info" size={32}/><h2>Подключение не настроено</h2><p>Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY в Vercel.</p></div>
       : loading || authGate==='checking' ? <div className="loading-screen"><img src="/icon-192.png" alt=""/><p>Подключаем Connect…</p></div>
