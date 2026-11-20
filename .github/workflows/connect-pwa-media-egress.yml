@@ -1,0 +1,1654 @@
+# Standalone, main-only installer. Audited main: e1ee094860111e1fa5be8397bb63352535b61577.
+# All repairs are inline and touch existing tracked files only. No server writes or release publication.
+# Upload this file to .github/workflows/connect-pwa-media-egress.yml, then run it manually on main.
+name: Connect PWA media egress
+run-name: Install verified PWA media cache on main
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: connect-media-egress-main
+  cancel-in-progress: false
+env:
+  CI: 'true'
+  NEXT_TELEMETRY_DISABLED: '1'
+  CONNECT_MEDIA_STATES: '{"app/page.tsx":{"before":"697c3643cd3ab4811af063bd5288b14202eaf57949b3f01266ae87f22759f0b6","after":"48a72c408c414fc8a396ea34db17002c05859bb330af8ea43d3fedc968518d49"},"components/ConnectMusicSystem.tsx":{"before":"c90f5c31f0b738befb1af57da69a9c3644088da12a7f8ee370af376907c014fe","after":"83343a5aab0e0d12b21efea35d06b5edc220649b0d9247c243026f3caf08d06b"},"components/ConnectProfileMedia.tsx":{"before":"b78b0eecd46b8365fda2d1f4fb78690a9ea614ddd3fb1bbc9b81e51546c28a59","after":"63918ea3b978c2f3908d8e16087f3733cd395e6b5696c318b6afcb898f56a701"},"lib/media-cache.ts":{"before":"9ebc475464118fd66d8956c63a1522fe5f55427c9812b2752fb7e9ade29be8e5","after":"b63ca4298861b584e0a7ba912dcf9771ae02e1361da73459eb24265478102646"},"lib/profile-media-index.ts":{"before":"7ece96f933c56b1d2e772f0a93bced4a68986424a6bebc719a0471ee7219acc5","after":"2caf9a6eb4750ce4bfc23ae346dde9e7789e7ddc88804227c4d56e73fe8ca7ee"},"public/sw.js":{"before":"29fd0b96c9498bc8f0d11ecfb215720f559e5ac79213a939fc618eb928ebe470","after":"2d16ed58087f36d6b8743c932672bd86889088bf436d72ea78c8921215299832"},"tests/cache-browser.test.cjs":{"before":"79578fdb42ef6d1586fa3c5d1d7259ce90c2745c5095a6e615adb02567b5ec20","after":"39eef7c89e9c731059a4c95321212ddebb440abfa3fd5aed0dfd8c2815321bd9"},"tests/media-cache-stale-error.test.cjs":{"before":"3c3fb84929d698183da0423154ab8ce1821d0f5ef1c2929125ae6e80ccd3b235","after":"bd0ac62f6e0dbc7afb387c511f914217f6b2262b526f85587422e81fcc89342e"},"tests/media-recovery.test.cjs":{"before":"eff3dfd64e2cf11c0f224e210b0285bdf3c2920faac4aa23fb8e29962677b42e","after":"e6c262dde261f94585619ce36d35e987efcddf2d5c3cf759458a518cdd6a6876"},"tests/pwa-logout-regression.test.cjs":{"before":"2009eb7b833ecf7fbc2de7e368836dfd4a8de40e72c7206711d96d75a78ac7f5","after":"8a5ed6bb841b50ade624340cecd8968cf37438afa6c9ec97d70270e67b86b71a"},"tests/pwa-media-egress.test.cjs":{"before":"33aef8ae5e7f4ff324021225e226e19e5d11127483e30bfe080b6c1d4e17bb6f","after":"12d00059a19a99beccbaf6aae0b24facee0fdce843f1db6f2ed69f9502d8f2b7"}}'
+  CONNECT_MEDIA_GUARDS: '{"package.json":"c86f6d97463e6febd24ba7cf333113204e2c65e6bb313841e3eb17f094c77d55","package-lock.json":"91b296987445eb4a398d9428a90168976cc0c68f61c5ed9ac551580c0ab4bd87","tsconfig.json":"a66dcac7cbd5252085cc0401391e56afd2578ec0f212b4d800ab03e168cfbce3","AGENTS.md":"3d5762a4deab2592088eb6c4d682333d2af034cec85084a2ade23a5a3d5daab5","next.config.mjs":"f9740507883e8bc5525e390b9c50457d4e086c5a4800ec943171e08f2c0d8733","app/layout.tsx":"a2a73404dc52c83c8dbd13b87b8b6cb0e23142a483e0c7840fa2e0b950a660a3","lib/secure-vault.ts":"45266bf7cd5111e083bd96e284ebd25dfda36356074339f3376a5e97edaad5ad","lib/chat-history-cache.ts":"a992592e1ea3808938bd05218d8f31a52f0239518bf1606614a6afe78037668e","lib/chat-media-presentation.ts":"adb52d93d24df9dd21b8e4fb7b0513be4d16a180ce5737ffb86ec8572e5d87c0"}'
+  CONNECT_MEDIA_PATCH_000: |2
+    diff --git a/app/page.tsx b/app/page.tsx
+    index bcb19fc..0bab18d 100644
+    --- a/app/page.tsx
+    +++ b/app/page.tsx
+    @@ -5,11 +5,12 @@
+     // CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
+     // CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
+ 
+    +import {createSignedMediaCache, isCachedMediaUrl, cacheMediaUrl} from '../lib/media-cache';
+     import RecordingBar from '../components/ConnectRecordingBar';
+     import CacheSettings from '../components/ConnectCacheSettings';
+     import { settingsMenuSegmentClasses } from '../lib/settings-menu-groups';
+     import ConnectAdminUsage from '../components/ConnectAdminUsage';
+    -import {mediaIdentity, mediaCacheOwner, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia, storeGeneratedChatPoster} from '../lib/media-cache';
+    +import {mediaIdentity, mediaCacheOwner, mediaCacheEpoch, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia, storeGeneratedChatPoster} from '../lib/media-cache';
+     import {readChatWave, rememberChatWave, prewarmChatWave, getHotChatPoster, rememberChatPoster, forgetUserChatPresentation, isNativeMediaRuntime} from '../lib/chat-media-presentation';
+     import { prefetchCachedMedia, prefetchChatAudio, prefetchStickerWebp } from '../lib/media-cache'; // CONNECT_PWA_CHAT_SPEED_STICKER_VOICE_V1_20261115
+     import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
+    @@ -51,21 +52,7 @@ const supabaseFetch: typeof fetch = (input, init) => {
+     // Signed media URLs are used directly by <img>, <audio>, <video> and fetch().
+     // The SDK custom fetch cannot intercept those browser requests, so route them
+     // through the same-origin Vercel proxy on the DuckDNS domain as well.
+    -function mediaUrl(url: string): string {
+    -  if (!useSupabaseProxy || !url) return url;
+    -  try {
+    -    const parsed = new URL(url);
+    -    const base = new URL(supabaseUrl);
+    -    const storageHost = base.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
+    -    if (parsed.hostname === base.hostname) {
+    -      return window.location.origin + '/supabase' + parsed.pathname + parsed.search + parsed.hash;
+    -    }
+    -    if (parsed.hostname === storageHost) {
+    -      return window.location.origin + '/supabase-storage' + parsed.pathname + parsed.search + parsed.hash;
+    -    }
+    -  } catch { /* Preserve unexpected URLs without breaking rendering. */ }
+    -  return url;
+    -}
+    +function mediaUrl(url:string):string{return cacheMediaUrl(url);}
+ 
+     const CONNECT_LOCAL_LOGOUT_FLAG='connect-local-logout-v1';
+     function locallyLoggedOut():boolean {try{return localStorage.getItem(CONNECT_LOCAL_LOGOUT_FLAG)==='1';}catch{return false;}}
+    @@ -87,15 +74,27 @@ const supabase = supabaseUrl && supabaseKey
+         })
+       : null;
+ 
+    -// Signed storage links expire independently of authentication. Renew only the
+    -// failing object through the existing session, never make a private bucket public.
+    -async function refreshMediaUrl(source: string): Promise<string | undefined> {
+    -  const identity = mediaIdentity(source);
+    -  if (!supabase || !identity) return;
+    -  const slash = identity.indexOf('/'), bucket = identity.slice(0, slash);
+    -  if (slash < 1 || !['connect-avatars', 'connect-attachments', 'connect-stickers', 'connect-profile-media'].includes(bucket)) return;
+    -  const {data} = await supabase.storage.from(bucket).createSignedUrl(identity.slice(slash + 1), 3600);
+    -  return data?.signedUrl ? mediaUrl(data.signedUrl) : undefined;
+    +// Signatures share the same account/session lease as durable media bytes.
+    +const signedMediaLinks=createSignedMediaCache({
+    +  lease:viewer=>viewer===mediaCacheOwner()?mediaCacheEpoch():null,
+    +  cached:async(viewer,bucket,path)=>{
+    +    const identity='/storage/v1/object/sign/'+bucket+'/'+path;
+    +    const local=await resolveCachedMedia(identity,viewer);
+    +    return isCachedMediaUrl(local)?local:null;
+    +  },
+    +  sign:async(_viewer,bucket,path)=>{
+    +    if(!supabase)return;
+    +    const {data,error}=await supabase.storage.from(bucket).createSignedUrl(path,3600);
+    +    return !error&&data?.signedUrl?mediaUrl(data.signedUrl):undefined;
+    +  },
+    +});
+    +function resolveAttachmentMedia(path:string,viewer:string){return signedMediaLinks.resolve(viewer,'connect-attachments',path);}
+    +async function refreshMediaUrl(source:string,force=false):Promise<string|undefined>{
+    +  const identity=mediaIdentity(source),viewer=mediaCacheOwner();
+    +  if(!supabase||!identity||!viewer)return;
+    +  const slash=identity.indexOf('/'),bucket=identity.slice(0,slash);
+    +  if(slash<1||!['connect-avatars','connect-attachments','connect-stickers','connect-profile-media'].includes(bucket))return;
+    +  return signedMediaLinks.resolve(viewer,bucket,identity.slice(slash+1),force);
+     }
+ 
+     type AlbumItem = {path:string;name:string;kind:'image'|'video'};
+    @@ -270,7 +269,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
+         if(waveOwner&&path){
+           const identity='/storage/v1/object/sign/connect-attachments/'+path;
+           void resolveCachedMedia(identity,waveOwner).then(local=>{
+    -        if(current&&local.startsWith('blob:')&&(!audioRef.current||(audioRef.current.paused&&audioRef.current.currentTime===0)))setPlaySrc(local);
+    +        if(current&&isCachedMediaUrl(local)&&(!audioRef.current||(audioRef.current.paused&&audioRef.current.currentTime===0)))setPlaySrc(local);
+           }).catch(()=>{});
+         }
+         return()=>{current=false;};
+    @@ -299,12 +298,12 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
+           try{
+             // Shares the existing bounded media-cache job with the audio prefetch;
+             // no second full-object GET if it was already being cached.
+    -        if(byteSize<=1024*1024)await prefetchChatAudio(src,waveOwner,byteSize);
+    +        // Full voice bytes are captured on playback, never for an offscreen waveform.
+             if(disposed)return;
+             const identity='/storage/v1/object/sign/connect-attachments/'+path;
+             const local=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
+             if(disposed)return;
+    -        await prewarmChatWave(waveOwner,path,local.startsWith('blob:')?local:src,byteSize);
+    +        if(isCachedMediaUrl(local))await prewarmChatWave(waveOwner,path,local,byteSize);
+             if(!disposed)syncWave();
+           }catch{/* Waveform is optional; playback must remain available. */}
+         };
+    @@ -331,7 +330,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
+           let current=playSrc||src||'';
+           if(!current){
+             const cached=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
+    -        current=cached.startsWith('blob:')?cached:(await refreshMediaUrl(identity)||'');
+    +        current=isCachedMediaUrl(cached)?cached:(await refreshMediaUrl(identity)||'');
+             if(!current)throw new Error('Voice message URL is not ready');
+             audio.src=current;setPlaySrc(current);
+           }
+    @@ -340,7 +339,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
+             await audio.play();
+           } catch(firstError) {
+             if(!navigator.onLine||audio.error?.code===3||audio.error?.code===4)throw firstError;
+    -        const renewed=await refreshMediaUrl(identity);
+    +        const renewed=await refreshMediaUrl(identity,true);
+             if(!renewed||renewed===current)throw firstError;
+             audio.src=renewed;setPlaySrc(renewed);audio.load();
+             await audio.play();
+    @@ -655,10 +654,9 @@ async function cachedChatPoster(path:string):Promise<string|null>{
+       if(!supabase||!path)return null;
+       if(isNativeMediaRuntime()){
+         const viewer=mediaCacheOwner(),identity='/storage/v1/object/sign/connect-attachments/'+path+'__poster.jpg';
+    -    if(viewer){const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);if(local.startsWith('blob:'))return local;}
+    -    const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600);
+    -    if(error||!data?.signedUrl)return null;
+    -    const signed=mediaUrl(data.signedUrl);
+    +    if(viewer){const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);if(isCachedMediaUrl(local))return local;}
+    +    const signed=await resolveAttachmentMedia(path+'__poster.jpg',viewer);
+    +    if(!signed)return null;
+         if(viewer)void prefetchCachedMedia(signed,viewer);
+         return signed;
+       }
+    @@ -668,16 +666,15 @@ async function cachedChatPoster(path:string):Promise<string|null>{
+       const identity='/storage/v1/object/sign/connect-attachments/'+path+'__poster.jpg';
+       if(viewer){
+         const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
+    -    if(local.startsWith('blob:')){rememberChatPoster(viewer,path,local);return local;}
+    +    if(isCachedMediaUrl(local)){rememberChatPoster(viewer,path,local);return local;}
+       }
+    -  const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600);
+    -  if(error||!data?.signedUrl)return null;
+    -  const signed=mediaUrl(data.signedUrl);
+    +  const signed=await resolveAttachmentMedia(path+'__poster.jpg',viewer);
+    +  if(!signed)return null;
+       if(viewer){
+         await prefetchCachedMedia(signed,viewer);
+         const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
+    -    if(local.startsWith('blob:')){rememberChatPoster(viewer,path,local);return local;}
+    -    rememberChatPoster(viewer,path,signed);
+    +    if(isCachedMediaUrl(local)){rememberChatPoster(viewer,path,local);return local;}
+    +    // Network fallbacks keep the signing coordinator's original expiry.
+       }
+       return signed;
+     }
+    @@ -1152,7 +1149,6 @@ export default function Home() {
+         const timer=window.setTimeout(()=>setChatDisplayReady(activeChat),1400);
+         return()=>window.clearTimeout(timer);
+       },[activeChat,user?.id]);
+    -  const signedMediaLifetimes=useRef(new Map<string,number>());
+       const warmedChatWindows=useRef(new Map<string,number>());
+       const [historyHasMore,setHistoryHasMore]=useState(false);
+       const [historyLoadingMore,setHistoryLoadingMore]=useState(false);
+    @@ -1217,7 +1213,7 @@ export default function Home() {
+       const [pendingFiles,setPendingFiles]=useState<File[]>([]);
+       const [videoNoteOpen,setVideoNoteOpen]=useState(false);
+       const [recording, setRecording] = useState(false);
+    -  useEffect(()=>{if(!user?.id)return;return installMediaCache(user.id, refreshMediaUrl);},[user?.id]);
+    +  useEffect(()=>{if(!user?.id)return;const release=installMediaCache(user.id, source=>refreshMediaUrl(source,true));return()=>{signedMediaLinks.clear(user.id);release();};},[user?.id]);
+       // CONNECT_PROFILE_MEDIA_INSTANT_CACHE_V3_20261111
+       // Prefetch only library metadata after login, without bulk downloading media.
+       useEffect(()=>{
+    @@ -1675,7 +1671,7 @@ export default function Home() {
+             try {
+               const local=await resolveCachedMedia(identity,viewer);
+               if(epoch!==stickerCatalogEpoch.current)return;
+    -          if(local.startsWith('blob:')){
+    +          if(isCachedMediaUrl(local)){
+                 setCustomStickerUrls(prev=>prev[st.id]===local?prev:{...prev,[st.id]:local});
+                 continue;
+               }
+    @@ -1862,15 +1858,14 @@ export default function Home() {
+           void Promise.all(candidates.map(async x=>{
+             const identity='/storage/v1/object/sign/connect-avatars/'+x.avatar_path!;
+             const local=await resolveCachedMedia(identity,owner).catch(()=>identity);
+    -        return {id:x.id,path:x.avatar_path!,local:local.startsWith('blob:')?local:''};
+    +        return {id:x.id,path:x.avatar_path!,local:isCachedMediaUrl(local)?local:''};
+           })).then(items=>{
+             if(avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+             setAvatarUrls(Object.fromEntries(items.filter(x=>x.local).map(x=>[x.id,x.local])));
+             // Signed URLs are short-lived; paths in IndexedDB are stable.
+             void Promise.all(items.filter(x=>!x.local).map(async x=>{
+    -          const {data}=await supabase.storage.from('connect-avatars').createSignedUrl(x.path,3600);
+    -          if(!data?.signedUrl||avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+    -          const url=mediaUrl(data.signedUrl);
+    +          const url=await signedMediaLinks.resolve(owner,'connect-avatars',x.path);
+    +          if(!url||avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
+               setAvatarUrls(prev=>({...prev,[x.id]:url}));
+               void prefetchCachedMedia(url,owner);
+             })).catch(()=>{});
+    @@ -2074,8 +2069,7 @@ export default function Home() {
+         return()=>window.clearTimeout(timer);
+       },[user?.id,conversations,latest]);
+ 
+    -  // Give nearby chats a head start: a few lightweight thumbnails plus at
+    -  // most three bounded photos are signed and cached before the next tap.
+    +  // Give nearby chats a head start: only lightweight thumbnails, never originals.
+       useEffect(()=>{
+         if(!supabase||!user?.id||!conversations.length)return;
+         const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+    @@ -2085,23 +2079,22 @@ export default function Home() {
+           const hotChats=new Set([...conversations].sort((a,b)=>(latest[b.id]?.created_at||b.created_at).localeCompare(latest[a.id]?.created_at||a.created_at)).slice(0,3).map(c=>c.id));
+           const rows=recentMessagesRef.current.filter(m=>hotChats.has(m.conversation_id)&&!m.deleted_at&&!serverDeleted.current.has(m.id)).sort(compareChatMessages).slice(-50).reverse();
+           const candidates=rows.flatMap(m=>[
+    -        ...(m.attachment_kind==='image'&&m.attachment_path&&supportsPhotoPreview(m.attachment_path)?[{path:photoPreviewPath(m.attachment_path),original:false}]:[]),
+    -        ...parseAlbum(m.body).filter(x=>x.kind==='image'&&supportsPhotoPreview(x.path)).map(x=>({path:photoPreviewPath(x.path),original:false})),
+    -        ...(connection?.effectiveType!=='3g'&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2?[{path:m.attachment_path,original:true}]:[])
+    +        ...(m.attachment_kind==='image'&&m.attachment_path&&supportsPhotoPreview(m.attachment_path)?[{path:photoPreviewPath(m.attachment_path)}]:[]),
+    +        ...parseAlbum(m.body).filter(x=>x.kind==='image'&&supportsPhotoPreview(x.path)).map(x=>({path:photoPreviewPath(x.path)})),
+           ]);
+    -      let thumbs=0,originals=0;
+    +      let thumbs=0;
+           for(const candidate of candidates){
+             if(activePreviewUser.current!==owner)return;
+    -        if(candidate.original?originals>=3:thumbs>=10)continue;
+    +        if(thumbs>=10)break;
+             const key=owner+':'+candidate.path,until=inboxMediaWarm.current.get(key)||0;
+             if(until>Date.now())continue;
+             inboxMediaWarm.current.set(key,Date.now()+60000);
+    -        if(candidate.original)originals++;else thumbs++;
+    +        thumbs++;
+             try{
+               const identity='/storage/v1/object/sign/connect-attachments/'+candidate.path;
+               if((await resolveCachedMedia(identity,owner)).startsWith('blob:'))continue;
+    -          const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(candidate.path,3600);
+    -          if(!error&&data?.signedUrl)await prefetchCachedMedia(mediaUrl(data.signedUrl),owner,candidate.original);
+    +          const signed=await resolveAttachmentMedia(candidate.path,owner);
+    +          if(signed&&activePreviewUser.current===owner)await prefetchCachedMedia(signed,owner);
+             }catch{/* Preloading never blocks chat navigation. */}
+           }
+         })();},900);
+    @@ -2856,33 +2849,26 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+       useEffect(() => {
+         if(!supabase||!user)return;
+         let cancelled=false;
+    -    const client=supabase,viewer=user.id;
+    -    // Android also needs progressive, bounded signing for large audio-heavy chats.
+    +    const client=supabase,viewer=user.id,epoch=mediaCacheEpoch();
+  CONNECT_MEDIA_PATCH_001: |2
+    +    const current=()=>!cancelled&&mediaCacheOwner()===viewer&&mediaCacheEpoch()===epoch;
+    +    // Reconsider existing entries on chat entry; the resolver owns their real TTL.
+         if(isNativeMediaRuntime()){
+    -      const selected=messages.filter(m=>!m.deleted_at&&(!activeChat||m.conversation_id===activeChat));
+    +      if(!activeChat)return;
+    +      const selected=messages.filter(m=>!m.deleted_at&&m.conversation_id===activeChat);
+           const paths=Array.from(new Set([...selected].reverse().flatMap(m=>[...(m.attachment_path?[m.attachment_path]:[]),...parseAlbum(m.body).map(x=>x.path)])));
+    -      const missing=paths.filter(path=>!attachmentUrls[path]);
+    -      let cursor=0, audioWarm=0;
+    +      let cursor=0,audioWarm=0;
+           const worker=async()=>{
+    -        while(!cancelled&&cursor<missing.length){
+    -          const path=missing[cursor++];
+    -          const meta=selected.find(m=>m.attachment_path===path);
+    -          const identity='/storage/v1/object/sign/connect-attachments/'+path;
+    -          try {
+    -            const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
+    -            let url=local.startsWith('blob:')?local:'';
+    -            if(!url){
+    -              const {data}=await client.storage.from('connect-attachments').createSignedUrl(path,3600);
+    -              url=data?.signedUrl?mediaUrl(data.signedUrl):'';
+    -            }
+    -            if(!url||cancelled)continue;
+    -            setAttachmentUrls(prev=>prev[path]?prev:{...prev,[path]:url});
+    -            if(meta?.attachment_kind==='audio'&&meta.attachment_size&&meta.attachment_size<=1024*1024&&audioWarm++<2)
+    -              void prefetchChatAudio(url,viewer,meta.attachment_size);
+    +        while(current()&&cursor<paths.length){
+    +          const path=paths[cursor++],meta=selected.find(m=>m.attachment_path===path);
+    +          try{
+    +            const url=await resolveAttachmentMedia(path,viewer);
+    +            if(!url||!current())continue;
+    +            setAttachmentUrls(prev=>!current()||prev[path]===url?prev:{...prev,[path]:url});
+    +            // No audio original is downloaded on chat entry.
+               }catch{/* One failed attachment must not block the rest. */}
+             }
+           };
+    -      void Promise.all(Array.from({length:Math.min(4,missing.length)},()=>worker())).catch(()=>{});
+    +      void Promise.all(Array.from({length:Math.min(4,paths.length)},()=>worker())).catch(()=>{});
+           return()=>{cancelled=true;};
+         }
+         if(!activeChat||historyReadyChat!==activeChat)return;
+    @@ -2897,38 +2883,30 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+         let offset=0,recentLeft=Math.min(10,entries.length);
+         if(!recentLeft)setChatDisplayReady(chatId);
+         const worker=async()=>{
+    -      while(!cancelled&&offset<entries.length){
+    +      while(current()&&offset<entries.length){
+             const index=offset++,item=entries[index],path=item.path;
+             try{
+    -          const identity='/storage/v1/object/sign/connect-attachments/'+path;
+    -          const cached=await resolveCachedMedia(identity,viewer);
+    -          const previous=attachmentUrls[path];
+    -          let url=cached.startsWith('blob:')?cached:(previous&&(previous.startsWith('blob:')||(signedMediaLifetimes.current.get(path)||0)>Date.now()+60000)?previous:'');
+    -          if(!url){
+    -            const {data,error}=await client.storage.from('connect-attachments').createSignedUrl(path,3600);
+    -            if(!error&&data?.signedUrl){url=mediaUrl(data.signedUrl);signedMediaLifetimes.current.set(path,Date.now()+48*60*1000);}
+    -          }
+    -          if(!url)continue;
+    -          if(!cancelled)setAttachmentUrls(prev=>prev[path]===url?prev:{...prev,[path]:url});
+    +          const url=await resolveAttachmentMedia(path,viewer);
+    +          if(!url||!current())continue;
+    +          setAttachmentUrls(prev=>!current()||prev[path]===url?prev:{...prev,[path]:url});
+               if(item.kind==='image'&&supportsPhotoPreview(path)){
+                 const thumb=photoPreviewPath(path),thumbIdentity='/storage/v1/object/sign/connect-attachments/'+thumb;
+                 let local=await resolveCachedMedia(thumbIdentity,viewer);
+    -            if(!local.startsWith('blob:')){
+    -              const signed=await client.storage.from('connect-attachments').createSignedUrl(thumb,3600);
+    -              if(signed.data?.signedUrl){const thumbUrl=mediaUrl(signed.data.signedUrl);
+    +            if(!isCachedMediaUrl(local)){
+    +              const thumbUrl=await resolveAttachmentMedia(thumb,viewer);
+    +              if(thumbUrl){
+                     await prefetchCachedMedia(thumbUrl,viewer);
+                     const hydrated=await resolveCachedMedia(thumbIdentity,viewer);
+    -                local=hydrated.startsWith('blob:')?hydrated:thumbUrl;
+    +                local=isCachedMediaUrl(hydrated)?hydrated:thumbUrl;
+                   }else local='';
+                 }
+    -            if(!cancelled)setPhotoPreviews(prev=>prev[path]=== (local||null)?prev:{...prev,[path]:local||null});
+    +            if(current())setPhotoPreviews(prev=>!current()||prev[path]=== (local||null)?prev:{...prev,[path]:local||null});
+               }
+               if(item.kind==='video')await cachedChatPoster(path).catch(()=>null);
+    -           if(item.kind==='audio'&&index<4&&item.size>0&&item.size<=1024*1024)
+    -             void prefetchChatAudio(url,viewer,item.size);
+    +          // No original prefetch: the first playback response persists its bytes.
+             }catch{/* Never let a failed attachment block message navigation. */}
+             finally{
+    -          if(index<10&&--recentLeft===0&&!cancelled){
+    +          if(index<10&&--recentLeft===0&&current()){
+                 warmedChatWindows.current.set(viewer+':'+chatId,Date.now()+42*60*1000);
+                 setChatDisplayReady(chatId);
+               }
+    @@ -2942,7 +2920,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+ 
+       useEffect(()=>{
+         if(!supabase||!user)return;
+    -    const owner=user.id;
+    +    const owner=user.id,epoch=mediaCacheEpoch();let cancelled=false;
+         const paths=[...new Set(messages.filter(m=>m.conversation_id===activeChat).flatMap(m=>[
+           ...(m.attachment_kind==='image'&&m.attachment_path?[m.attachment_path]:[]),
+           ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
+    @@ -2958,14 +2936,20 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+           try{
+             const previewPath=photoPreviewPath(path),identity='/storage/v1/object/sign/connect-attachments/'+previewPath;
+             const local=await resolveCachedMedia(identity,owner);
+    -        if(local.startsWith('blob:'))return {path,url:local};
+    -        const {data,error}=await supabase!.storage.from('connect-attachments').createSignedUrl(previewPath,3600);
+    -        if(error||!data?.signedUrl)return {path,url:null};
+    -        const signed=mediaUrl(data.signedUrl);
+    -        void prefetchCachedMedia(signed,owner);
+    -        return {path,url:signed};
+    +        if(isCachedMediaUrl(local))return {path,url:local};
+    +        const signed=await resolveAttachmentMedia(previewPath,owner);
+    +        if(!signed)return {path,url:null};
+    +        await prefetchCachedMedia(signed,owner);
+    +        const hydrated=await resolveCachedMedia(signed,owner);
+    +        return {path,url:isCachedMediaUrl(hydrated)?hydrated:signed};
+           }catch{return {path,url:null};}
+    -    })).then(items=>{if(activePreviewUser.current===owner){setPhotoPreviews(prev=>{const next={...prev};for(const item of items)next[item.path]=item.url;return next;});for(const item of items)if(!item.url)retryPhotoPreview(item.path);}});
+    +    })).then(items=>{
+    +      if(!cancelled&&activePreviewUser.current===owner&&mediaCacheEpoch()===epoch){
+    +        setPhotoPreviews(prev=>{const next={...prev};for(const item of items)next[item.path]=item.url;return next;});
+    +        for(const item of items){if(item.url)photoPreviewAttempts.current.delete(item.path);else retryPhotoPreview(item.path);}
+    +      }
+    +    }).finally(()=>{for(const path of paths)photoPreviewRequests.current.delete(path);});
+    +    return()=>{cancelled=true;for(const path of paths)photoPreviewRequests.current.delete(path);};
+       },[messages,activeChat,user?.id,photoPreviewRetry]);
+       useEffect(()=>{
+         photoPreviewRequests.current.clear();photoPreviewAttempts.current.clear();
+    @@ -2978,7 +2962,6 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+       },[]);
+ 
+       // Warm avatars and small thumbnails even while viewing the chat list.
+    -  // Small original photos are prefetched only on unconstrained connections.
+       useEffect(()=>{
+         if(!user?.id)return;
+         const owner=user.id;
+    @@ -2989,15 +2972,13 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+           ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
+         ]):[];
+         const urls=[...new Set([...Object.values(avatarUrls),...previews.map(p=>photoPreviews[p]).filter((v):v is string=>typeof v==='string')])].filter(Boolean).slice(0,56);
+    -    const small=activeChat?messages.filter(m=>m.conversation_id===activeChat&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2).slice(-6).map(m=>attachmentUrls[m.attachment_path!]).filter((v):v is string=>!!v):[];
+         let stopped=false;
+         const timer=window.setTimeout(()=>{void(async()=>{
+           for(const src of urls){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner);}
+           if(connection?.effectiveType==='3g')return;
+    -      for(const src of small){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner,true);}
+         })();},200);
+         return()=>{stopped=true;window.clearTimeout(timer);};
+    -  },[user?.id,activeChat,photoPreviews,avatarUrls,messages,attachmentUrls]);
+    +  },[user?.id,activeChat,photoPreviews,avatarUrls,messages]);
+ 
+       function isKeyboardSticker(m: Message): boolean {
+         return m.attachment_kind === 'image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || '');
+    @@ -3147,8 +3128,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+           setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
+           setLatest(prev=>({...prev,[chatId]:m}));
+           setReplyTo(null);setPendingFiles([]);
+    -      const urls=await Promise.all(items.map(async x=>({path:x.path,result:await client.storage.from('connect-attachments').createSignedUrl(x.path,3600)})));
+    -      setAttachmentUrls(prev=>{const next={...prev};urls.forEach(x=>{if(x.result.data?.signedUrl)next[x.path]=mediaUrl(x.result.data.signedUrl)});return next});
+    +      const urls=await Promise.all(items.map(async x=>({path:x.path,url:await resolveAttachmentMedia(x.path,uid)})));
+    +      setAttachmentUrls(prev=>{if(mediaCacheOwner()!==uid)return prev;const next={...prev};urls.forEach(x=>{if(x.url)next[x.path]=x.url});return next});
+           requestAnimationFrame(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight});
+         }catch(e){setNotice('Не удалось отправить альбом: '+(e instanceof Error?e.message:String(e)))}
+         finally{setBusy(false);setUploadProgress(null)}
+    @@ -3232,8 +3213,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+           setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
+           setLatest(prev=>({...prev,[chatId]:m}));
+           setReplyTo(null);
+    -      const signed=await supabase.storage.from('connect-attachments').createSignedUrl(path,3600);
+    -      if(signed.data?.signedUrl)setAttachmentUrls(prev=>({...prev,[path]:mediaUrl(signed.data!.signedUrl)}));
+    +      const signed=await resolveAttachmentMedia(path,user.id);
+    +      if(signed)setAttachmentUrls(prev=>mediaCacheOwner()===user.id?{...prev,[path]:signed}:prev);
+           requestAnimationFrame(()=>{const el=scrollRef.current;if(el)el.scrollTop=el.scrollHeight;});
+         } catch(e) {
+           setNotice('Не удалось отправить вложение: '+(e instanceof Error?e.message:String(e)));
+    @@ -3501,7 +3482,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
+         historyWarmStamps.current={};inboxMediaWarm.current.clear();
+         avatarCacheEpoch.current++;setAvatarUrls({});
+         if(accountId)forgetUserChatPresentation(accountId);
+    -    warmedChatWindows.current.clear();signedMediaLifetimes.current.clear();
+    +    warmedChatWindows.current.clear();signedMediaLinks.clear(accountId||'');
+         let signoutTimeout:ReturnType<typeof setTimeout>|undefined;
+         try {
+           const {error}=await Promise.race([
+    diff --git a/components/ConnectMusicSystem.tsx b/components/ConnectMusicSystem.tsx
+    index 3d35960..23e801c 100644
+    --- a/components/ConnectMusicSystem.tsx
+    +++ b/components/ConnectMusicSystem.tsx
+    @@ -1,4 +1,5 @@
+     'use client';
+    +import {mediaCacheOwner,resolveCachedProfileFile,isCachedMediaUrl,signedMediaUrlValid,mediaPlaybackUrl} from '../lib/media-cache';
+ 
+     import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+     import { createPortal } from 'react-dom';
+    @@ -61,6 +62,7 @@ function clock(value: number) {
+ 
+     export function ConnectMusicProvider({children}:{children:ReactNode}) {
+       const audioRef=useRef<HTMLAudioElement>(null);
+    +  const playbackGeneration=useRef(0);
+       const clientRef=useRef<SupabaseClient|null>(null);
+       const lastRef=useRef<Persisted|null>(null);
+       const restoreRef=useRef<{path:string;position:number}|null>(null);
+    @@ -156,14 +158,16 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
+         if(!audio||!audio.src)return;
+         void audio.play().catch(()=>setPlaying(false));
+       },[]);
+    -  const selectTrack=useCallback((song:ConnectMusicTrack)=>{
+    +  const selectTrack=useCallback(async(song:ConnectMusicTrack)=>{
+    +    const generation=++playbackGeneration.current,viewer=mediaCacheOwner();
+         if(!queueRef.current.some(t=>t.path===song.path))return;
+    -    const audio=audioRef.current;
+    -    if(selectedRef.current!==song.path){
+    -      selectedRef.current=song.path;setSelected(song.path);setPosition(0);setDuration(0);
+    -      restoreRef.current=null;
+    -      if(audio){audio.src=song.url;audio.load();}
+    -    } else if(audio?.ended){audio.currentTime=0;}
+    +    let url=await resolveCachedProfileFile(viewer,song.path);
+    +    if(!url&&!isCachedMediaUrl(song.url)&&signedMediaUrlValid(song.url))url=song.url;
+    +    if(!url&&clientRef.current){const signed=await clientRef.current.storage.from('connect-profile-media').createSignedUrl(song.path,3600);url=signed.data?.signedUrl?mediaPlaybackUrl(signed.data.signedUrl):null;}
+    +    if(generation!==playbackGeneration.current||viewer!==mediaCacheOwner()||!url)return;
+    +    const audio=audioRef.current;if(!audio)return;
+    +    if(selectedRef.current!==song.path||audio.getAttribute('src')!==url){selectedRef.current=song.path;setSelected(song.path);setPosition(0);setDuration(0);restoreRef.current=null;audio.src=url;audio.load();}
+    +    else if(audio.ended)audio.currentTime=0;
+         safePlay();
+       },[safePlay]);
+       const toggle=useCallback(()=>{
+    diff --git a/components/ConnectProfileMedia.tsx b/components/ConnectProfileMedia.tsx
+    index 41ecb74..667e2c6 100644
+    --- a/components/ConnectProfileMedia.tsx
+    +++ b/components/ConnectProfileMedia.tsx
+    @@ -1,4 +1,5 @@
+     'use client';
+    +import {isCachedMediaUrl,signedMediaUrlValid,mediaPlaybackUrl,mediaCacheOwner} from '../lib/media-cache';
+ 
+     import { useCallback, useEffect, useRef, useState } from 'react';
+     import type { SupabaseClient } from '@supabase/supabase-js';
+    @@ -45,18 +46,7 @@ const MAX_SIZE = 100 * 1024 * 1024;
+ 
+     // Keep signed audio/video/image requests on the working same-origin proxy
+     // when Connect is opened through its alternate DuckDNS domain.
+    -function playbackUrl(url: string) {
+    -  if (typeof window === 'undefined' || window.location.hostname !== 'connect-chat.duckdns.org') return url;
+    -  const root = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+    -  try {
+    -    const source = new URL(url);
+    -    const base = new URL(root);
+    -    if (source.hostname === base.hostname) return `${window.location.origin}/supabase${source.pathname}${source.search}${source.hash}`;
+  CONNECT_MEDIA_PATCH_002: |2
+    -    if (source.hostname === base.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co'))
+    -      return `${window.location.origin}/supabase-storage${source.pathname}${source.search}${source.hash}`;
+    -  } catch { /* Signed URL may already be relative. */ }
+    -  return url;
+    -}
+    +function playbackUrl(url:string){return mediaPlaybackUrl(url);}
+ 
+     function extension(name: string) { return name.split('.').pop()?.toLowerCase() || ''; }
+     function validFile(file: File, kind: ProfileMediaKind) {
+    @@ -96,14 +86,20 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
+       const [notice, setNotice] = useState('');
+       const [preview, setPreview] = useState<MediaItem | null>(null);
+       const swipeStart=useRef<{x:number;y:number}|null>(null);
+    +  const previewSequence=useRef(0);
+    +  const openPreview=useCallback(async(item:MediaItem)=>{
+    +    const sequence=++previewSequence.current,generation=fetchGeneration.current;
+    +    try{
+    +      let url=await resolveCachedProfileFile(viewerId,item.path);
+    +      if(!url&&!isCachedMediaUrl(item.url)&&signedMediaUrlValid(item.url))url=item.url;
+    +      if(!url){const signed=await client.storage.from(BUCKET).createSignedUrl(item.path,3600);if(signed.error)throw signed.error;url=signed.data?.signedUrl?playbackUrl(signed.data.signedUrl):null;}
+    +      if(sequence===previewSequence.current&&generation===fetchGeneration.current&&viewerId===mediaCacheOwner()&&url)setPreview({...item,url});
+    +    }catch(error){if(generation===fetchGeneration.current)setError('Не удалось открыть файл: '+String(error));}
+    +  },[client,viewerId]);
+       const navigatePreview=useCallback((direction:1|-1)=>{
+    -    setPreview(old=>{
+    -      if(!old || !items.length)return old;
+    -      const current=items.findIndex(item=>item.path===old.path);
+    -      const next=current+direction;
+    -      return next>=0 && next<items.length ? items[next] : old;
+    -    });
+    -  },[items]);
+    +    if(!preview)return;const index=items.findIndex(x=>x.path===preview.path)+direction;
+    +    if(items[index])void openPreview(items[index]);
+    +  },[items,preview,openPreview]);
+       useEffect(()=>{
+         if(!preview)return;
+         const onKey=(event:KeyboardEvent)=>{
+    @@ -132,7 +128,7 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
+           previous=await readProfileLibrary(viewerId,userId,kind).catch(()=>null);
+           if(generation!==fetchGeneration.current)return;
+           if(previous){
+    -        const cached=await Promise.all(previous.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||'',await resolveCachedProfileFile(viewerId,profileThumbnailPath(entry.path,kind)||entry.path)||'')));
+    +        const cached=await Promise.all(previous.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path,entry.version)||'',await resolveCachedProfileFile(viewerId,profileThumbnailPath(entry.path,kind)||entry.path,entry.version)||'')));
+             if(generation!==fetchGeneration.current)return;
+             setItems(cached);setLoading(false);hasDisplayed.current=true;
+           }
+    @@ -144,23 +140,32 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
+           if(generation!==fetchGeneration.current)return;
+           if(listError)throw listError;
+           const rows:ProfileLibraryRow[]=(data||[]).filter(row=>row.id&&row.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(row.name)).slice(0,100).map(row=>({
+    -        path:`${userId}/${kind}/${row.name}`,createdAt:row.created_at||''
+    +        path:`${userId}/${kind}/${row.name}`,createdAt:row.created_at||'',version:row.updated_at||row.created_at||''
+           }));
+    +      // Sign only missing bytes; cached originals/sidecars never need a token.
+    +      const cached=new Map<string,string>();
+    +      for(const entry of rows){
+    +        for(const candidate of [entry.path,profileThumbnailPath(entry.path,kind)].filter((x):x is string=>!!x)){
+    +          const local=await resolveCachedProfileFile(viewerId,candidate,candidate===entry.path?entry.version:undefined);if(local)cached.set(candidate,local);
+    +        }
+    +      }
+    +      if(generation!==fetchGeneration.current)return;
+    +      const missing=rows.filter(entry=>!cached.has(entry.path));
+           // One signed-URL batch instead of an individual request per file.
+           const signed=new Map<string,string>();
+           if(rows.length){
+    -        const batch=await client.storage.from(BUCKET).createSignedUrls(rows.map(x=>x.path),3600);
+    +        const batch=missing.length?await client.storage.from(BUCKET).createSignedUrls(missing.map(x=>x.path),3600):{data:[],error:null};
+             if(generation!==fetchGeneration.current)return;
+             for(const entry of batch.data||[])if(entry.path&&entry.signedUrl)signed.set(entry.path,playbackUrl(entry.signedUrl));
+             // Optional previews are signed separately so missing legacy sidecars cannot break originals.
+    -        const previewPaths=rows.map(x=>profileThumbnailPath(x.path,kind)).filter((x):x is string=>!!x);
+    +        const previewPaths=rows.map(x=>profileThumbnailPath(x.path,kind)).filter((x):x is string=>!!x&&!cached.has(x));
+             if(previewPaths.length)try{
+               const previews=await client.storage.from(BUCKET).createSignedUrls(previewPaths,3600);
+               for(const entry of previews.data||[])if(entry.path&&entry.signedUrl)signed.set(entry.path,playbackUrl(entry.signedUrl));
+             }catch{/* Old media without preview stays usable. */}
+             // Best-effort compatibility fallback for storage gateways without bulk signing.
+             if(batch.error||signed.size===0){
+    -          await Promise.all(rows.map(async entry=>{
+    +          await Promise.all(missing.map(async entry=>{
+                 try{const {data}=await client.storage.from(BUCKET).createSignedUrl(entry.path,3600);
+                   if(data?.signedUrl)signed.set(entry.path,playbackUrl(data.signedUrl));
+                 }catch{/* Cached file is still available. */}
+    @@ -168,7 +173,7 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
+             }
+           }
+           if(generation!==fetchGeneration.current)return;
+    -      const fresh=await Promise.all(rows.map(async entry=>makeItem(entry,await resolveCachedProfileFile(viewerId,entry.path)||signed.get(entry.path)||'',await resolveCachedProfileFile(viewerId,profileThumbnailPath(entry.path,kind)||entry.path)||signed.get(profileThumbnailPath(entry.path,kind)||'')||'')));
+    +      const fresh=await Promise.all(rows.map(async entry=>makeItem(entry,cached.get(entry.path)||signed.get(entry.path)||'',cached.get(profileThumbnailPath(entry.path,kind)||entry.path)||signed.get(profileThumbnailPath(entry.path,kind)||'')||'')));
+           if(generation!==fetchGeneration.current)return;
+           setItems(fresh);setLoading(false);hasDisplayed.current=true;
+           await writeProfileLibrary(viewerId,userId,kind,rows).catch(()=>{});
+    @@ -186,7 +191,7 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
+             const count=kind==='photos'?12:kind==='music'?3:2;
+             for(const entry of rows.slice(0,count)){
+               const url=signed.get(entry.path);
+    -          if(url&&kind!=='videos')void prefetchProfileFile(url,viewerId,kind);
+    +          // Original bytes are requested only when the user opens/plays the file.
+               const thumbnail=profileThumbnailPath(entry.path,kind);
+               if(thumbnail&&signed.get(thumbnail))void prefetchCachedMedia(signed.get(thumbnail)!,viewerId);
+             }
+    @@ -333,12 +338,12 @@ export default function ConnectProfileMedia({ client, userId, viewerId, kind, on
+           {notice && <div className="connect-profile-media-info" role="status">{notice}</div>}
+           {loading && items.length===0 ? <div className="connect-profile-media-empty">Загружаем медиатеку…</div> : items.length === 0 ? <div className="connect-profile-media-empty">{isOwner ? <>Здесь пока пусто. Нажми «Добавить», чтобы загрузить {kind === 'photos' ? 'фотографии' : kind === 'videos' ? 'видео' : 'музыку'}.</> : 'Пользователь ещё ничего не добавил.'}</div> : <>
+             {kind === 'photos' && <div className="connect-profile-photo-grid">{items.map(item => <article key={item.path} className="connect-profile-media-item">
+    -          <button type="button" className="connect-profile-photo-thumb" onClick={() => setPreview(item)} aria-label={`Открыть ${item.name}`}>{item.url ? <img loading="lazy" src={item.previewUrl||item.url} alt={item.name} onError={e=>{if(item.url&&e.currentTarget.src!==item.url)e.currentTarget.src=item.url;}}/> : <span aria-hidden="true" style={{fontSize:26}}>▧</span>}</button>
+    +          <button type="button" className="connect-profile-photo-thumb" onClick={() => {void openPreview(item);}} aria-label={`Открыть ${item.name}`}>{item.url ? <img loading="lazy" src={item.previewUrl||item.url} alt={item.name} onError={e=>{if(item.url&&e.currentTarget.src!==item.url)e.currentTarget.src=item.url;}}/> : <span aria-hidden="true" style={{fontSize:26}}>▧</span>}</button>
+               <div className="connect-profile-media-item-caption" title={item.name}>{item.name}</div>
+               {isOwner && <div className="connect-profile-media-item-actions"><button type="button" disabled={busy || !['image/jpeg','image/png','image/webp'].includes(item.mime)} onClick={() => void makeAvatar(item)}>На аватар</button><button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button></div>}
+             </article>)}</div>}
+             {kind === 'videos' && <div className="connect-profile-video-list">{items.map(item => <article key={item.path} className="connect-profile-media-item">
+    -          <button type="button" className="connect-profile-video-thumb" onClick={()=>setPreview(item)} aria-label={`Просмотреть ${item.name}`}>{item.previewUrl&&<img loading="lazy" src={item.previewUrl} alt="" onError={e=>{e.currentTarget.style.visibility="hidden";}}/>}<span aria-hidden="true">▶</span></button>
+    +          <button type="button" className="connect-profile-video-thumb" onClick={()=>{void openPreview(item);}} aria-label={`Просмотреть ${item.name}`}>{item.previewUrl&&<img loading="lazy" src={item.previewUrl} alt="" onError={e=>{e.currentTarget.style.visibility="hidden";}}/>}<span aria-hidden="true">▶</span></button>
+               <div className="connect-profile-media-item-info"><strong title={item.name}>{item.name}</strong>{isOwner && <button type="button" disabled={busy} onClick={() => void remove(item)}>Удалить</button>}</div>
+             </article>)}</div>}
+             {kind === 'music' && <ConnectMusicLibrary client={client} ownerId={userId} items={items} isOwner={isOwner} busy={busy} onRemove={song => { const item=items.find(x=>x.path===song.path); if(item) void remove(item); }}/>}
+    diff --git a/lib/media-cache.ts b/lib/media-cache.ts
+    index 75e38ae..cb7a798 100644
+    --- a/lib/media-cache.ts
+    +++ b/lib/media-cache.ts
+    @@ -9,14 +9,22 @@ type Entry = {
+         blob?: Blob;
+         bytes?: ArrayBuffer;
+         type?: string;
+    +    stream?:boolean;
+    +    etag?:string;
+     };
+     const NAME = 'connect-media-v1', STORE = 'objects';
+     let opening: Promise<IDBDatabase> | undefined;
+     let owner = '';
+    +let mediaEpoch=0;
+    +const controllers=new Map<string,AbortController>();
+    +export function mediaCacheEpoch(){return mediaEpoch;}
+    +export function cacheLeaseValid(user:string,epoch:number){return owner===user&&mediaEpoch===epoch;}
+     /** IDB entries and signed URLs are scoped to the current viewer. */
+     export function mediaCacheOwner(){return owner;}
+     const objectUrls = new Map<string, string>(), pending = new Map<string, Promise<void>>();
+     const originals = new Map<string, string>();
+    +// Invalidate one deleted fill without disturbing unrelated downloads.
+    +const fileEpochs=new Map<string,number>();
+     type MediaElement = HTMLImageElement | HTMLMediaElement;
+     type Binding = { source: string; current: string; retried: boolean };
+     const bindings = new Map<MediaElement, Binding>();
+    @@ -28,7 +36,7 @@ function restoreUrl(url: string) {
+             }
+         }
+         URL.revokeObjectURL(url);
+    -    originals.delete(url);
+    +    // Keep the source identity for stale UI blob URLs until account teardown.
+     }
+     function contentType(key: string, type = '') {
+         type = type.split(';')[0].toLowerCase();
+    @@ -65,9 +73,9 @@ export function mediaCategory(key: string, type = ''): CacheCategory {
+             return 'photos';
+         return 'other';
+     }
+    -function db() { return opening ??= new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open(NAME, 3); r.onupgradeneeded = () => { if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE, { keyPath: 'key' });
+    +function db() { return opening ??= new Promise<IDBDatabase>((resolve, reject) => { const r = indexedDB.open(NAME, 4); r.onupgradeneeded = () => { if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE, { keyPath: 'key' });
+             if(!r.result.objectStoreNames.contains('links'))r.result.createObjectStore('links');
+    -        if(!r.result.objectStoreNames.contains('retired'))r.result.createObjectStore('retired'); }; r.onsuccess = () => { r.result.onversionchange = () => { r.result.close(); opening = undefined; }; resolve(r.result); }; r.onerror = () => { opening = undefined; reject(r.error); }; }); }
+    +        if(!r.result.objectStoreNames.contains('retired'))r.result.createObjectStore('retired');if(!r.result.objectStoreNames.contains('media-ranges')){const ranges=r.result.createObjectStore('media-ranges',{keyPath:'key'});ranges.createIndex('file','file');ranges.createIndex('kind','kind');ranges.createIndex('fileStart',['file','start']);} }; r.onsuccess = () => { r.result.onversionchange = () => { r.result.close(); opening = undefined; }; resolve(r.result); }; r.onerror = () => { opening = undefined; reject(r.error); }; }); }
+     async function run<T>(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> { const d = await db(); return new Promise((resolve, reject) => { const t = d.transaction(STORE, mode), r = operation(t.objectStore(STORE)); let value: T; r.onsuccess = () => { value = r.result; }; t.oncomplete = () => resolve(value); t.onerror = () => reject(t.error || r.error); t.onabort = () => reject(t.error || Error('Cache transaction aborted')); }); }
+     async function entries() { return run<Entry[]>('readonly', s => s.getAll()); }
+     export function cacheLimit() { try {
+    @@ -77,16 +85,20 @@ catch {
+         return 'auto';
+     } }
+     export function setCacheLimit(value: string) { if (!(value in LIMITS))
+    -    throw Error('Недопустимый лимит кеша'); localStorage.setItem('connect-cache-limit', value); void trimCache(); }
+    +    throw Error('Недопустимый лимит кеша'); localStorage.setItem('connect-cache-limit', value);void updateResponseCacheLimit(); void trimCache(); }
+     export async function cacheStats() { const result: Record<CacheCategory, number> = { system: 0, photos: 0, videos: 0, audio: 0, other: 0 }; for (const row of await entries())
+         if (row.user === owner)
+    -        result[row.category] += row.size; return result; }
+    +        result[row.category] += row.size;return responseCacheStats(result); }
+     export async function clearCachedMedia(category: CacheCategory | 'temporary', identity?: string) {
+    +    const viewer=owner;
+    +    if(identity){const key=viewer+':'+identity;fileEpochs.set(key,(fileEpochs.get(key)||0)+1);controllers.get(key)?.abort();pending.delete(key);}
+    +    else{mediaEpoch++;for(const controller of controllers.values())controller.abort();controllers.clear();pending.clear();}
+    +    await clearResponseParts(category,identity,viewer);
+         const rows = await entries();
+         for (const row of rows) {
+    -        if (row.user !== owner || !identity && row.category === 'system')
+    +        if (row.user !== viewer || !identity && row.category === 'system')
+                 continue;
+    -        if (identity ? row.key !== owner + ':' + identity : category !== 'temporary' && row.category !== category)
+    +        if (identity ? row.key !== viewer + ':' + identity : category !== 'temporary' && row.category !== category)
+                 continue;
+  CONNECT_MEDIA_PATCH_003: |2
+             await run('readwrite', s => s.delete(row.key));
+             const url = objectUrls.get(row.key);
+    @@ -105,6 +117,7 @@ export async function trimCache() {
+             const avatar = row.category === 'system' && !row.key.includes(':core'), expired = Boolean((window as Window & {ConnectAndroid?:unknown;ConnectNative?:unknown}).ConnectAndroid||(window as Window & {ConnectAndroid?:unknown;ConnectNative?:unknown}).ConnectNative) && Date.now() - row.used > 30 * 86400000;
+             if (row.category === 'system' ? !avatar || avatars <= 64 * 1024 ** 2 : temporary <= limit && !expired)
+                 continue;
+    +        await clearResponseParts('temporary',row.key.slice(owner.length+1),owner);
+             await run('readwrite', s => s.delete(row.key));
+             const local = objectUrls.get(row.key);
+             if (local) { restoreUrl(local); objectUrls.delete(row.key); }
+    @@ -115,10 +128,16 @@ export async function trimCache() {
+         }
+     }
+     export async function resolveCachedMedia(url: string, user = owner): Promise<string> { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
+    -    return url; const key = user + ':' + id; try {
+    +    return url; const key = user + ':' + id,epoch=mediaEpoch,fileEpoch=fileEpochs.get(key)||0; const validFile=()=>cacheLeaseValid(user,epoch)&&(fileEpochs.get(key)||0)===fileEpoch; if(owner!==user)return url;try {
+    +    if(mediaTransport==='native'){const local=await responseCacheLookup(url,user);if(local&&validFile())return local;}
+         const row = await run<Entry | undefined>('readonly', s => s.get(key));
+    -    if (!row)
+    -        return url;
+    +    if(!validFile())return url;
+    +    if(!row){const native=await responseCacheLookup(url,user);return validFile()&&native?native:url;}
+    +    if(row.stream){
+    +      const hot=objectUrls.get(key);if(hot&&validFile())return hot;
+    +      if(row.size<=2*1024*1024){const blob=await readStreamedBlob(row,url,user,epoch);if(!blob||!validFile())return url;let local=objectUrls.get(key);if(!local){local=URL.createObjectURL(blob);objectUrls.set(key,local);}originals.set(local,url);return local;}
+    +      await mediaReady;if(!validFile()||!mediaBound)return url;const local=new URL('/supabase/storage/v1/object/authenticated/'+id,location.origin);local.searchParams.set('__cm',mediaNonce);local.searchParams.set('__cm_local','1');return local.href;
+    +    }
+         const type = contentType(id, row.type || row.blob?.type);
+         const blob = row.blob || (row.bytes instanceof ArrayBuffer ? new Blob([row.bytes], { type }) : undefined);
+         if (!blob?.size || !usableType(type)) {
+    @@ -138,7 +157,7 @@ export async function resolveCachedMedia(url: string, user = owner): Promise<str
+         return local;
+     }
+     catch {
+    -    return url;
+    +    const local=await responseCacheLookup(url,user).catch(()=>null);return validFile()&&local?local:url;
+     } }
+     // Bound cache fills independently of the number of mounted messages. Visible
+     // interface/avatars precede small previews; originals enter only on playback.
+    @@ -146,25 +165,58 @@ let cacheWorkers=0;
+     const cacheJobs:{priority:number;run:()=>Promise<void>;resolve:()=>void}[]=[];
+     function cacheJob(priority:number,run:()=>Promise<void>){return new Promise<void>(resolve=>{cacheJobs.push({priority,run,resolve});cacheJobs.sort((a,b)=>a.priority-b.priority);pumpCacheJobs();});}
+     function pumpCacheJobs(){while(cacheWorkers<3&&cacheJobs.length){const job=cacheJobs.shift()!;cacheWorkers++;void job.run().catch(()=>{}).finally(()=>{cacheWorkers--;job.resolve();pumpCacheJobs();});}}
+    -async function remember(url: string, user: string, maxBytes = 256 * 1024 ** 2, needLength = false) { const id = mediaIdentity(url); if (!id || !user || id.startsWith('core'))
+    -    return; const key = user + ':' + id; if (pending.has(key))
+    -    return pending.get(key); const operation = cacheJob(mediaCategory(id)==='system'?0:/__(thumb\.webp|poster\.jpg)$/.test(id)?1:2,async () => { if (owner!==user || await run('readonly', s => s.get(key)))
+    -    return; const response = await fetch(url, { cache: 'force-cache' }); if (!response.ok || response.status === 206)
+    -    return; const length = Number(response.headers.get('content-length') || 0); if (length > maxBytes || (needLength && !length))
+    -    return; const blob = await response.blob(); if (!blob.size || blob.size > maxBytes)
+    -    return; const type = contentType(id, blob.type); if (!usableType(type)) return;
+    -    // ArrayBuffer avoids WebKit's IndexedDB Blob-file staging failures. Old Blob
+    -    // records remain readable; cache errors always leave the network URL usable.
+    -    const bytes = await blob.arrayBuffer();
+    -    const database=await db();await new Promise<void>((resolve,reject)=>{const tx=database.transaction([STORE,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);check.onsuccess=()=>{if(!check.result)tx.objectStore(STORE).put({key,user,category:mediaCategory(id,type),size:blob.size,used:Date.now(),bytes,type} satisfies Entry);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error || Error('Cache write aborted'));}); await trimCache(); }).catch(() => { }).finally(() => pending.delete(key)); pending.set(key, operation); return operation; }
+    +export async function boundedMediaBody(response:Response,maxBytes:number):Promise<Blob|null>{
+    + if(!Number.isFinite(maxBytes)||maxBytes<=0){await response.body?.cancel();return null;}
+    + const length=Number(response.headers.get('content-length')||0);
+    + if(length>maxBytes){await response.body?.cancel();return null;}
+    + // Streaming cap also covers absent or misleading Content-Length.
+    + if(!response.body)return null;
+    + const reader=response.body.getReader(),parts:Uint8Array<ArrayBuffer>[]=[];let size=0;
+    + try{for(;;){const {value,done}=await reader.read();if(done)break;size+=value.byteLength;if(size>maxBytes){await reader.cancel();return null;}parts.push(new Uint8Array(value));}}
+    + finally{reader.releaseLock();}
+    + return size?new Blob(parts,{type:response.headers.get('content-type')||''}):null;
+    +}
+    +async function remember(url:string,user:string,maxBytes=0,needLength=false){
+    + const id=mediaIdentity(url);if(!Number.isFinite(maxBytes)||maxBytes<=0||!id||!user||id.startsWith('core')||owner!==user)return;
+    + const key=user+':'+id,epoch=mediaEpoch,fileEpoch=fileEpochs.get(user+':'+id)||0;if(pending.has(key))return pending.get(key);
+    + const operation=cacheJob(mediaCategory(id)==='system'?0:/__(thumb\.webp|poster\.jpg)$/.test(id)?1:2,async()=>{
+    +   if(!cacheLeaseValid(user,epoch))return;
+    +   const old=await run<Entry|undefined>('readonly',s=>s.get(key));
+    +   if(old)return;
+    +   if(!cacheLeaseValid(user,epoch)||(fileEpochs.get(key)||0)!==fileEpoch)return;
+    +   const controller=new AbortController();controllers.set(key,controller);
+    +   try{
+    +    const response=await fetch(url,{cache:'force-cache',signal:controller.signal});if(!response.ok||response.status===206){await response.body?.cancel();return;}
+    +    if(needLength&&!Number(response.headers.get('content-length'))){await response.body?.cancel();return;}
+    +    const blob=await boundedMediaBody(response,maxBytes);if(!blob||!cacheLeaseValid(user,epoch)||(fileEpochs.get(key)||0)!==fileEpoch)return;
+    +    if(mediaTransport==='worker'||mediaTransport==='native')return;
+    +    const type=contentType(id,blob.type);if(!usableType(type))return;const bytes=await blob.arrayBuffer();
+    +    const database=await db();await new Promise<void>((resolve,reject)=>{
+    +      const tx=database.transaction([STORE,'retired'],'readwrite');const check=tx.objectStore('retired').get(key);
+    +      check.onsuccess=()=>{if(!check.result&&cacheLeaseValid(user,epoch)&&(fileEpochs.get(key)||0)===fileEpoch)tx.objectStore(STORE).put({key,user,category:mediaCategory(id,type),size:blob.size,used:Date.now(),bytes,type} satisfies Entry);};
+    +      tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||Error('Cache write aborted'));
+    +    });await trimCache();
+    +   }finally{if(controllers.get(key)===controller)controllers.delete(key);}
+    + }).catch(()=>{}).finally(()=>{if(pending.get(key)===operation)pending.delete(key);});
+    + pending.set(key,operation);return operation;
+    +}
+    +/** Rendered images may fill only small sidecars, avatars and stickers. */
+    +function automaticImageByteLimit(id:string):number{
+    + if(/__(thumb\.webp|poster\.jpg)$/.test(id))return 512*1024;
+    + if(id.startsWith('connect-avatars/'))return 1024*1024;
+    + if(id.startsWith('connect-stickers/'))return 2*1024*1024;
+    + return 0;
+    +}
+    +function rememberRenderedImage(_el:HTMLImageElement,_user:string){/* The first response is captured by the request transport; no second GET. */}
+     export function installMediaCache(user: string, refreshUrl?: (source: string) => Promise<string | undefined>) {
+    -    owner = user;
+    +    mediaEpoch++;owner = user;
+    +    installMediaFetchGate();const stopResponseCache=beginResponseCache(user);
+         let alive = true;
+         const visible = new IntersectionObserver(items => { for (const item of items)
+             if (item.isIntersecting) {
+                 const el = item.target as HTMLImageElement;
+                 if (el.complete && el.naturalWidth)
+    -                void remember(originals.get(el.src) || el.currentSrc || el.src, user);
+    +                rememberRenderedImage(el,user);
+                 visible.unobserve(el);
+             } }, { rootMargin: '0px' });
+         const scan = () => {
+    @@ -202,7 +254,7 @@ export function installMediaCache(user: string, refreshUrl?: (source: string) =>
+                 // CONNECT_MEDIA_STALE_IMAGE_ERROR_GUARD_20261117
+                 // An old request can dispatch `error` after a healthy cached blob
+                 // becomes current. Only evict when the CURRENT image fails decode.
+    -            if (el instanceof HTMLImageElement && originals.has(failedSrc)) {
+    +            if (el instanceof HTMLImageElement && (originals.has(failedSrc)||isCachedMediaUrl(failedSrc))) {
+                     try {
+                         await el.decode();
+                         if (alive && bindings.get(el) === binding && el.getAttribute('src') === failedSrc) {
+    @@ -238,7 +290,7 @@ export function installMediaCache(user: string, refreshUrl?: (source: string) =>
+         const loaded = (event: Event) => {
+             const el = event.target;
+             if (el instanceof HTMLImageElement && el.getBoundingClientRect().bottom >= 0 && el.getBoundingClientRect().top <= innerHeight)
+    -            void remember(originals.get(el.src) || el.currentSrc || el.src, user);
+    +            rememberRenderedImage(el,user);
+         };
+         const observer = new MutationObserver(scan);
+         observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+    @@ -247,14 +299,16 @@ export function installMediaCache(user: string, refreshUrl?: (source: string) =>
+         scan();
+         void trimCache().catch(() => { });
+         void navigator.storage?.persist?.().catch(() => { });
+    -    return () => { alive = false; observer.disconnect(); visible.disconnect(); document.removeEventListener('load', loaded, true); document.removeEventListener('error', failed, true); if (owner === user)
+    -        owner = ''; for (const url of objectUrls.values())
+    -        restoreUrl(url); objectUrls.clear(); bindings.clear(); };
+    +    return () => { stopResponseCache();alive = false; observer.disconnect(); visible.disconnect(); document.removeEventListener('load', loaded, true); document.removeEventListener('error', failed, true); if (owner === user){owner = '';mediaEpoch++;responseMediaVersions.clear();signedMediaIssued.clear();for(const c of controllers.values())c.abort();controllers.clear();pending.clear();fileEpochs.clear();} for (const url of objectUrls.values())
+    +        restoreUrl(url); objectUrls.clear(); bindings.clear(); originals.clear(); };
+     }
+ 
+     /** Local content index contains only message IDs and stable storage identities. */
+     export async function linkMessageMedia(user:string,message:string,paths:string[]){
+    - if(!paths.length)return;const d=await db();await new Promise<void>((resolve,reject)=>{const tx=d.transaction(['links','retired'],'readwrite');const identities=[...new Set(paths.flatMap(path=>[path,path+'__thumb.webp',path+'__poster.jpg']))].map(path=>'connect-attachments/'+path);const guard=tx.objectStore('retired').get(user+':message:'+message);guard.onsuccess=()=>{if(guard.result)return;tx.objectStore('links').put(identities,user+':'+message);for(const identity of identities)tx.objectStore('retired').delete(user+':'+identity);};tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);});
+    + if(owner!==user||!paths.length)return;const epoch=mediaEpoch,d=await db(),revived:string[]=[];
+    + await new Promise<void>((resolve,reject)=>{const tx=d.transaction(['links','retired'],'readwrite'),retired=tx.objectStore('retired');const identities=[...new Set(paths.flatMap(path=>[path,path+'__thumb.webp',path+'__poster.jpg']))].map(path=>'connect-attachments/'+path);const guard=retired.get(user+':message:'+message);
+    + guard.onsuccess=()=>{if(guard.result||!cacheLeaseValid(user,epoch))return;tx.objectStore('links').put(identities,user+':'+message);for(const identity of identities){const q=retired.get(user+':'+identity);q.onsuccess=()=>{if(q.result)revived.push(identity);retired.delete(user+':'+identity);};}};tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);});
+    + if(revived.length){await mediaReady;if(mediaTransport==='native'&&cacheLeaseValid(user,epoch))for(const identity of revived)await nativeMedia('revive',{identity},user);}
+     }
+     export async function purgeDeletedMedia(user:string,message:string){
+      if(owner!==user)return;const d=await db();const paths=await new Promise<string[]>((resolve,reject)=>{
+    @@ -265,31 +319,21 @@ export async function purgeDeletedMedia(user:string,message:string){
+     }
+ 
+     /** Background warmup of visible, lightweight chat previews; best effort. */
+    -export async function prefetchCachedMedia(url:string,user:string,smallOriginal=false):Promise<void>{
+    -  const id=mediaIdentity(url);if(!url||!user||!id)return;
+    -  const lightweight=mediaCategory(id)==='system'||/__(thumb\.webp|poster\.jpg)$/.test(id);
+    -  const smallPhoto=smallOriginal&&mediaCategory(id)==='photos';
+    -  if(!lightweight&&!smallPhoto)return;
+    -  try{await remember(url,user,smallPhoto?6*1024**2:256*1024**2,smallPhoto);}catch{/* Network fallback remains usable. */}
+    +export async function prefetchCachedMedia(url:string,user:string):Promise<void>{
+    + const id=mediaIdentity(url),maxBytes=id?automaticImageByteLimit(id):0;
+    + if(!url||!user||!maxBytes)return;
+    + await remember(url,user,maxBytes);
+     }
+ 
+ 
+     /** Look up private profile media bytes using stable storage identity.
+      * The catalog never needs an expired signed URL to show locally cached files.
+      */
+    -export async function resolveCachedProfileFile(viewer:string,path:string):Promise<string|null>{
+    -  if(!viewer||!/^[-a-zA-Z0-9_]+\/(?:photos|videos|music)\/[^?#]+$/.test(path))return null;
+    -  const id='connect-profile-media/'+path, key=viewer+':'+id;
+    -  try{
+    -    const row=await run<Entry|undefined>('readonly',store=>store.get(key));
+    -    if(!row||row.user!==viewer)return null;
+    -    const type=contentType(id,row.type||row.blob?.type);
+    -    const blob=row.blob||(row.bytes instanceof ArrayBuffer?new Blob([row.bytes],{type}):undefined);
+    -    if(!blob?.size||!usableType(type))return null;
+    -    let url=objectUrls.get(key);
+    -    if(!url){url=URL.createObjectURL(blob.type===type?blob:blob.slice(0,blob.size,type));objectUrls.set(key,url);}
+    -    return url;
+    -  }catch{return null;}
+    +export async function resolveCachedProfileFile(viewer:string,path:string,version?:string):Promise<string|null>{
+    + if(!viewer||owner!==viewer||!/^[-a-zA-Z0-9_]+\/(?:photos|videos|music)\/[^?#]+$/.test(path))return null;
+    + const identity='connect-profile-media/'+path;if(version)await noteMediaVersion(viewer,identity,version);
+    + const source=location.origin+'/supabase/storage/v1/object/authenticated/'+identity.split('/').map(encodeURIComponent).join('/');
+  CONNECT_MEDIA_PATCH_004: |2
+    + const resolved=await resolveCachedMedia(source,viewer);return resolved===source?null:resolved;
+     }
+ 
+     /** Stop inflight fills from restoring an item deleted remotely. */
+    @@ -304,6 +348,7 @@ export async function retireCachedProfileFile(viewer:string,path:string):Promise
+           tx.objectStore(STORE).delete(key);
+           tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error);
+         });
+    +    await clearCachedMedia('temporary','connect-profile-media/'+path);
+         const local=objectUrls.get(key);
+         if(local){restoreUrl(local);objectUrls.delete(key);}
+       }catch{/* A failed local purge must not affect remote deletion. */}
+    @@ -324,8 +369,8 @@ export async function cacheUploadedProfileFile(viewer:string,path:string,file:Fi
+       }catch{/* Storage quota failure is not an upload failure. */}
+     }
+ 
+    -/** Load only small photos, audio and short videos in background; full-size media
+    - * not cached yet can always stream over the existing signed URL.
+    +/** Background profile fills are limited to audio; photo/video originals stay
+    + * on demand, while small image sidecars use prefetchCachedMedia.
+      */
+     // CONNECT_PWA_CONTACT_PROFILE_WARM_V3_20261111
+     export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'|'videos'|'music',limitBytes?:number):Promise<void>{
+    @@ -333,11 +378,11 @@ export async function prefetchProfileFile(url:string,viewer:string,kind:'photos'
+       if(!id?.startsWith('connect-profile-media/')||!viewer)return;
+       const category=mediaCategory(id);
+       if((kind==='photos'&&category!=='photos')||(kind==='music'&&category!=='audio')||(kind==='videos'&&category!=='videos'))return;
+    -  // Video posters are fetched separately; originals stream only on playback.
+    -  if(kind==='videos')return;
+    +  // Gallery thumbnails/posters are fetched separately; originals stay on demand.
+    +  if(kind!=='music')return;
+       const connection=(navigator as Navigator&{connection?:{saveData?:boolean;effectiveType?:string}}).connection;
+       if(connection?.saveData||connection?.effectiveType==='2g')return;
+    -  const defaultMax=kind==='photos'?8*1024**2:kind==='music'?24*1024**2:16*1024**2;
+    +  const defaultMax=24*1024**2;
+       const max=typeof limitBytes==='number'&&Number.isFinite(limitBytes)?Math.max(0,Math.min(defaultMax,limitBytes)):defaultMax;
+       if(!max)return;
+       try{await remember(url,viewer,max,true);}catch{/* Network streaming remains available. */}
+    @@ -381,3 +426,141 @@ export async function prefetchChatAudio(url:string,user:string,declaredSize:numb
+       if(!url||!user||!id?.startsWith('connect-attachments/')||!declaredSize||declaredSize>1024*1024)return;
+       await remember(url,user,1024*1024,false);
+     }
+    +
+    +/** In-memory signatures only; durable bytes remain in the existing account/path cache. */
+    +type IO={
+    + lease:(user:string)=>number|null;
+    + cached:(user:string,bucket:string,path:string)=>Promise<string|null>;
+    + sign:(user:string,bucket:string,path:string)=>Promise<string|undefined>;
+    + now?:()=>number;
+    +};
+    +export function createSignedMediaCache(io:IO){
+    + const now=io.now||Date.now;
+    + const links=new Map<string,{url:string;expires:number;lease:number}>();
+    + const pending=new Map<string,Promise<string|undefined>>();
+    + async function resolve(user:string,bucket:string,path:string,force=false):Promise<string|undefined>{
+    +  const lease=io.lease(user);if(lease===null||!user||!path)return;
+    +  const valid=()=>io.lease(user)===lease;
+    +  // Local bytes are independent of token expiry; never sign merely to read them.
+    +  if(!force){const local=await io.cached(user,bucket,path);if(!valid())return;if(local)return local;}
+    +  const key=user+':'+bucket+'/'+path;
+    +  if(force)links.delete(key);
+    +  const old=links.get(key);
+    +  if(!force&&old?.lease===lease&&old.expires>now()+60000)return old.url;
+    +  const operationKey=key+':'+lease,existing=pending.get(operationKey);if(existing)return existing;
+    +  const started=now();
+    +  const task=(async()=>{
+    +   const url=await io.sign(user,bucket,path);
+    +   if(!url||!valid()||started+3600000<=now()+60000)return;
+    +   links.set(key,{url,expires:started+3600000,lease});
+    +   if(links.size>1024)links.delete(links.keys().next().value!);
+    +   return url;
+    +  })().finally(()=>{if(pending.get(operationKey)===task)pending.delete(operationKey);});
+    +  pending.set(operationKey,task);return task;
+    + }
+    + return {resolve,clear:(user:string)=>{for(const key of links.keys())if(key.startsWith(user+':'))links.delete(key);}};
+    +}
+    +
+    +
+    +// CONNECT_MEDIA_RESPONSE_CACHE_V1 — per-login request scope, not a cache key.
+    +type MediaCacheTransport='pending'|'worker'|'native'|'legacy';
+    +let mediaTransport:MediaCacheTransport='legacy',mediaNonce='',mediaBound=false;
+    +let mediaReady:Promise<boolean>=Promise.resolve(false),mediaBarrier:Promise<unknown>=Promise.resolve();
+    +let firstMediaOwner:(()=>void)|undefined,hasMediaOwner=false;
+    +const firstMediaOwnerReady=new Promise<void>(resolve=>{firstMediaOwner=resolve;});
+    +const mediaEpochKeys=(user:string,file:string)=>['@cm-owner:'+user,'@cm-file:'+file,...(['system','photos','videos','audio','other'] as const).map(k=>'@cm-kind:'+user+':'+k),'@cm-version:'+file,file];
+    +const nativeMediaBridge=()=>typeof window==='undefined'?undefined:(window as unknown as {ConnectNative?:{request:(name:string,value:unknown)=>Promise<any>}}).ConnectNative;
+    +export function whenMediaCacheReady(){return mediaReady;}
+    +export function isCachedMediaUrl(source:string){if(source.startsWith('blob:'))return true;try{const u=new URL(source,location.href);return !!owner&&u.origin===location.origin&&u.searchParams.get('__cm_local')==='1'&&u.searchParams.get('__cm')===mediaNonce;}catch{return false;}}
+    +function mediaBaseUrl(source:string){try{const u=new URL(source,location.href);if(!mediaIdentity(u.href)||mediaIdentity(u.href)!.startsWith('core'))return source;if(u.origin!==location.origin){const proxy=u.hostname.endsWith('.storage.supabase.co')?'/supabase-storage':'/supabase';return location.origin+proxy+u.pathname+u.search;}return u.href;}catch{return source;}}
+    +export function cacheMediaUrl(source:string){const raw=mediaBaseUrl(source);try{const u=new URL(raw,location.href);if(!mediaIdentity(u.href)||mediaIdentity(u.href)!.startsWith('core'))return raw;const old=u.searchParams.get('__cm');if(old&&old!==mediaNonce)return '';if(mediaBound&&owner)u.searchParams.set('__cm',mediaNonce);else{u.searchParams.delete('__cm');u.searchParams.delete('__cm_local');}return u.href;}catch{return raw;}}
+    +async function mediaRPC(worker:ServiceWorker,value:unknown,timeout=3000):Promise<any>{return new Promise((resolve,reject)=>{const channel=new MessageChannel();const timer=setTimeout(()=>{channel.port1.close();reject(Error('Media cache worker unavailable'));},timeout);channel.port1.onmessage=event=>{clearTimeout(timer);channel.port1.close();resolve(event.data);};worker.postMessage(value,[channel.port2]);});}
+    +async function nativeMedia(action:string,payload:Record<string,unknown>={},user=owner,nonce=mediaNonce):Promise<any>{const bridge=nativeMediaBridge();if(!bridge)return;const reply=await bridge.request('media:cache',{action,userId:user,nonce,...payload});return reply?.supported?reply.value:undefined;}
+    +async function bindMediaWorker(user:string,nonce:string):Promise<boolean>{
+    + if(!('serviceWorker' in navigator))return false;
+    + const value={type:'CONNECT_MEDIA_BIND',protocol:1,user,nonce,limit:LIMITS[cacheLimit()]||LIMITS.auto};
+    + const current=()=>owner===user&&mediaNonce===nonce;
+    + const active=navigator.serviceWorker.controller;
+    + if(active){try{const reply=await mediaRPC(active,value,300);if(reply?.protocol===1&&reply.supported&&current())return true;}catch{/* Upgrade a pre-cache worker without delaying already cached blobs. */}}
+    + const installed=await navigator.serviceWorker.register('/sw.js',{scope:'/',updateViaCache:'none'});
+    + const updating=installed.installing||installed.waiting;if(updating&&updating.state!=='activated')await new Promise<void>((resolve,reject)=>{const done=()=>{if(updating.state==='activated'){clearTimeout(timer);updating.removeEventListener('statechange',done);resolve();}else if(updating.state==='redundant'){clearTimeout(timer);updating.removeEventListener('statechange',done);reject(Error('Media worker upgrade failed'));}};const timer=setTimeout(()=>{updating.removeEventListener('statechange',done);reject(Error('Media worker upgrade timed out'));},8000);updating.addEventListener('statechange',done);done();});
+    + const registration=await navigator.serviceWorker.ready;
+    + if(!navigator.serviceWorker.controller){await mediaRPC(registration.active!,value);await new Promise<void>((resolve,reject)=>{const done=()=>{clearTimeout(timer);navigator.serviceWorker.removeEventListener('controllerchange',done);resolve();};const timer=setTimeout(()=>{navigator.serviceWorker.removeEventListener('controllerchange',done);reject(Error('Media worker is not controlling this document'));},5000);navigator.serviceWorker.addEventListener('controllerchange',done);if(navigator.serviceWorker.controller)done();});}
+    + const reply=await mediaRPC(navigator.serviceWorker.controller!,value);return reply?.protocol===1&&reply.supported&&current();
+    +}
+    +function beginResponseCache(user:string){
+    + const nonce=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');mediaNonce=nonce;mediaBound=false;mediaTransport='pending';hasMediaOwner=true;firstMediaOwner?.();firstMediaOwner=undefined;
+    + mediaReady=(async()=>{await mediaBarrier;if(owner!==user||mediaNonce!==nonce)return false;
+    +  if(nativeMediaBridge()){const reply=await nativeMedia('bind',{limitBytes:LIMITS[cacheLimit()]||LIMITS.auto},user,nonce);if(owner!==user||mediaNonce!==nonce)return false;mediaBound=reply===true;mediaTransport=mediaBound?'native':'legacy';}
+    +  else{mediaBound=await bindMediaWorker(user,nonce);mediaTransport=mediaBound?'worker':'legacy';}
+    +  return mediaBound;
+    + })().catch(()=>{if(owner===user&&mediaNonce===nonce){mediaBound=false;mediaTransport='legacy';window.dispatchEvent(new CustomEvent('connect:media-cache-capability',{detail:{available:false}}));}return false;});
+    + if('serviceWorker' in navigator&&!nativeMediaBridge()){
+    +  const message=(event:MessageEvent)=>{if(event.data?.type==='CONNECT_MEDIA_SCOPE_REQUEST'&&owner===user&&mediaNonce===nonce)event.ports?.[0]?.postMessage({user,nonce,limit:LIMITS[cacheLimit()]||LIMITS.auto});if(event.data?.type==='CONNECT_MEDIA_FILLED'&&event.data.user===owner)window.dispatchEvent(new CustomEvent('connect:media-cache-filled',{detail:event.data}));};
+    +  const changed=()=>{if(owner===user&&mediaNonce===nonce){mediaReady=bindMediaWorker(user,nonce).then(ok=>{mediaBound=ok;mediaTransport=ok?'worker':'legacy';return ok;}).catch(()=>false);}};
+    +  navigator.serviceWorker.addEventListener('message',message);navigator.serviceWorker.addEventListener('controllerchange',changed);
+    +  return()=>{navigator.serviceWorker.removeEventListener('message',message);navigator.serviceWorker.removeEventListener('controllerchange',changed);navigator.serviceWorker.controller?.postMessage({type:'CONNECT_MEDIA_UNBIND',nonce});endResponseCache(user,nonce);};
+    + }
+    + return()=>{void nativeMedia('unbind',{},user,nonce).catch(()=>{});endResponseCache(user,nonce);};
+    +}
+    +function endResponseCache(user:string,nonce:string){if(mediaNonce===nonce){mediaBound=false;mediaTransport='legacy';mediaNonce='';}mediaBarrier=mediaBarrier.catch(()=>{}).then(async()=>{const d=await db();await new Promise<void>((resolve,reject)=>{const tx=d.transaction('retired','readwrite'),store=tx.objectStore('retired');const q=store.get('@cm-owner:'+user);q.onsuccess=()=>store.put(Number(q.result||0)+1,'@cm-owner:'+user);tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);});}).catch(()=>{});}
+    +function installMediaSourceGate(){
+    + if(typeof window==='undefined')return;
+    + const record=new WeakMap<Element,Map<string,{source:string;promise:Promise<void>}>>();
+    + const setAttribute=Element.prototype.setAttribute,removeAttribute=Element.prototype.removeAttribute;
+    + const isMedia=(el:Element,name:string)=>name==='src'&&['IMG','AUDIO','VIDEO','SOURCE'].includes(el.tagName)||name==='poster'&&el.tagName==='VIDEO';
+    + function assign(el:Element,name:string,source:string,write:(value:string)=>void){
+    +  const old=record.get(el);old?.delete(name);
+    +  if(!isMedia(el,name)||source.startsWith('blob:')||source.startsWith('data:')){write(source);return;}const id=mediaIdentity(source);if(!id||id.startsWith('core')){write(source);return;}
+    +  if(!owner&&hasMediaOwner){write('');return;}
+    +  const requestedOwner=owner,requestedNonce=mediaNonce;const entries=old||new Map();record.set(el,entries);
+    +  const item={source,promise:Promise.resolve()};entries.set(name,item);
+    +  item.promise=(async()=>{if(!requestedOwner)await firstMediaOwnerReady;const user=requestedOwner||owner,nonce=requestedNonce||mediaNonce;await mediaReady;if(entries.get(name)!==item||owner!==user||mediaNonce!==nonce||!user)return;const local=await resolveCachedMedia(source,user);if(entries.get(name)!==item||owner!==user||mediaNonce!==nonce)return;entries.delete(name);write(cacheMediaUrl(local));})();
+    + }
+    + Element.prototype.setAttribute=function(name,value){const key=name.toLowerCase();assign(this,key,String(value),next=>setAttribute.call(this,name,next));};
+    + Element.prototype.removeAttribute=function(name){record.get(this)?.delete(name.toLowerCase());removeAttribute.call(this,name);};
+    + for(const [prototype,name]of [[HTMLImageElement.prototype,'src'],[HTMLMediaElement.prototype,'src'],[HTMLSourceElement.prototype,'src'],[HTMLVideoElement.prototype,'poster']] as const){const descriptor=Object.getOwnPropertyDescriptor(prototype,name);if(!descriptor?.set)continue;Object.defineProperty(prototype,name,{...descriptor,set(this:Element,value:string){assign(this,name,String(value),next=>descriptor.set!.call(this,next));}});}
+    + const decode=HTMLImageElement.prototype.decode;if(decode)HTMLImageElement.prototype.decode=function(){const waiting=record.get(this)?.get('src');return waiting?waiting.promise.then(()=>decode.call(this)):decode.call(this);};
+    + const play=HTMLMediaElement.prototype.play,load=HTMLMediaElement.prototype.load;HTMLMediaElement.prototype.play=function(){const pending=record.get(this)?.get('src');return pending?pending.promise.then(()=>play.call(this)):play.call(this);};HTMLMediaElement.prototype.load=function(){const pending=record.get(this)?.get('src');if(pending){void pending.promise.then(()=>{if(!record.get(this)?.get('src'))load.call(this);});}else load.call(this);};
+    +}
+    +let mediaFetchInstalled=false;
+    +function installMediaFetchGate(){if(mediaFetchInstalled)return;mediaFetchInstalled=true;const original=window.fetch.bind(window);
+    + window.fetch=(async(input:RequestInfo|URL,init?:RequestInit)=>{const raw=typeof input==='string'?input:input instanceof URL?input.href:input.url,method=init?.method||(input instanceof Request?input.method:'GET'),id=mediaIdentity(raw);if(method.toUpperCase()!=='GET'||!id||id.startsWith('core'))return original(input,init);const request=new Request(input,init);const user=owner,epoch=mediaEpoch,nonce=mediaNonce;if(!user)throw new DOMException('Media account signed out','AbortError');await mediaReady;if(!cacheLeaseValid(user,epoch)||nonce!==mediaNonce)throw new DOMException('Media account changed','AbortError');const source=cacheMediaUrl(request.url);if(!source)throw new DOMException('Stale media scope','AbortError');return original(new Request(source,request));}) as typeof fetch;
+    +}
+    +async function readStreamedBlob(row:Entry,url:string,user:string,epoch:number):Promise<Blob|null>{
+    + const d=await db();const key=row.key;const meta=await new Promise<any>((resolve,reject)=>{const q=d.transaction('media-ranges').objectStore('media-ranges').get(key);q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});if(!meta?.complete||meta.total!==row.size)return null;
+    + const pieces:ArrayBuffer[]=[];let offset=0;
+  CONNECT_MEDIA_PATCH_005: |2
+    + while(offset<row.size){const part=await new Promise<any>((resolve,reject)=>{const q=d.transaction('media-ranges').objectStore('media-ranges').index('fileStart').openCursor(IDBKeyRange.bound([key,0],[key,offset]),'prev');q.onsuccess=()=>resolve(q.result?.value);q.onerror=()=>reject(q.error);});if(!part||part.end<offset||!cacheLeaseValid(user,epoch))return null;const size=Math.min(row.size-offset,part.end-offset+1);pieces.push(part.bytes.slice(offset-part.start,offset-part.start+size));offset+=size;}
+    + return new Blob(pieces,{type:row.type||contentType(mediaIdentity(url)||'')});
+    +}
+    +async function responseCacheLookup(url:string,user:string):Promise<string|null>{
+    + if(user!==owner)return null;await mediaReady;if(mediaTransport!=='native'||user!==owner)return null;const id=mediaIdentity(url);if(!id)return null;const value=await nativeMedia('lookup',{identity:id,version:versionsForMedia().get(user+':'+id)||''});return value?.complete&&typeof value.url==='string'?value.url:null;
+    +}
+    +// Each platform retains its existing cache entry schema; versions are shared locally.
+    +const responseMediaVersions=new Map<string,string>();
+    +function versionsForMedia(){return responseMediaVersions;}
+    +export async function noteMediaVersion(user:string,identity:string,version:string){
+    + if(!version||user!==owner)return;const key=user+':'+identity,previous=responseMediaVersions.get(key);responseMediaVersions.set(key,version);const d=await db();let invalidate=false;
+    + await new Promise<void>((resolve,reject)=>{const tx=d.transaction(['retired','objects'],'readwrite'),store=tx.objectStore('retired'),request=store.get('@cm-version:'+key);request.onsuccess=()=>{invalidate=Boolean(request.result&&request.result!==version||previous&&previous!==version);store.put(version,'@cm-version:'+key);};tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);});
+    + if(invalidate)await clearCachedMedia('temporary',identity);if(mediaTransport==='native')await nativeMedia('lookup',{identity,version});
+    +}
+    +async function clearResponseParts(category:CacheCategory|'temporary',identity:string|undefined,viewer:string){
+    + const d=await db();const metas=await new Promise<any[]>((resolve,reject)=>{const q=d.transaction('media-ranges').objectStore('media-ranges').index('kind').getAll('meta');q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});
+    + const affected=metas.filter(m=>m.user===viewer&&(identity?m.id===identity:category==='temporary'?m.category!=='system':m.category===category));
+    + await new Promise<void>((resolve,reject)=>{const tx=d.transaction(['retired','media-ranges'],'readwrite'),retired=tx.objectStore('retired'),parts=tx.objectStore('media-ranges');const bump=(key:string)=>{const q=retired.get(key);q.onsuccess=()=>retired.put(Number(q.result||0)+1,key);};if(identity)bump('@cm-file:'+viewer+':'+identity);else for(const kind of category==='temporary'?['photos','videos','audio','other']:[category])bump('@cm-kind:'+viewer+':'+kind);
+    +  for(const meta of affected){const q=parts.index('file').openKeyCursor(IDBKeyRange.only(meta.file));q.onsuccess=()=>{const cursor=q.result;if(cursor){parts.delete(cursor.primaryKey);cursor.continue();}};}tx.oncomplete=()=>resolve();tx.onerror=tx.onabort=()=>reject(tx.error);
+    + });
+    + if(mediaTransport==='native'&&viewer===owner){let retire=false;if(identity)retire=await new Promise<boolean>((resolve,reject)=>{const q=d.transaction('retired').objectStore('retired').get(viewer+':'+identity);q.onsuccess=()=>resolve(Boolean(q.result));q.onerror=()=>reject(q.error);});await nativeMedia('clear',{category,...(identity?{identity,retire}: {})});}
+    +}
+    +installMediaSourceGate();
+    +
+    +const signedMediaIssued=new Map<string,number>();
+    +export function signedMediaUrlValid(url:string):boolean{
+    + if(!url)return false;if(isCachedMediaUrl(url))return true;
+    + try{const token=new URL(url,location.href).searchParams.get('token');if(token){const raw=token.split('.')[1];if(raw){const data=JSON.parse(atob(raw.replace(/-/g,'+').replace(/_/g,'/')));if(Number.isFinite(data.exp))return Date.now()<data.exp*1000-45000;}}}catch{}
+    + const at=signedMediaIssued.get(url);return at!==undefined&&Date.now()<at+3555000;
+    +}
+    +export function mediaPlaybackUrl(url:string):string{const value=cacheMediaUrl(url);if(!signedMediaIssued.has(value))signedMediaIssued.set(value,Date.now());if(signedMediaIssued.size>2048)signedMediaIssued.delete(signedMediaIssued.keys().next().value!);return value;}
+    +
+    +async function updateResponseCacheLimit(){try{await mediaReady;if(!owner||!mediaBound)return;const limit=LIMITS[cacheLimit()]||LIMITS.auto;if(mediaTransport==='native')await nativeMedia('bind',{limitBytes:limit});else if(navigator.serviceWorker.controller)await mediaRPC(navigator.serviceWorker.controller,{type:'CONNECT_MEDIA_BIND',protocol:1,user:owner,nonce:mediaNonce,limit});}catch{/* Cache settings never invalidate authentication. */}}
+    +async function responseCacheStats(result:Record<CacheCategory,number>){const user=owner;try{const d=await db();const partial=await new Promise<any[]>((resolve,reject)=>{const q=d.transaction('media-ranges').objectStore('media-ranges').index('kind').getAll('meta');q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});for(const m of partial)if(m.user===user&&!m.complete)result[m.category as CacheCategory]+=Number(m.stored)||0;if(mediaTransport==='native'){const native=await nativeMedia('stats');if(user===owner&&native)for(const kind of ['system','photos','videos','audio','other'] as const)result[kind]+=Number(native[kind])||0;}}catch{/* Browser/private storage may be unavailable. */}return user===owner?result:{system:0,photos:0,videos:0,audio:0,other:0};}
+    diff --git a/lib/profile-media-index.ts b/lib/profile-media-index.ts
+    index a8ca57f..03ee261 100644
+    --- a/lib/profile-media-index.ts
+    +++ b/lib/profile-media-index.ts
+    @@ -5,7 +5,7 @@
+     import type { SupabaseClient } from '@supabase/supabase-js';
+     import { prefetchProfileFile, retireCachedProfileFile } from './media-cache';
+     export type ProfileLibraryKind = 'photos' | 'videos' | 'music';
+    -export type ProfileLibraryRow = { path: string; createdAt: string };
+    +export type ProfileLibraryRow = { path: string; createdAt: string;version?:string };
+     type Catalog = { key: string; viewer: string; owner: string; kind: ProfileLibraryKind; savedAt: number; items: ProfileLibraryRow[] };
+     const NAME = 'connect-profile-index-v1';
+     const STORE = 'catalogs';
+    @@ -40,7 +40,7 @@ export async function readProfileLibrary(viewer:string,owner:string,kind:Profile
+     export async function writeProfileLibrary(viewer:string,owner:string,kind:ProfileLibraryKind,items:ProfileLibraryRow[]):Promise<void>{
+       if(!viewer||!owner)return;
+       const prefix=owner+'/'+kind+'/';
+    -  const safe=items.filter(x=>x.path.startsWith(prefix)).slice(0,100).map(x=>({path:x.path,createdAt:x.createdAt}));
+    +  const safe=items.filter(x=>x.path.startsWith(prefix)).slice(0,100).map(x=>({path:x.path,createdAt:x.createdAt,version:x.version||''}));
+       await operation('readwrite',s=>s.put({key:key(viewer,owner,kind),viewer,owner,kind,savedAt:Date.now(),items:safe} satisfies Catalog));
+     }
+     export async function removeProfileLibraryItem(viewer:string,owner:string,kind:ProfileLibraryKind,path:string):Promise<void>{
+    @@ -59,7 +59,7 @@ export async function warmOwnProfileLibraries(client:SupabaseClient,viewer:strin
+           });
+           if(error)return;
+           await writeProfileLibrary(viewer,viewer,kind,(data||[]).filter(row=>row.id&&row.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(row.name)).slice(0,100).map(row=>({
+    -        path:viewer+'/'+kind+'/'+row.name,createdAt:row.created_at||''
+    +        path:viewer+'/'+kind+'/'+row.name,createdAt:row.created_at||'',version:row.updated_at||row.created_at||''
+           })));
+         }catch{/* Offline: preserve the last catalog. */}
+       }));
+    @@ -94,7 +94,7 @@ export async function warmPeerProfileLibraries(
+             });
+             if(error)return; // Permissions and RLS always take precedence over local cache.
+             const rows=(data||[]).filter(x=>x.id&&x.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(x.name)).slice(0,100).map(x=>({
+    -          path:peer+'/'+kind+'/'+x.name, createdAt:x.created_at||'',
+    +          path:peer+'/'+kind+'/'+x.name, createdAt:x.created_at||'',version:x.updated_at||x.created_at||'',
+               size:Number(x.metadata?.size||0)
+             }));
+             const before=await readProfileLibrary(viewer,peer,kind).catch(()=>null);
+    @@ -108,7 +108,7 @@ export async function warmPeerProfileLibraries(
+             if(!allowBytes)return;
+             const cap=budget[kind];
+             // The gallery index is warmed, but video bytes stay on-demand.
+    -        const selected=kind==='videos'?[]:rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);
+    +        const selected:typeof rows=[]; // Originals are fetched only by explicit user playback/open.
+             if(!selected.length)return;
+             const result=await client.storage.from('connect-profile-media').createSignedUrls(selected.map(x=>x.path),3600);
+             if(result.error)return;
+    diff --git a/public/sw.js b/public/sw.js
+    index e429624..c5a71b3 100644
+    --- a/public/sw.js
+    +++ b/public/sw.js
+    @@ -14,6 +14,7 @@ function coreResponse(url,response){
+     }
+     self.addEventListener('fetch',event=>{
+      const u=new URL(event.request.url);
+    + if(event.request.method==='GET'&&cmIdentity(u.href)&&u.searchParams.has('__cm')){event.respondWith(cmHandle(event));return;}
+      if(event.request.method!=='GET'||u.origin!==self.location.origin||!/^\/(?:_next\/static\/|icon-|favicon|apple-touch|connect-scenes\/|connect-crypto\/|stickers\/)/.test(u.pathname))return;
+      event.respondWith((async()=>{
+       let cache;
+    @@ -110,7 +111,7 @@ function badgeCallsViewed(user,viewedAt){return badgeChange(user,state=>{
+     function markers(){return new Promise((resolve,reject)=>{const request=indexedDB.open('connect-push-read-v1',1);request.onupgradeneeded=()=>request.result.createObjectStore('read');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});}
+     async function watermark(user,chat,value){if(!user||!chat)return '';const db=await markers();try{return await new Promise((resolve,reject)=>{const tx=db.transaction('read',value?'readwrite':'readonly'),store=tx.objectStore('read'),request=store.get(user+':'+chat);let result='';request.onsuccess=()=>{result=request.result||'';if(value&&Date.parse(value)>Date.parse(result||'1970-01-01')){result=value;store.put(value,user+':'+chat);}};tx.oncomplete=()=>resolve(result);tx.onabort=tx.onerror=()=>reject(tx.error);});}finally{db.close();}}
+     async function clearRead(d){await watermark(d.userId,d.conversationId,d.readAt);await badgeRead(d.userId,d.conversationId,d.readAt).catch(()=>{});for(const alert of await self.registration.getNotifications())if(alert.data?.kind==='message'&&alert.data?.conversationId===d.conversationId&&Date.parse(alert.data.createdAt)<=Date.parse(d.readAt))alert.close();}
+    -self.addEventListener('message',event=>{if(event.data?.type==='CONNECT_DIAGNOSTICS_PING'){event.ports?.[0]?.postMessage({type:'CONNECT_DIAGNOSTICS_READY'});return;}if(event.data?.type==='CONNECT_BADGE_SNAPSHOT')event.waitUntil(badgeSnapshot(event.data).catch(()=>{}));if(event.data?.type==='CONNECT_READ')event.waitUntil(clearRead(event.data));if(event.data?.type==='CONNECT_CALLS_VIEWED')event.waitUntil((async()=>{const d=event.data;await watermark(d.userId,'#calls',d.viewedAt);await badgeCallsViewed(d.userId,d.viewedAt).catch(()=>{});for(const alert of await self.registration.getNotifications())if(alert.data?.kind==='missed-call'&&alert.data?.userId===d.userId)alert.close();})());});
+    +self.addEventListener('message',event=>{if(String(event.data?.type||'').startsWith('CONNECT_MEDIA_')){event.waitUntil(cmMessage(event));return;}if(event.data?.type==='CONNECT_DIAGNOSTICS_PING'){event.ports?.[0]?.postMessage({type:'CONNECT_DIAGNOSTICS_READY'});return;}if(event.data?.type==='CONNECT_BADGE_SNAPSHOT')event.waitUntil(badgeSnapshot(event.data).catch(()=>{}));if(event.data?.type==='CONNECT_READ')event.waitUntil(clearRead(event.data));if(event.data?.type==='CONNECT_CALLS_VIEWED')event.waitUntil((async()=>{const d=event.data;await watermark(d.userId,'#calls',d.viewedAt);await badgeCallsViewed(d.userId,d.viewedAt).catch(()=>{});for(const alert of await self.registration.getNotifications())if(alert.data?.kind==='missed-call'&&alert.data?.userId===d.userId)alert.close();})());});
+     self.addEventListener('push',event=>{let d={};try{d=event.data?.json()||{};}catch{}event.waitUntil((async()=>{
+      /* CONNECT_PWA_PUSH_DIAGNOSTICS_V1: diagnostic push never changes unread badges/call states. */
+      if(d.kind==='connect-push-diagnostic'){
+    @@ -141,3 +142,94 @@ if(details.kind==='connect-push-diagnostic'){event.waitUntil((async()=>{
+      await clients.openWindow('/');
+     })());return;}
+     event.waitUntil((async()=>{for(const client of await clients.matchAll({type:'window',includeUncontrolled:true}))if(new URL(client.url).origin===self.location.origin){await client.focus();client.postMessage(details.kind==='incoming-call'?{type:'CONNECT_INCOMING_CALL',callId:details.callId}:details.kind==='missed-call'?{type:'CONNECT_OPEN_CALLS'}:{type:'CONNECT_OPEN_CHAT',conversationId:details.conversationId});return;}await clients.openWindow(details.kind==='missed-call'?'/?calls=missed':details.conversationId?'/?conversation='+encodeURIComponent(details.conversationId):'/');})());});
+    +
+    +// CONNECT_MEDIA_RESPONSE_CACHE_V1: one response, account-scoped durable bytes.
+    +// CacheStorage above remains public-core-only; private media uses its existing IDB.
+    +const cmScopes=new Map(),cmFlights=new Map();let cmOpening;
+    +const cmKinds=['system','photos','videos','audio','other'],cmVersionIndex=7,cmRetiredIndex=8;
+    +function cmIdentity(url){
+    + try{const u=new URL(url,self.location.origin);if(u.origin!==self.location.origin)return null;const m=u.pathname.match(/\/storage\/v1\/object\/(?:sign|public|authenticated)\/(.+)$/);if(!m)return null;const id=decodeURIComponent(m[1]);if(!/^(connect-attachments|connect-avatars|connect-stickers|connect-profile-media)\//.test(id)||id.length>4096||id.split('/').some(p=>!p||p==='.'||p==='..')||/[\x00-\x1f\\?#]/.test(id))return null;return id;}catch{return null;}
+    +}
+    +function cmCategory(id,type=''){if(id.startsWith('connect-avatars/'))return 'system';if(type.startsWith('image/'))return 'photos';if(type.startsWith('video/')||/\.(mp4|webm|mov)$/i.test(id))return 'videos';if(type.startsWith('audio/')||/\.(mp3|m4a|aac|ogg|opus|wav|flac)$/i.test(id))return 'audio';if(/\.(png|webp|gif|jpe?g|svg)$/i.test(id)||id.startsWith('connect-stickers/'))return 'photos';return 'other';}
+    +function cmStrong(tag){return /^"[^\r\n]{0,510}"$/.test(tag);}
+    +function cmDB(){return cmOpening??=new Promise((resolve,reject)=>{const q=indexedDB.open('connect-media-v1',4);q.onupgradeneeded=()=>{const d=q.result;if(!d.objectStoreNames.contains('objects'))d.createObjectStore('objects',{keyPath:'key'});for(const n of ['links','retired'])if(!d.objectStoreNames.contains(n))d.createObjectStore(n);if(!d.objectStoreNames.contains('media-ranges')){const s=d.createObjectStore('media-ranges',{keyPath:'key'});s.createIndex('file','file');s.createIndex('kind','kind');s.createIndex('fileStart',['file','start']);}};q.onsuccess=()=>{q.result.onversionchange=()=>{q.result.close();cmOpening=undefined;};resolve(q.result);};q.onerror=()=>{cmOpening=undefined;reject(q.error);};});}
+    +function cmReq(q){return new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error);});}
+    +async function cmRead(stores,fn){const db=await cmDB();const tx=db.transaction(stores);return fn(tx);}
+    +function cmEpochKeys(user,file){return ['@cm-owner:'+user,'@cm-file:'+file,...cmKinds.map(k=>'@cm-kind:'+user+':'+k),'@cm-version:'+file,file];}
+  CONNECT_MEDIA_PATCH_006: |2
+    +async function cmSnapshot(scope,id){const file=scope.user+':'+id;return cmRead(['retired','objects','media-ranges'],async tx=>{const keys=cmEpochKeys(scope.user,file);const pending=keys.map(k=>cmReq(tx.objectStore('retired').get(k)));const rowRequest=cmReq(tx.objectStore('objects').get(file)),metaRequest=cmReq(tx.objectStore('media-ranges').get(file));const [values,row,meta]=await Promise.all([Promise.all(pending),rowRequest,metaRequest]);return{scope,id,file,keys,values,row,meta};});}
+    +function cmScopeCurrent(state){return cmScopes.get(state.scope.client)===state.scope;}
+    +function cmLeaseOK(state,values,type){const category=cmCategory(state.id,type);return cmScopeCurrent(state)&&!values[cmRetiredIndex]&&values[0]===state.values[0]&&values[1]===state.values[1]&&values[2+cmKinds.indexOf(category)]===state.values[2+cmKinds.indexOf(category)]&&values[cmVersionIndex]===state.values[cmVersionIndex];}
+    +function cmMerged(ranges){const out=[];for(const p of [...ranges].sort((a,b)=>a[0]-b[0])){const last=out[out.length-1];if(last&&p[0]<=last[1]+1)last[1]=Math.max(last[1],p[1]);else out.push([...p]);}return out;}
+    +function cmGaps(start,end,ranges){let cursor=start;const result=[];for(const [a,b]of cmMerged(ranges)){if(b<cursor)continue;if(a>end)break;if(a>cursor)result.push([cursor,Math.min(end,a-1)]);cursor=Math.max(cursor,b+1);}if(cursor<=end)result.push([cursor,end]);return result;}
+    +function cmDeleteParts(store,file){const q=store.index('file').openKeyCursor(IDBKeyRange.only(file));q.onsuccess=()=>{const c=q.result;if(c){store.delete(c.primaryKey);c.continue();}};}
+    +async function cmReset(state){const db=await cmDB();await new Promise((resolve,reject)=>{const tx=db.transaction(['objects','media-ranges','retired'],'readwrite');const r=tx.objectStore('retired');const q=r.get('@cm-file:'+state.file);q.onsuccess=()=>{r.put(Number(q.result||0)+1,'@cm-file:'+state.file);tx.objectStore('objects').delete(state.file);cmDeleteParts(tx.objectStore('media-ranges'),state.file);};tx.oncomplete=resolve;tx.onerror=tx.onabort=()=>reject(tx.error);});return cmSnapshot(state.scope,state.id);}
+    +async function cmCommit(state,info,bytes,start,finish=false){
+    + if(!cmScopeCurrent(state))return false;const db=await cmDB();return new Promise((resolve,reject)=>{
+    +  const tx=db.transaction(['objects','media-ranges','retired'],'readwrite'),r=tx.objectStore('retired'),parts=tx.objectStore('media-ranges');let values=[],meta,left=state.keys.length+1,written=false,complete=false;
+    +  const ready=()=>{if(--left)return;if(!cmLeaseOK(state,values,info.type))return;if(meta&&(meta.tag!==info.tag||meta.transfer!==info.transfer&&!cmStrong(info.tag)))return;
+    +   meta=meta||{key:state.file,file:state.file,kind:'meta',user:state.scope.user,id:state.id,type:info.type,tag:info.tag,total:info.total,transfer:info.transfer,ranges:[],used:Date.now(),version:state.values[cmVersionIndex]||'',category:cmCategory(state.id,info.type)};
+    +   if(bytes?.byteLength){for(const [a,b]of cmGaps(start,start+bytes.byteLength-1,meta.ranges)){const slice=bytes.slice(a-start,b-start+1);parts.put({key:state.file+'@part:'+a+':'+b,file:state.file,kind:'part',start:a,end:b,bytes:slice.buffer});meta.ranges.push([a,b]);}meta.ranges=cmMerged(meta.ranges);}
+    +   if(finish&&info.total<0)meta.total=info.received;
+    +   meta.used=Date.now();const coherent=cmStrong(info.tag)||info.start===0&&info.received===meta.total&&(finish||info.expected>=0);
+    +   meta.complete=coherent&&meta.total>0&&meta.ranges.length===1&&meta.ranges[0][0]===0&&meta.ranges[0][1]===meta.total-1;
+    +   meta.stored=meta.ranges.reduce((n,p)=>n+p[1]-p[0]+1,0);parts.put(meta);written=true;complete=meta.complete;
+    +   if(complete)tx.objectStore('objects').put({key:state.file,user:state.scope.user,category:meta.category,size:meta.total,used:Date.now(),type:meta.type,stream:true,version:meta.version,etag:meta.tag});
+    +  };
+    +  state.keys.forEach((key,i)=>{const q=r.get(key);q.onsuccess=()=>{values[i]=q.result;ready();};});const q=parts.get(state.file);q.onsuccess=()=>{meta=q.result;ready();};tx.oncomplete=()=>{if(complete)void cmNotify(state.scope.user,state.id);resolve(written);};tx.onerror=tx.onabort=()=>reject(tx.error||Error('Media cache transaction failed'));
+    + });
+    +}
+    +async function cmNotify(user,id){for(const [clientId,scope]of cmScopes)if(scope.user===user){const client=await clients.get(clientId);client?.postMessage({type:'CONNECT_MEDIA_FILLED',protocol:1,user,id});}}
+    +async function cmPart(file,offset){return cmRead(['media-ranges'],tx=>new Promise((resolve,reject)=>{const q=tx.objectStore('media-ranges').index('fileStart').openCursor(IDBKeyRange.bound([file,0],[file,offset]),'prev');q.onsuccess=()=>{const p=q.result?.value;resolve(p&&p.end>=offset?p:null);};q.onerror=()=>reject(q.error);}));}
+    +async function cmSummaries(user){const db=await cmDB();return new Promise((resolve,reject)=>{const tx=db.transaction(['objects','media-ranges']),rows=new Map();const q=tx.objectStore('objects').openCursor();q.onsuccess=()=>{const c=q.result;if(c){const v=c.value;if(v.user===user)rows.set(v.key,{key:v.key,category:v.category,size:v.size,used:v.used,id:v.key.slice(user.length+1)});c.continue();}};const m=tx.objectStore('media-ranges').index('kind').getAll('meta');m.onsuccess=()=>{for(const v of m.result)if(v.user===user)rows.set(v.key,{key:v.key,category:v.category,size:v.stored||0,used:v.used,id:v.id});};tx.oncomplete=()=>resolve([...rows.values()]);tx.onerror=()=>reject(tx.error);});}
+    +async function cmTrim(scope,keep){const rows=(await cmSummaries(scope.user)).sort((a,b)=>a.used-b.used);let temporary=rows.filter(v=>v.category!=='system').reduce((n,v)=>n+v.size,0),system=rows.filter(v=>v.category==='system').reduce((n,v)=>n+v.size,0);for(const row of rows){if(row.key===keep)continue;const protectedRow=row.category==='system';if(protectedRow?system<=64*1024**2:temporary<=scope.limit)continue;if(!cmScopeCurrent({scope}))return;await cmReset(await cmSnapshot(scope,row.id));if(protectedRow)system-=row.size;else temporary-=row.size;}}
+    +function cmBounds(header,total){if(!header||header.includes(','))return[0,total-1];const m=/^bytes=(\d*)-(\d*)$/.exec(header);if(!m||!m[1]&&!m[2])return null;const a=m[1]?Number(m[1]):Math.max(0,total-Number(m[2])),b=m[1]&&m[2]?Math.min(total-1,Number(m[2])):total-1;return Number.isSafeInteger(a)&&Number.isSafeInteger(b)&&a>=0&&a<total&&b>=a?[a,b]:null;}
+    +function cmError(status,total){const h={'Cache-Control':'no-store'};if(total!==undefined)h['Content-Range']='bytes */'+total;return new Response(null,{status,headers:h});}
+    +function cmHeaders(meta,range){const span=cmBounds(range,meta.total);if(!span)return null;const partial=range&&!range.includes(',');const headers={'Content-Type':meta.type||'application/octet-stream','Content-Length':String(span[1]-span[0]+1),'Accept-Ranges':'bytes','Cache-Control':'private, no-store'};if(meta.tag)headers.ETag=meta.tag;if(partial)headers['Content-Range']=`bytes ${span[0]}-${span[1]}/${meta.total}`;return{headers,status:partial?206:200,span};}
+    +function cmLocal(state,meta,range){const spec=cmHeaders(meta,range);if(!spec)return cmError(416,meta.total);let pos=spec.span[0],closed=false;const body=new ReadableStream({async pull(controller){try{if(closed)return;if(!cmScopeCurrent(state))throw Error('Media account changed');if(pos>spec.span[1]){closed=true;controller.close();return;}const part=await cmPart(state.file,pos);if(!part)throw Error('Cached range is missing');const count=Math.min(spec.span[1]-pos+1,part.end-pos+1);controller.enqueue(new Uint8Array(part.bytes,pos-part.start,count));pos+=count;}catch(error){closed=true;controller.error(error);}},cancel(){closed=true;}});return new Response(body,spec);}
+    +function cmLegacy(state,row,range){const blob=row.blob||(row.bytes instanceof ArrayBuffer?new Blob([row.bytes],{type:row.type||''}):null);if(!blob?.size)return null;const meta={type:row.type||blob.type,total:blob.size,tag:row.etag||''};const spec=cmHeaders(meta,range);if(!spec)return cmError(416,blob.size);return new Response(blob.slice(spec.span[0],spec.span[1]+1,meta.type),spec);}
+    +function cmClean(request,range,tag){const url=new URL(request.url);url.searchParams.delete('__cm');url.searchParams.delete('__cm_local');const headers=new Headers(request.headers);if(range===null)headers.delete('range');else if(range!==undefined)headers.set('range',range);if(tag)headers.set('if-range',tag);return new Request(url.href,{method:'GET',headers,credentials:request.credentials,redirect:'follow',cache:'no-store',mode:'same-origin'});}
+    +async function cmNetwork(event,request,state,range,tag,onFinish){
+    + let ended=false;const finish=()=>{if(!ended){ended=true;onFinish?.();}};let response;
+    + try{response=await fetch(cmClean(request,range,tag));}catch(error){finish();throw error;}
+    + if(!response.ok||response.type==='opaque'||!response.body){finish();return response;}
+    + const type=(response.headers.get('content-type')||'application/octet-stream').split(';')[0];const cr=/^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get('content-range')||'');const encoded=response.headers.get('content-encoding');const length=!encoded||encoded==='identity'?Number(response.headers.get('content-length')||-1):-1;
+    + const start=response.status===206&&cr?Number(cr[1]):0,expected=response.status===206&&cr?Number(cr[2])-start+1:length,total=response.status===206&&cr?Number(cr[3]):length;
+    + if(![200,206].includes(response.status)||type==='text/html'||type.includes('application/json')||response.status===206&&(!cr||expected<=0||total<=0||start+expected>total)||total>state.scope.limit){finish();return response;}
+    + const etag=response.headers.get('etag')||'';const info={type,tag:etag,start,total,expected,received:0,transfer:state.scope.nonce+':'+Date.now()+':'+Math.random()};
+    + if(state.meta&&(state.meta.tag!==etag||state.meta.total!==total||!cmStrong(etag))){state=await cmReset(state);}
+    + const reader=response.body.getReader();let pending=[],pendingBytes=0,pendingStart=start,closed=false,writable=true;let settle;event.waitUntil(new Promise(resolve=>settle=resolve));
+    + async function flush(done){if(!writable)return;const bytes=new Uint8Array(pendingBytes);let off=0;for(const part of pending){bytes.set(part,off);off+=part.length;}try{writable=await cmCommit(state,info,bytes,pendingStart,done);}catch{writable=false;}pending=[];pendingBytes=0;pendingStart=start+info.received;}
+    + const stop=()=>{finish();settle();};
+    + const stream=new ReadableStream({async pull(controller){if(closed)return;try{if(!cmScopeCurrent(state))throw Error('Media account changed');const {value,done}=await reader.read();if(done){if(expected>=0&&info.received!==expected)throw Error('Truncated media response');await flush(true);closed=true;controller.close();stop();void cmTrim(state.scope,state.file).catch(()=>{});return;}if(expected>=0&&info.received+value.length>expected)throw Error('Oversized media range');if(start+info.received+value.length>Math.min(state.scope.limit,2*1024**3)){writable=false;pending=[];pendingBytes=0;}
+    + if(writable){pending.push(value.slice());pendingBytes+=value.length;}info.received+=value.length;if(pendingBytes>=256*1024)await flush(false);controller.enqueue(value);
+    + }catch(error){closed=true;await reader.cancel().catch(()=>{});controller.error(error);stop();}},async cancel(reason){if(closed)return;closed=true;await flush(false);await reader.cancel(reason).catch(()=>{});stop();}});
+    + const headers=new Headers(response.headers);headers.delete('content-encoding');headers.delete('transfer-encoding');if(encoded&&encoded!=='identity')headers.delete('content-length');headers.set('cache-control','private, no-store');return new Response(stream,{status:response.status,statusText:response.statusText,headers});
+    +}
+    +async function cmGetScope(event){let scope=cmScopes.get(event.clientId);if(scope)return scope;const client=await clients.get(event.clientId);if(!client)return null;const data=await new Promise(resolve=>{const c=new MessageChannel();const timer=setTimeout(()=>{c.port1.close();resolve(null);},2500);c.port1.onmessage=e=>{clearTimeout(timer);c.port1.close();resolve(e.data);};client.postMessage({type:'CONNECT_MEDIA_SCOPE_REQUEST',protocol:1},[c.port2]);});if(data&&typeof data.user==='string'&&data.user.length<=128&&/^[A-Za-z0-9_-]{32,128}$/.test(data.nonce)){scope={client:event.clientId,user:data.user,nonce:data.nonce,limit:Math.max(0,Math.min(2*1024**3,Number(data.limit)||500*1024**2))};cmScopes.set(event.clientId,scope);return scope;}return null;}
+    +async function cmHandle(event){
+    + const request=event.request,url=new URL(request.url),id=cmIdentity(url.href);let scope=await cmGetScope(event);if(!scope)return cmError(403);if(url.searchParams.get('__cm')!==scope.nonce)return cmError(403);
+    + let state;try{state=await cmSnapshot(scope,id);}catch{return fetch(cmClean(request,undefined,null));}if(state.values[cmRetiredIndex])return cmError(410);let range=request.headers.get('range');if(request.headers.has('if-range')&&request.headers.get('if-range')!==state.meta?.tag)range=null;
+    + const local=()=>{if(state.row&&!state.row.stream)return cmLegacy(state,state.row,range);if(state.meta&&state.meta.total>0){const span=cmBounds(range,state.meta.total);if(!span)return cmError(416,state.meta.total);if(state.meta.complete||cmStrong(state.meta.tag)&&!cmGaps(...span,state.meta.ranges).length)return cmLocal(state,state.meta,range);}return null;};
+    + let ready=local();if(ready)return ready;if(url.searchParams.has('__cm_local'))return cmError(504);
+    + let release;const image=!['audio','videos'].includes(cmCategory(id));if(image){const pending=cmFlights.get(state.file);if(pending){await pending;if(!cmScopeCurrent(state))return cmError(403);state=await cmSnapshot(scope,id);if(state.values[cmRetiredIndex])return cmError(410);ready=local();if(ready)return ready;}
+    + let done;const task=new Promise(resolve=>done=resolve);cmFlights.set(state.file,task);release=()=>{if(cmFlights.get(state.file)===task)cmFlights.delete(state.file);done();};}
+    + try{
+    +  const meta=state.meta;if(meta&&meta.total>0&&cmStrong(meta.tag)){
+    +   const span=cmBounds(range,meta.total);if(!span){release?.();return cmError(416,meta.total);}const gaps=cmGaps(...span,meta.ranges),[first,end]=gaps[0];const initial=await cmNetwork(event,request,state,`bytes=${first}-${end}`,meta.tag);
+    +   if(initial.status!==206||initial.headers.get('etag')!==meta.tag){release?.();return initial;}
+    +   if(initial.headers.get('content-range')!==`bytes ${first}-${end}/${meta.total}`){await initial.body?.cancel();release?.();return cmError(502);}
+    +   let pos=span[0],reader=null,segmentEnd=-1,used=false,closed=false;let settle;event.waitUntil(new Promise(resolve=>settle=resolve));const finish=()=>{release?.();settle();};
+    +   const stream=new ReadableStream({async pull(controller){try{if(closed)return;if(!cmScopeCurrent(state))throw Error('Media account changed');if(pos>span[1]){await reader?.cancel();closed=true;controller.close();finish();return;}
+    +    if(!reader||pos>segmentEnd){await reader?.cancel();reader=null;const snapshot=await cmSnapshot(scope,id);if(snapshot.values[cmRetiredIndex]||snapshot.values[1]!==state.values[1]||snapshot.values[0]!==state.values[0])throw Error('Media was cleared');const m=snapshot.meta;if(!m||m.tag!==meta.tag)throw Error('Media version changed');const available=m.ranges.find(r=>pos>=r[0]&&pos<=r[1]);if(available){segmentEnd=Math.min(span[1],available[1]);reader=cmLocal(state,m,`bytes=${pos}-${segmentEnd}`).body.getReader();}
+    +    else{segmentEnd=Math.min(span[1],...m.ranges.filter(r=>r[0]>pos).map(r=>r[0]-1));const part=!used&&pos===first?(used=true,initial):await cmNetwork(event,request,state,`bytes=${pos}-${segmentEnd}`,meta.tag);if(part.status!==206||part.headers.get('etag')!==meta.tag){await part.body?.cancel();await cmReset(state);throw Error('Media changed during playback');}reader=part.body.getReader();}}
+  CONNECT_MEDIA_PATCH_007: |2
+    +    const {value,done}=await reader.read();if(done)throw Error('Truncated cached/network range');pos+=value.length;if(pos>segmentEnd+1)throw Error('Invalid cached/network range');controller.enqueue(value);
+    +   }catch(error){closed=true;await reader?.cancel().catch(()=>{});if(!used)await initial.body?.cancel();controller.error(error);finish();}},async cancel(reason){closed=true;await reader?.cancel(reason).catch(()=>{});if(!used)await initial.body?.cancel(reason);finish();}});
+    +   return new Response(stream,cmHeaders(meta,range));
+    +  }
+    +  return await cmNetwork(event,request,state,range,null,release);
+    + }catch(error){release?.();throw error;}
+    +}
+    +async function cmMessage(event){const d=event.data||{},client=event.source;if(!client?.id||new URL(client.url).origin!==self.location.origin)return;const reply=value=>event.ports?.[0]?.postMessage(value);
+    + if(d.type==='CONNECT_MEDIA_BIND'&&d.protocol===1&&typeof d.user==='string'&&d.user.length>0&&d.user.length<=128&&/^[A-Za-z0-9_-]{32,128}$/.test(d.nonce)){const prior=cmScopes.get(client.id);if(prior?.user===d.user&&prior.nonce===d.nonce){prior.limit=Math.max(0,Math.min(2*1024**3,Number(d.limit)||500*1024**2));}else cmScopes.set(client.id,{client:client.id,user:d.user,nonce:d.nonce,limit:Math.max(0,Math.min(2*1024**3,Number(d.limit)||500*1024**2))});await cmDB();reply({protocol:1,supported:true});}
+    + if(d.type==='CONNECT_MEDIA_UNBIND'&&cmScopes.get(client.id)?.nonce===d.nonce){cmScopes.delete(client.id);reply({protocol:1,supported:true});}
+    +}
+    diff --git a/tests/cache-browser.test.cjs b/tests/cache-browser.test.cjs
+    index 45262fd..04e9436 100644
+    --- a/tests/cache-browser.test.cjs
+    +++ b/tests/cache-browser.test.cjs
+    @@ -4,14 +4,14 @@ test('persistent media cache survives restart, ignores signed tokens, isolates a
+      const media=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../lib/media-cache.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+      const vault=ts.transpileModule(fs.readFileSync(path.join(__dirname,'../lib/secure-vault.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+      const pixel=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP4DwQACfsD/Wj6HMwAAAAASUVORK5CYII=','base64');let requests=0;
+    - const server=http.createServer((req,res)=>{if(req.url.startsWith('/storage/')){requests++;res.writeHead(200,{'content-type':'image/png'});res.end(pixel);return;}res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><div id="root"></div><script>var exports={};'+media+';window.cache=exports;exports={};'+vault+';window.Vault=exports.SecureVault;</script>');});
+    + const server=http.createServer((req,res)=>{if(req.url.startsWith('/sw.js')){res.writeHead(200,{'content-type':'application/javascript','service-worker-allowed':'/'});res.end(fs.readFileSync(path.join(__dirname,'../public/sw.js')));return;}if(req.url.startsWith('/storage/')){requests++;res.writeHead(200,{'content-type':'image/png','content-length':pixel.length,'etag':'"photo-v1"'});res.end(pixel);return;}res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><div id="root"></div><script>var exports={};'+media+';window.cache=exports;exports={};'+vault+';window.Vault=exports.SecureVault;</script>');});
+      await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+      try{
+       browser=await chromium.launch({executablePath:process.env.CONNECT_CHROMIUM_PATH||undefined,args:['--no-sandbox']});
+    -  const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);await page.evaluate(async()=>{window.release=cache.installMediaCache('user-a');window.secretVault=new Vault('user-a');await secretVault.putMany({account:'secret-key-material'});for(const bucket of ['connect-avatars','connect-attachments']){const img=new Image();img.src='/storage/v1/object/sign/'+bucket+'/sample.png?token=old';document.body.append(img);}});await page.waitForFunction(async()=>{const s=await cache.cacheStats();return s.photos>0&&s.system>0;});
+    +  const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);await page.evaluate(async()=>{window.release=cache.installMediaCache('user-a');window.secretVault=new Vault('user-a');await secretVault.putMany({account:'secret-key-material'});await cache.whenMediaCacheReady();for(const bucket of ['connect-avatars','connect-attachments']){const img=new Image();img.src='/storage/v1/object/sign/'+bucket+'/sample.png?token=old';document.body.append(img);await img.decode();}});await page.waitForFunction(async()=>{const s=await cache.cacheStats();return s.photos>0&&s.system>0;});
+      const count=requests;assert.equal(await page.evaluate(()=>cache.mediaIdentity('https://evil.test/storage/v1/object/sign/connect-avatars/sample.png')),null);
+      assert.match(await page.evaluate(()=>cache.resolveCachedMedia(location.origin+'/storage/v1/object/sign/connect-attachments/sample.png?token=new')),/^blob:/);assert.equal(requests,count);
+    - await page.reload();assert.equal(await page.evaluate(async()=>{window.release=cache.installMediaCache('user-a');return await new Vault('user-a').get('account');}),'secret-key-material');assert.match(await page.evaluate(()=>cache.resolveCachedMedia(location.origin+'/storage/v1/object/sign/connect-attachments/sample.png?token=restart')),/^blob:/);assert.equal(requests,count);
+    + await page.reload();assert.equal(await page.evaluate(async()=>{window.release=cache.installMediaCache('user-a');await cache.whenMediaCacheReady();return await new Vault('user-a').get('account');}),'secret-key-material');assert.match(await page.evaluate(()=>cache.resolveCachedMedia(location.origin+'/storage/v1/object/sign/connect-attachments/sample.png?token=restart')),/^blob:/);assert.equal(requests,count);
+      await page.evaluate(async()=>{await cache.linkMessageMedia('user-a','one',['sample.png']);await cache.linkMessageMedia('user-a','two',['sample.png']);await cache.purgeDeletedMedia('user-a','one');});assert.ok((await page.evaluate(()=>cache.cacheStats())).photos>0);
+      await page.evaluate(()=>cache.purgeDeletedMedia('user-a','two'));assert.equal((await page.evaluate(()=>cache.cacheStats())).photos,0);
+      await page.evaluate(()=>{const img=new Image();img.src='/storage/v1/object/sign/connect-attachments/sample.png?token=late';document.body.append(img);});await page.waitForTimeout(150);assert.equal((await page.evaluate(()=>cache.cacheStats())).photos,0);
+    diff --git a/tests/media-cache-stale-error.test.cjs b/tests/media-cache-stale-error.test.cjs
+    index 0666f27..2715031 100644
+    --- a/tests/media-cache-stale-error.test.cjs
+    +++ b/tests/media-cache-stale-error.test.cjs
+    @@ -13,6 +13,7 @@ const png = fs.readFileSync(path.join(root,'public/icon-192.png'));
+     test('delayed image error must not evict verified media blob', {timeout:45000}, async () => {
+       const server = http.createServer((req,res) => {
+         const url = new URL(req.url,'http://127.0.0.1');
+    +    if(url.pathname==='/sw.js'){res.writeHead(200,{'content-type':'application/javascript','service-worker-allowed':'/'});res.end(fs.readFileSync(root+'/public/sw.js'));return;}
+         if (url.pathname.endsWith('.png')) {
+           res.writeHead(200,{'content-type':'image/png','content-length':png.length});res.end(png);return;
+         }
+    diff --git a/tests/media-recovery.test.cjs b/tests/media-recovery.test.cjs
+    index e41f251..68be230 100644
+    --- a/tests/media-recovery.test.cjs
+    +++ b/tests/media-recovery.test.cjs
+    @@ -9,6 +9,7 @@ const names=(process.env.CONNECT_WEBKIT_PATH?['chromium','webkit']:['chromium'])
+     for(const browserName of names)test(browserName+': actual image/audio decoding, cache recovery, expired links and sticker grid', {timeout:60000},async()=>{
+      const server=http.createServer((req,res)=>{
+       const u=new URL(req.url,'http://localhost');
+    +  if(u.pathname==='/sw.js'){res.writeHead(200,{'content-type':'application/javascript','service-worker-allowed':'/'});res.end(fs.readFileSync(root+'/public/sw.js'));return;}
+       if(u.searchParams.get('token')==='expired'){res.writeHead(403);res.end('expired');return;}
+       let body,type;
+       if(u.pathname.startsWith('/stickers/')){body=svg;type='image/webp';}
+    @@ -27,7 +28,7 @@ for(const browserName of names)test(browserName+': actual image/audio decoding,
+       assert.equal(layout.overlap,false,`overlapping rows at ${width}/${scale}`);assert.equal(layout.overflow,false);assert.equal(layout.scrollable,true);
+      }
+      await page.setViewportSize({width:390,height:844});await page.evaluate(()=>document.documentElement.style.fontSize='16px');if(process.env.CONNECT_SCREENSHOT_DIR)await page.screenshot({path:process.env.CONNECT_SCREENSHOT_DIR+'/stickers-fixed-'+browserName+'.png'});
+    - await page.evaluate(()=>{fixtures.innerHTML='<img id="avatar" width="32" height="32" src="/storage/v1/object/sign/connect-avatars/a.png?token=one"><img id="photo" width="32" height="32" src="/storage/v1/object/sign/connect-attachments/a.png?token=one"><audio id="sound" controls preload="auto" src="/storage/v1/object/sign/connect-attachments/a.wav?token=one"></audio>';});
+    + await page.evaluate(async()=>{await cache.whenMediaCacheReady();fixtures.innerHTML='<img id="avatar" width="32" height="32" data-src="/storage/v1/object/sign/connect-avatars/a.png?token=one"><img id="photo" width="32" height="32" data-src="/storage/v1/object/sign/connect-attachments/a.png?token=one"><audio id="sound" controls preload="auto" data-src="/storage/v1/object/sign/connect-attachments/a.wav?token=one"></audio>';for(const el of fixtures.querySelectorAll('[data-src]'))el.src=el.dataset.src;await Promise.all([...fixtures.querySelectorAll('img')].map(i=>i.decode()));});
+      await page.waitForFunction(async()=>{const s=await cache.cacheStats();return s.system>0&&s.photos>0;});
+      // CONNECT_CALLS_MEDIA_FIX2_WAIT_FOR_EXACT_OBJECTS
+      await page.waitForFunction(async()=>{
+    @@ -55,17 +56,17 @@ for(const browserName of names)test(browserName+': actual image/audio decoding,
+     });
+      await page.waitForFunction(()=>avatar.naturalWidth>0&&photo.naturalWidth>0);
+      assert.equal(await page.evaluate(()=>avatar.naturalWidth),192);
+    - await page.evaluate(async size=>{await cache.prefetchChatAudio(sound.src,'a',size);await sound.play();},wav.length);await page.waitForFunction(async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());
+    + await page.evaluate(async()=>{await sound.play();});await page.waitForFunction(async()=>(await cache.cacheStats()).audio>0);await page.evaluate(()=>sound.pause());
+      await page.evaluate(async()=>{const el=document.createElement('audio');el.id='cachedSound';el.preload='auto';el.src=await cache.resolveCachedMedia(sound.src);fixtures.append(el);});
+      await page.waitForFunction(()=>Number.isFinite(cachedSound.duration));assert.equal(await page.evaluate(()=>cachedSound.duration),1);
+      await page.reload({waitUntil:'domcontentloaded'});
+      await page.evaluate(async()=>{const i=document.createElement('img');i.id='restarted';i.src=await cache.resolveCachedMedia(location.origin+'/storage/v1/object/sign/connect-avatars/a.png?token=new');fixtures.append(i);});
+      await page.waitForFunction(()=>restarted.naturalWidth===192);assert.ok(await page.evaluate(()=>restarted.src.startsWith('blob:')));
+    - await page.evaluate(async()=>{const q=indexedDB.open('connect-media-v1',3);const db=await new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)});await new Promise((resolve,reject)=>{const tx=db.transaction('objects','readwrite'),s=tx.objectStore('objects');for(const [name,type,data]of [['corrupt','image/png',[1,2,3]],['html','text/html',[60,104,49,62]]])s.put({key:'a:connect-attachments/'+name+'.png',user:'a',category:'photos',size:data.length,used:Date.now(),bytes:Uint8Array.from(data).buffer,type});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();for(const name of ['corrupt','html','expired']){const img=document.createElement('img');img.id=name;img.width=32;img.height=32;img.src='/storage/v1/object/sign/connect-attachments/'+name+'.png?token='+(name==='expired'?'expired':'fresh');fixtures.append(img);}const audio=document.createElement('audio');audio.id='expiredAudio';audio.preload='auto';audio.src='/storage/v1/object/sign/connect-attachments/expired.wav?token=expired';fixtures.append(audio);});
+    + await page.evaluate(async()=>{const q=indexedDB.open('connect-media-v1',4);const db=await new Promise((resolve,reject)=>{q.onsuccess=()=>resolve(q.result);q.onerror=()=>reject(q.error)});await new Promise((resolve,reject)=>{const tx=db.transaction('objects','readwrite'),s=tx.objectStore('objects');for(const [name,type,data]of [['corrupt','image/png',[1,2,3]],['html','text/html',[60,104,49,62]]])s.put({key:'a:connect-attachments/'+name+'.png',user:'a',category:'photos',size:data.length,used:Date.now(),bytes:Uint8Array.from(data).buffer,type});tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);});db.close();for(const name of ['corrupt','html','expired']){const img=document.createElement('img');img.id=name;img.width=32;img.height=32;img.src='/storage/v1/object/sign/connect-attachments/'+name+'.png?token='+(name==='expired'?'expired':'fresh');fixtures.append(img);}const audio=document.createElement('audio');audio.id='expiredAudio';audio.preload='auto';audio.src='/storage/v1/object/sign/connect-attachments/expired.wav?token=expired';fixtures.append(audio);});
+      await page.waitForFunction(()=>['corrupt','html','expired'].every(n=>document.getElementById(n).naturalWidth===192)&&Number.isFinite(expiredAudio.duration));
+      assert.equal(await page.evaluate(()=>expiredAudio.duration),1);assert.ok(await page.evaluate(()=>renewals>=2));
+      await page.evaluate(()=>cache.clearCachedMedia('temporary'));await page.waitForFunction(()=>restarted.naturalWidth===192);
+    - await page.evaluate(()=>release());await page.waitForFunction(()=>restarted.naturalWidth===192&&!restarted.src.startsWith('blob:'));
+    + await page.evaluate(()=>release());await page.waitForFunction(()=>cache.mediaCacheOwner()===''&&!restarted.getAttribute('src')); // Logout must not reload private media through the network.
+      assert.deepEqual(errors,[]);
+      }finally{await browser.close();await new Promise(r=>server.close(r));}
+     });
+    diff --git a/tests/pwa-logout-regression.test.cjs b/tests/pwa-logout-regression.test.cjs
+    index 26f8068..a613419 100644
+    --- a/tests/pwa-logout-regression.test.cjs
+    +++ b/tests/pwa-logout-regression.test.cjs
+    @@ -22,7 +22,7 @@ function makeLogout(result){
+         setLatest:()=>{},setUnread:()=>{},readCache:{current:{}},setPassword:()=>{},
+         historyWarmStamps:{current:{}},inboxMediaWarm:{current:{clear(){}}},
+         avatarCacheEpoch:{current:0},setAvatarUrls:()=>{},forgetUserChatPresentation:()=>{},
+    -    warmedChatWindows:{current:{clear(){}}},signedMediaLifetimes:{current:{clear(){}}},
+    +    warmedChatWindows:{current:{clear(){}}},signedMediaLinks:{clear(){}},
+         clearStoredConnectAuth:()=>events.push(['purgeTokens']),
+         wipeUserHistory:async()=>events.push(['wipe']),
+       };
+    diff --git a/tests/pwa-media-egress.test.cjs b/tests/pwa-media-egress.test.cjs
+    index 4270e77..1194a97 100644
+    --- a/tests/pwa-media-egress.test.cjs
+    +++ b/tests/pwa-media-egress.test.cjs
+    @@ -14,6 +14,7 @@
+         const hits=[];
+         const media=Buffer.alloc(128,0);
+         const server=http.createServer((req,res)=>{
+    +      if(req.url.startsWith('/sw.js')){res.writeHead(200,{'content-type':'application/javascript','service-worker-allowed':'/'});res.end(fs.readFileSync(path.join(__dirname,'../public/sw.js')));return;}
+           if(req.url.startsWith('/storage/v1/object/sign/')){
+             hits.push({url:req.url,range:req.headers.range||''});
+             const type=req.url.includes('.m4a')?'audio/mp4':'video/mp4';
+    @@ -65,3 +66,85 @@
+           await new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+         }
+       });
+    +
+    +// CONNECT_MEDIA_RESPONSE_CACHE_V1: the body must come from the first browser GET.
+  CONNECT_MEDIA_PATCH_008: |2
+    +test('media read-through worker binds an account before the first response is cached',{timeout:20000},async()=>{
+    + const root=path.resolve(__dirname,'..'),web=fs.existsSync(path.join(root,'web/public/sw.js'))?'web/':'';
+    + const worker=fs.readFileSync(path.join(root,web+'public/sw.js'),'utf8');
+    + const server=http.createServer((req,res)=>{if(req.url==='/sw.js'){res.writeHead(200,{'content-type':'application/javascript','service-worker-allowed':'/'});res.end(worker);return;}res.setHeader('content-type','text/html');res.end('<!doctype html><body>fixture</body>');});
+    + await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({executablePath:process.env.CONNECT_CHROMIUM_PATH||process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox']});
+    + try{const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);const reply=await page.evaluate(async()=>{await navigator.serviceWorker.register('/sw.js');await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener('controllerchange',r,{once:true}));return new Promise(resolve=>{const channel=new MessageChannel();channel.port1.onmessage=e=>resolve(e.data);navigator.serviceWorker.controller.postMessage({type:'CONNECT_MEDIA_BIND',protocol:1,user:'alice',nonce:'0123456789abcdef0123456789abcdef'},[channel.port2]);setTimeout(()=>resolve(null),1200);});});assert.equal(reply?.protocol,1,'first-response cache worker protocol is missing');}finally{await browser.close();await new Promise(r=>server.close(r));}
+    +});
+    +
+    +// CONNECT_MEDIA_RESPONSE_CACHE_V1: actual HTTP, Chromium, IndexedDB and byte accounting.
+    +test('first-response photo/audio/video cache: 100 reopens, ranges, offline, versions, deletion and account fencing',{timeout:90000},async()=>{
+    + const root=path.resolve(__dirname,'..'),worker=fs.readFileSync(root+'/public/sw.js','utf8');
+    + const png=fs.readFileSync(root+'/public/icon-192.png');
+    + const crc=b=>{let c=0xffffffff;for(const n of b){c^=n;for(let i=0;i<8;i++)c=c>>>1^(c&1?0xedb88320:0);}return (c^0xffffffff)>>>0;};
+    + const chunk=(name,body)=>{const type=Buffer.from(name),length=Buffer.alloc(4),sum=Buffer.alloc(4);length.writeUInt32BE(body.length);sum.writeUInt32BE(crc(Buffer.concat([type,body])));return Buffer.concat([length,type,body,sum]);};
+    + const header=Buffer.alloc(13);header.writeUInt32BE(1024);header.writeUInt32BE(1024,4);header[8]=8;header[9]=2;
+    + const pixels=Buffer.alloc(1024*(1024*3+1));let random=42;for(let y=0;y<1024;y++)for(let x=1;x<=3072;x++){random^=random<<13;random^=random>>>17;random^=random<<5;pixels[y*3073+x]=random&255;}
+    + const photo=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),chunk('IHDR',header),chunk('IDAT',require('node:zlib').deflateSync(pixels)),chunk('IEND',Buffer.alloc(0))]);
+    + const wav=Buffer.alloc(44+32000);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVEfmt ',8);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(16000,24);wav.writeUInt32LE(32000,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(32000,40);
+    + const bytes=Buffer.from(Array.from({length:25000},(_,i)=>i%251));const hits=[];let offline=false,version=1;let slowRelease;
+    + const data=new Map([['photo.png',photo],['voice.wav',wav],['audio.wav',wav],['parts.mp4',bytes],['changed.mp4',bytes],['partial.mp4',bytes],['avatar.png',png],['sticker.webp',png],['thumb__thumb.webp',png]]);
+    + const server=http.createServer((req,res)=>{
+    +  const u=new URL(req.url,'http://local');if(u.pathname==='/sw.js'){res.writeHead(200,{'content-type':'application/javascript','service-worker-allowed':'/'});res.end(worker);return;}
+    +  if(u.pathname.includes('/storage/v1/object/')){
+    +   const name=u.pathname.split('/').pop(),body=data.get(name)||bytes,tag='"'+(name==='changed.mp4'?version:1)+'"';let start=0,end=body.length-1,status=200;
+    +   const range=/^bytes=(\d*)-(\d*)$/.exec(req.headers.range||'');if(range&&(!req.headers['if-range']||req.headers['if-range']===tag)){start=range[1]?Number(range[1]):Math.max(0,body.length-Number(range[2]));end=range[1]&&range[2]?Math.min(end,Number(range[2])):end;status=206;}
+    +   hits.push({name,range:req.headers.range||'',bytes:offline?0:end-start+1,status});
+    +   if(offline){res.writeHead(503);res.end();return;}if(start>body.length-1){res.writeHead(416,{'content-range':'bytes */'+body.length});res.end();return;}
+    +   const type=name.endsWith('.wav')?'audio/wav':name.endsWith('.webm')?'video/webm':name.endsWith('.mp4')?'video/mp4':'image/png';
+    +   res.writeHead(status,{'content-type':type,'content-length':end-start+1,'etag':tag,'accept-ranges':'bytes','cache-control':'no-store',...(status===206?{'content-range':`bytes ${start}-${end}/${body.length}`}:{})});
+    +   if(name==='slow.mp4'){res.write(body.subarray(start,start+100));slowRelease=()=>res.end(body.subarray(start+100,end+1));return;}
+    +   res.end(body.subarray(start,end+1));return;
+    +  }
+    +  res.writeHead(200,{'content-type':'text/html'});res.end('<!doctype html><body><script>var exports={};'+compiled+';window.cache=exports;window.release=cache.installMediaCache("alice");</script></body>');
+    + });await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({executablePath:process.env.CONNECT_CHROMIUM_PATH||undefined,args:['--no-sandbox','--autoplay-policy=no-user-gesture-required']});
+    + try{
+    +  const page=await browser.newPage();await page.goto('http://127.0.0.1:'+server.address().port);assert.equal(await page.evaluate(()=>cache.whenMediaCacheReady()),true);
+    +  await page.evaluate(async()=>{for(const [bucket,file]of [['connect-attachments','photo.png'],['connect-avatars','avatar.png'],['connect-stickers','sticker.webp'],['connect-attachments','thumb__thumb.webp']]){const image=new Image();image.src='/storage/v1/object/sign/'+bucket+'/'+file+'?token=first';document.body.append(image);await image.decode();image.remove();}});
+    +  await page.waitForTimeout(100);assert.equal(hits.filter(h=>h.name==='photo.png').length,1,'rendering launched a second full photo GET');
+    +  const initial=hits.length;offline=true;await page.context().setOffline(true);
+    +  await page.evaluate(async()=>{for(let i=0;i<100;i++){const image=new Image();image.src='/storage/v1/object/sign/connect-attachments/photo.png?token=reopen-'+i;document.body.append(image);await image.decode();image.remove();}});
+    +  assert.equal(hits.length,initial,'100 offline reopens must use the first response');
+    +  await page.context().setOffline(false);await page.reload();assert.equal(await page.evaluate(()=>cache.whenMediaCacheReady()),true);
+    +  assert.equal(await page.evaluate(async()=>{const local=await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/photo.png?token=expired');if(!cache.isCachedMediaUrl(local))return false;const image=new Image();image.src=local;await image.decode();return image.naturalWidth===1024;}),true,'complete image survives restart offline');assert.equal(hits.length,initial);offline=false;
+    +  console.log('MEDIA_PHASE photos-offline-passed');
+    +  // A real WAV is played; PLAY/load events never launch a separate full-object fill.
+    +  for(const file of ['voice.wav','audio.wav']){
+    +   await page.evaluate(async file=>{const audio=new Audio();audio.preload='none';audio.src='/storage/v1/object/sign/connect-attachments/'+file;document.body.append(audio);await audio.play();await new Promise(r=>audio.addEventListener('ended',r,{once:true}));audio.remove();},file);
+    +   const count=hits.length;offline=true;
+    +   await page.evaluate(async file=>{const audio=new Audio(await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/'+file));await audio.play();audio.currentTime=.6;await new Promise(r=>audio.addEventListener('ended',r,{once:true}));audio.remove();},file);
+    +   assert.equal(hits.length,count,'repeat audio/seek fetched the original again');offline=false;
+    +  }
+    +  console.log('MEDIA_PHASE audio-passed');
+    +  // Record a tiny valid video, so decoding and repeat playback are exercised too.
+    +  const video=await page.evaluate(async()=>{const canvas=document.createElement('canvas');canvas.width=canvas.height=32;const ctx=canvas.getContext('2d'),stream=canvas.captureStream(10),chunks=[];ctx.fillRect(0,0,32,32);const recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'});recorder.ondataavailable=e=>chunks.push(e.data);const end=new Promise(r=>recorder.onstop=r);recorder.start();await new Promise(r=>setTimeout(r,250));ctx.fillStyle='red';ctx.fillRect(0,0,32,32);recorder.stop();await end;stream.getTracks().forEach(t=>t.stop());return Array.from(new Uint8Array(await new Blob(chunks).arrayBuffer()));});
+    +  data.set('circle.webm',Buffer.from(video));data.set('movie.webm',Buffer.from(video));
+    +  for(const file of ['circle.webm','movie.webm']){await page.evaluate(async file=>{const el=document.createElement('video');el.muted=true;el.preload='none';el.src='/storage/v1/object/sign/connect-attachments/'+file;document.body.append(el);await el.play();await new Promise(r=>el.addEventListener('ended',r,{once:true}));el.remove();},file);const count=hits.length;offline=true;await page.evaluate(async file=>{const el=document.createElement('video');el.muted=true;el.src=await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/'+file);document.body.append(el);await el.play();await new Promise(r=>el.addEventListener('ended',r,{once:true}));el.remove();},file);assert.equal(hits.length,count,'repeat video fetched cached bytes');offline=false;}
+    +  console.log('MEDIA_PHASE video-passed');
+    +  const read=(file,range)=>page.evaluate(async({file,range})=>{const r=await fetch('/storage/v1/object/sign/connect-attachments/'+file,{headers:range?{Range:range}:{}});return {status:r.status,range:r.headers.get('content-range'),bytes:Array.from(new Uint8Array(await r.arrayBuffer()))};},{file,range});
+    +  assert.deepEqual((await read('parts.mp4','bytes=0-999')).bytes,[...bytes.subarray(0,1000)]);
+    +  assert.equal(await page.evaluate(async()=>cache.isCachedMediaUrl(await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/parts.mp4'))),false,'a prefix was marked complete');
+    +  let count=hits.length;for(let i=0;i<20;i++)await read('parts.mp4','bytes=100-199');assert.equal(hits.length,count,'cached range was redownloaded');
+    +  assert.deepEqual((await read('parts.mp4','bytes=5000-5999')).bytes,[...bytes.subarray(5000,6000)]);
+    +  assert.deepEqual((await read('parts.mp4')).bytes,[...bytes]);assert.equal(hits.filter(h=>h.name==='parts.mp4').reduce((n,h)=>n+h.bytes,0),bytes.length,'overlapping Range bytes were transferred twice');
+    +  count=hits.length;offline=true;const suffix=await read('parts.mp4','bytes=-23');assert.deepEqual(suffix.bytes,[...bytes.subarray(-23)]);assert.equal(suffix.range,'bytes 24977-24999/25000');assert.equal((await read('parts.mp4','bytes=999999-')).status,416);assert.equal(hits.length,count);offline=false;
+    +  await read('partial.mp4','bytes=0-99');offline=true;assert.equal(await page.evaluate(async()=>cache.isCachedMediaUrl(await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/partial.mp4'))),false);offline=false;
+    +  await read('changed.mp4','bytes=0-99');version=2;const changed=await read('changed.mp4');assert.equal(changed.status,200,'If-Range mismatch must return one coherent new representation');assert.deepEqual(changed.bytes,[...bytes]);
+    +  // Token lifetime uses an explicit clock and one pending signer; local data wins.
+    +  const signing=await page.evaluate(async()=>{let now=1000,signs=0,blob=null,epoch=1;const links=cache.createSignedMediaCache({now:()=>now,lease:()=>epoch,cached:async()=>blob,sign:async()=>{signs++;return 'https://media/file?token='+signs;}});const one=await links.resolve('alice','connect-attachments','x');for(let i=0;i<100;i++)await links.resolve('alice','connect-attachments','x');const reused=signs;now+=3600001;const refreshed=await Promise.all([links.resolve('alice','connect-attachments','x'),links.resolve('alice','connect-attachments','x')]);blob='blob:local';now+=3600001;const local=await links.resolve('alice','connect-attachments','x');return{one,reused,signs,refreshed,local};});assert.equal(signing.reused,1);assert.equal(signing.signs,2);assert.notEqual(signing.one,signing.refreshed[0]);assert.equal(signing.refreshed[0],signing.refreshed[1]);assert.equal(signing.local,'blob:local');
+    +  await page.evaluate(async()=>{await cache.linkMessageMedia('alice','a',['photo.png']);await cache.linkMessageMedia('alice','b',['photo.png']);await cache.purgeDeletedMedia('alice','a');});assert.equal(await page.evaluate(async()=>cache.isCachedMediaUrl(await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/photo.png'))),true);
+    +  await page.evaluate(()=>cache.purgeDeletedMedia('alice','b'));assert.equal(await page.evaluate(async()=>cache.isCachedMediaUrl(await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/photo.png'))),false);
+    +  count=hits.length;assert.equal((await read('photo.png')).status,410);assert.equal(hits.length,count,'retired photo reached Storage');
+    +  await page.evaluate(()=>{window.old=cache.cacheMediaUrl('/storage/v1/object/sign/connect-attachments/slow.mp4');window.late=fetch(old).then(r=>r.arrayBuffer()).then(()=>true,()=>false);});
+    +  while(!slowRelease)await new Promise(r=>setTimeout(r,10));await page.evaluate(async()=>{release();release=cache.installMediaCache('bob');await cache.whenMediaCacheReady();});slowRelease();await page.evaluate(()=>late);
+    +  assert.equal(await page.evaluate(async()=>cache.isCachedMediaUrl(await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/voice.wav'))),false,'second account read private bytes');
+    +  await page.evaluate(async()=>{release();release=cache.installMediaCache('alice');await cache.whenMediaCacheReady();});assert.equal(await page.evaluate(async()=>cache.isCachedMediaUrl(await cache.resolveCachedMedia('/storage/v1/object/sign/connect-attachments/slow.mp4'))),false,'late write survived logout');
+    +  await page.evaluate(()=>cache.clearCachedMedia('temporary'));const stats=await page.evaluate(()=>cache.cacheStats());assert.equal(stats.audio+stats.photos+stats.videos,0);assert.ok(stats.system>0);
+    +  count=hits.length;await page.evaluate(()=>{for(let i=0;i<100;i++){const el=document.createElement(i%2?'audio':'video');el.preload='none';el.src='/storage/v1/object/sign/connect-attachments/old-large-'+i+'.mp4';document.body.append(el);el.remove();}});await page.waitForTimeout(100);assert.equal(hits.length,count,'large chat eagerly fetched old originals');
+    +  console.log('MEDIA_NETWORK_ACCOUNTING '+JSON.stringify({photo:{firstFullGETs:1,reopens:100,repeatGETs:0,bytes:photo.length},range:{bytes:bytes.length,expected:bytes.length},signing:{valid100:1,expiredConcurrent:1},device:'NOT_TESTED'}));
+    + }finally{slowRelease?.();await browser.close();await new Promise(r=>server.close(r));}
+    +});
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      base: ${{ steps.base.outputs.sha }}
+      tree: ${{ steps.tree.outputs.sha }}
+    steps:
+      - name: Require the intended repository and main dispatch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+          test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Check latest default branch and record source SHA
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)" = main
+          current="$(git rev-parse HEAD)"
+          test "$current" = "$GITHUB_SHA"
+          test "$current" = "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          test -s package-lock.json
+          git diff --exit-code
+          echo "sha=$current" >> "$GITHUB_OUTPUT"
+          mkdir -p "$RUNNER_TEMP/connect-media-logs"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Validate this complete YAML, expressions and byte size
+        env:
+          WORKFLOW_PATH: .github/workflows/connect-pwa-media-egress.yml
+        run: |
+          set -euo pipefail
+          python3 -m pip install --disable-pip-version-check PyYAML==6.0.3
+          python3 - <<'PY'
+          import os,pathlib,yaml
+          path=pathlib.Path(os.environ['WORKFLOW_PATH']);data=path.read_bytes()
+          assert 0<len(data)<450000, 'Workflow must be below 450000 bytes'
+          doc=yaml.load(data,Loader=yaml.BaseLoader)
+          assert set(doc['on'])=={'workflow_dispatch'}
+          assert set(doc['jobs'])=={'verify','commit'}
+          print(str(path)+': '+str(len(data))+' bytes; YAML parsed')
+          PY
+          tool="$RUNNER_TEMP/connect-actionlint"
+          mkdir -p "$tool"
+          archive=actionlint_1.7.12_linux_amd64.tar.gz
+          base=https://github.com/rhysd/actionlint/releases/download/v1.7.12
+          curl --fail --location --retry 2 "$base/$archive" --output "$tool/$archive"
+          curl --fail --location --retry 2 "$base/actionlint_1.7.12_checksums.txt" --output "$tool/checksums.txt"
+          (cd "$tool" && awk -v wanted="$archive" '$2 == wanted || $2 == ("*" wanted) {print;matched=1} END {if(!matched)exit 1}' checksums.txt | sha256sum --check)
+          tar -xzf "$tool/$archive" -C "$tool" actionlint
+          "$tool/actionlint" -color "$WORKFLOW_PATH"
+      - name: Apply only the exact audited missing repairs
+        id: patch
+        run: &apply_media |
+          set -euo pipefail
+          python3 - <<'PY_CONNECT_MEDIA_INSTALL_20261120'
+          import hashlib,json,os,pathlib,subprocess
+          root=pathlib.Path.cwd()
+          def run(*args,**kw):return subprocess.run(args,check=True,**kw)
+          def digest(name):
+           p=root/name
+           if not p.is_file() or p.is_symlink() or not p.resolve().is_relative_to(root.resolve()):raise SystemExit('SOURCE_DRIFT: missing/unsafe '+name)
+           run('git','ls-files','--error-unmatch','--',name,stdout=subprocess.DEVNULL)
+           return hashlib.sha256(p.read_bytes()).hexdigest()
+          STATES=json.loads(os.environ['CONNECT_MEDIA_STATES'])
+          GUARDS=json.loads(os.environ['CONNECT_MEDIA_GUARDS'])
+          for name,expected in GUARDS.items():
+           if digest(name)!=expected:raise SystemExit('SOURCE_DRIFT: audited dependency/configuration changed: '+name)
+          actual={name:digest(name) for name in STATES}
+          before=all(actual[n]==v['before'] for n,v in STATES.items())
+          after=all(actual[n]==v['after'] for n,v in STATES.items())
+          if not before and not after:raise SystemExit('SOURCE_DRIFT: incompatible or partially edited sources; nothing overwritten')
+          if os.environ.get('VERIFY_ONLY')=='1' and not after:raise SystemExit('SOURCE_DRIFT: tested sources changed during verification')
+          PATCH=''.join(os.environ[k] for k in sorted(os.environ) if k.startswith('CONNECT_MEDIA_PATCH_'))
+          if before:
+           run('git','apply','--check','--whitespace=error-all','-',input=PATCH.encode())
+           run('git','apply','--whitespace=error-all','-',input=PATCH.encode())
+          for name,v in STATES.items():
+           if digest(name)!=v['after']:raise SystemExit('SOURCE_DRIFT: unexpected patched bytes: '+name)
+          changed=subprocess.check_output(['git','diff','--name-only','--diff-filter=ACDMRTUXB']).decode().splitlines()
+          if set(changed)-set(STATES):raise SystemExit('Unexpected modified files: '+repr(set(changed)-set(STATES)))
+          run('git','diff','--check')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:
+           out.write('changed='+str(bool(changed)).lower()+'\n')
+           out.write('paths='+json.dumps(list(STATES),separators=(',',':'))+'\n')
+          print('Exact reviewed source state verified: '+('patched existing files' if before else 'already applied'))
+          PY_CONNECT_MEDIA_INSTALL_20261120
+      - name: Locked install and TypeScript
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run typecheck 2>&1 | tee "$RUNNER_TEMP/connect-media-logs/typecheck.log"
+      - name: Install the browser matching the lockfile
+        run: |
+          set -euo pipefail
+          npx --no-install playwright-core install --with-deps chromium
+          browser="$(node -p "require('playwright-core').chromium.executablePath()")"
+          test -x "$browser"
+          echo "CONNECT_CHROMIUM_PATH=$browser" >> "$GITHUB_ENV"
+      - name: Unit, integration, real HTTP byte accounting and offline media regressions
+        run: |
+          set -euo pipefail
+          npm test 2>&1 | tee "$RUNNER_TEMP/connect-media-logs/tests.log"
+          grep -F 'MEDIA_NETWORK_ACCOUNTING ' "$RUNNER_TEMP/connect-media-logs/tests.log"
+      - name: Build the PWA without publishing
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee "$RUNNER_TEMP/connect-media-logs/build.log"
+          # Next generates a declaration locally; it is not part of this repair.
+          git show HEAD:next-env.d.ts > next-env.d.ts
+      - name: Recheck exact source bytes after all gates
+        id: sealed
+        env:
+          VERIFY_ONLY: '1'
+        run: *apply_media
+      - name: Seal the exact tested tree
+        id: tree
+        env:
+          ALLOWED_PATHS: ${{ steps.sealed.outputs.paths }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,subprocess
+          paths=json.loads(os.environ['ALLOWED_PATHS'])
+          changed=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert set(changed)<=set(paths), 'Unexpected source changes'
+          assert not subprocess.check_output(['git','ls-files','--others','--exclude-standard']), 'Unexpected new tracked candidates'
+          subprocess.run(['git','add','--',*paths],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          tree=subprocess.check_output(['git','write-tree']).decode().strip()
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:out.write('sha='+tree+'\n')
+          PY
+      - name: Store verification logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: connect-pwa-media-verification-${{ github.run_id }}
+          path: ${{ runner.temp }}/connect-media-logs/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Verification summary and physical-device checklist
+        if: always()
+        env:
+          VERIFY_RESULT: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          {
+            echo 'Verification result: '"$VERIFY_RESULT"
+            echo 'Source SHA: ${{ steps.base.outputs.sha }}'
+            echo 'Tests and byte accounting are available in the verification artifact.'
+            echo 'No Supabase schema, policies, accounts, messages or server media are changed.'
+            echo 'НЕ ПРОВЕРЕНО на устройствах: iPhone installed PWA cold/offline history and media; Poco F1 Android 10 and a modern Android: offline photo/voice/audio/video/video notes, seek, process restart, expiry, account switch, cache clear, delete for everyone, large chat scrolling.'
+            echo 'НЕ ПРОВЕРЕНО на устройствах: background/locked-screen calls, push notifications, reconnect and data/login retention after a signed APK upgrade.'
+            echo 'No production deploy, APK upload, version bump or OTA publication runs here.'
+            echo 'The existing root Service Worker registration and push handlers are retained; only private-media IDB handling is extended.'
+          } >> "$GITHUB_STEP_SUMMARY"
+  commit:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Require the intended main dispatch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'Chimera1988/connect-messenger'
+          test "$GITHUB_REF" = 'refs/heads/main'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.verify.outputs.base }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Reproduce the inline repair from the tested parent
+        id: patch
+        run: *apply_media
+      - name: Commit the exact tested files only if main has not moved
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_BASE: ${{ needs.verify.outputs.base }}
+          EXPECTED_TREE: ${{ needs.verify.outputs.tree }}
+          ALLOWED_PATHS: ${{ steps.patch.outputs.paths }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_BASE"
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)" = "$EXPECTED_BASE"
+          python3 - <<'PY'
+          import json,os,subprocess
+          paths=json.loads(os.environ['ALLOWED_PATHS'])
+          changed=subprocess.check_output(['git','diff','--name-only']).decode().splitlines()
+          assert set(changed)<=set(paths)
+          subprocess.run(['git','add','--',*paths],check=True)
+          tree=subprocess.check_output(['git','write-tree']).decode().strip()
+          assert tree==os.environ['EXPECTED_TREE'], 'The commit tree differs from the verified tree'
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          PY
+          if git diff --cached --quiet; then
+            echo 'All exact repairs are already in main; no empty commit created.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(media): persist first responses and reuse verified ranges'
+          # Ordinary fast-forward push; a concurrent main update fails safely.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+          GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git push "https://github.com/$GITHUB_REPOSITORY.git" HEAD:refs/heads/main
+          committed="$(git rev-parse HEAD)"
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$committed...main" --jq .status)"
+          [[ "$status" == identical || "$status" == ahead ]]
+          echo "GitHub confirmed commit in main: https://github.com/$GITHUB_REPOSITORY/commit/$committed" >> "$GITHUB_STEP_SUMMARY"
+          echo 'No release was published by this workflow.' >> "$GITHUB_STEP_SUMMARY"
