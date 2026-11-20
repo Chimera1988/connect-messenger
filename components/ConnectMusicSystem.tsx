@@ -1,4 +1,5 @@
 'use client';
+import {mediaCacheOwner,resolveCachedProfileFile,isCachedMediaUrl,signedMediaUrlValid,mediaPlaybackUrl} from '../lib/media-cache';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
@@ -61,6 +62,7 @@ function clock(value: number) {
 
 export function ConnectMusicProvider({children}:{children:ReactNode}) {
   const audioRef=useRef<HTMLAudioElement>(null);
+  const playbackGeneration=useRef(0);
   const clientRef=useRef<SupabaseClient|null>(null);
   const lastRef=useRef<Persisted|null>(null);
   const restoreRef=useRef<{path:string;position:number}|null>(null);
@@ -156,14 +158,16 @@ export function ConnectMusicProvider({children}:{children:ReactNode}) {
     if(!audio||!audio.src)return;
     void audio.play().catch(()=>setPlaying(false));
   },[]);
-  const selectTrack=useCallback((song:ConnectMusicTrack)=>{
+  const selectTrack=useCallback(async(song:ConnectMusicTrack)=>{
+    const generation=++playbackGeneration.current,viewer=mediaCacheOwner();
     if(!queueRef.current.some(t=>t.path===song.path))return;
-    const audio=audioRef.current;
-    if(selectedRef.current!==song.path){
-      selectedRef.current=song.path;setSelected(song.path);setPosition(0);setDuration(0);
-      restoreRef.current=null;
-      if(audio){audio.src=song.url;audio.load();}
-    } else if(audio?.ended){audio.currentTime=0;}
+    let url=await resolveCachedProfileFile(viewer,song.path);
+    if(!url&&!isCachedMediaUrl(song.url)&&signedMediaUrlValid(song.url))url=song.url;
+    if(!url&&clientRef.current){const signed=await clientRef.current.storage.from('connect-profile-media').createSignedUrl(song.path,3600);url=signed.data?.signedUrl?mediaPlaybackUrl(signed.data.signedUrl):null;}
+    if(generation!==playbackGeneration.current||viewer!==mediaCacheOwner()||!url)return;
+    const audio=audioRef.current;if(!audio)return;
+    if(selectedRef.current!==song.path||audio.getAttribute('src')!==url){selectedRef.current=song.path;setSelected(song.path);setPosition(0);setDuration(0);restoreRef.current=null;audio.src=url;audio.load();}
+    else if(audio.ended)audio.currentTime=0;
     safePlay();
   },[safePlay]);
   const toggle=useCallback(()=>{

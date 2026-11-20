@@ -13,6 +13,7 @@ const png = fs.readFileSync(path.join(root,'public/icon-192.png'));
 test('delayed image error must not evict verified media blob', {timeout:45000}, async () => {
   const server = http.createServer((req,res) => {
     const url = new URL(req.url,'http://127.0.0.1');
+    if(url.pathname==='/sw.js'){res.writeHead(200,{'content-type':'application/javascript','service-worker-allowed':'/'});res.end(fs.readFileSync(root+'/public/sw.js'));return;}
     if (url.pathname.endsWith('.png')) {
       res.writeHead(200,{'content-type':'image/png','content-length':png.length});res.end(png);return;
     }

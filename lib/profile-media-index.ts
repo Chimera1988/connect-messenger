@@ -5,7 +5,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { prefetchProfileFile, retireCachedProfileFile } from './media-cache';
 export type ProfileLibraryKind = 'photos' | 'videos' | 'music';
-export type ProfileLibraryRow = { path: string; createdAt: string };
+export type ProfileLibraryRow = { path: string; createdAt: string;version?:string };
 type Catalog = { key: string; viewer: string; owner: string; kind: ProfileLibraryKind; savedAt: number; items: ProfileLibraryRow[] };
 const NAME = 'connect-profile-index-v1';
 const STORE = 'catalogs';
@@ -40,7 +40,7 @@ export async function readProfileLibrary(viewer:string,owner:string,kind:Profile
 export async function writeProfileLibrary(viewer:string,owner:string,kind:ProfileLibraryKind,items:ProfileLibraryRow[]):Promise<void>{
   if(!viewer||!owner)return;
   const prefix=owner+'/'+kind+'/';
-  const safe=items.filter(x=>x.path.startsWith(prefix)).slice(0,100).map(x=>({path:x.path,createdAt:x.createdAt}));
+  const safe=items.filter(x=>x.path.startsWith(prefix)).slice(0,100).map(x=>({path:x.path,createdAt:x.createdAt,version:x.version||''}));
   await operation('readwrite',s=>s.put({key:key(viewer,owner,kind),viewer,owner,kind,savedAt:Date.now(),items:safe} satisfies Catalog));
 }
 export async function removeProfileLibraryItem(viewer:string,owner:string,kind:ProfileLibraryKind,path:string):Promise<void>{
@@ -59,7 +59,7 @@ export async function warmOwnProfileLibraries(client:SupabaseClient,viewer:strin
       });
       if(error)return;
       await writeProfileLibrary(viewer,viewer,kind,(data||[]).filter(row=>row.id&&row.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(row.name)).slice(0,100).map(row=>({
-        path:viewer+'/'+kind+'/'+row.name,createdAt:row.created_at||''
+        path:viewer+'/'+kind+'/'+row.name,createdAt:row.created_at||'',version:row.updated_at||row.created_at||''
       })));
     }catch{/* Offline: preserve the last catalog. */}
   }));
@@ -94,7 +94,7 @@ export async function warmPeerProfileLibraries(
         });
         if(error)return; // Permissions and RLS always take precedence over local cache.
         const rows=(data||[]).filter(x=>x.id&&x.name&&!/__(?:thumb\.webp|poster\.jpg)$/.test(x.name)).slice(0,100).map(x=>({
-          path:peer+'/'+kind+'/'+x.name, createdAt:x.created_at||'',
+          path:peer+'/'+kind+'/'+x.name, createdAt:x.created_at||'',version:x.updated_at||x.created_at||'',
           size:Number(x.metadata?.size||0)
         }));
         const before=await readProfileLibrary(viewer,peer,kind).catch(()=>null);
@@ -108,7 +108,7 @@ export async function warmPeerProfileLibraries(
         if(!allowBytes)return;
         const cap=budget[kind];
         // The gallery index is warmed, but video bytes stay on-demand.
-        const selected=kind==='videos'?[]:rows.filter(x=>x.size>0&&x.size<=cap.bytes).slice(0,cap.count);
+        const selected:typeof rows=[]; // Originals are fetched only by explicit user playback/open.
         if(!selected.length)return;
         const result=await client.storage.from('connect-profile-media').createSignedUrls(selected.map(x=>x.path),3600);
         if(result.error)return;

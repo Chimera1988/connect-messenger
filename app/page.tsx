@@ -5,11 +5,12 @@
 // CONNECT_PWA_VOICE_VIDEO_GEOMETRY_FIX4_20261112
 // CONNECT_PWA_MEDIA_UX_FIX_V3_20261112
 
+import {createSignedMediaCache, isCachedMediaUrl, cacheMediaUrl} from '../lib/media-cache';
 import RecordingBar from '../components/ConnectRecordingBar';
 import CacheSettings from '../components/ConnectCacheSettings';
 import { settingsMenuSegmentClasses } from '../lib/settings-menu-groups';
 import ConnectAdminUsage from '../components/ConnectAdminUsage';
-import {mediaIdentity, mediaCacheOwner, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia, storeGeneratedChatPoster} from '../lib/media-cache';
+import {mediaIdentity, mediaCacheOwner, mediaCacheEpoch, resolveCachedMedia, installMediaCache, clearCachedMedia, linkMessageMedia, purgeDeletedMedia, storeGeneratedChatPoster} from '../lib/media-cache';
 import {readChatWave, rememberChatWave, prewarmChatWave, getHotChatPoster, rememberChatPoster, forgetUserChatPresentation, isNativeMediaRuntime} from '../lib/chat-media-presentation';
 import { prefetchCachedMedia, prefetchChatAudio, prefetchStickerWebp } from '../lib/media-cache'; // CONNECT_PWA_CHAT_SPEED_STICKER_VOICE_V1_20261115
 import { readChatHistory, prewarmChatHistory, readOlderChatHistory, readNewerChatHistory, writeChatHistory, wipeChatHistory, dropCachedMessage, dropCachedMessageById, wipeUserHistory } from '../lib/chat-history-cache';
@@ -51,21 +52,7 @@ const supabaseFetch: typeof fetch = (input, init) => {
 // Signed media URLs are used directly by <img>, <audio>, <video> and fetch().
 // The SDK custom fetch cannot intercept those browser requests, so route them
 // through the same-origin Vercel proxy on the DuckDNS domain as well.
-function mediaUrl(url: string): string {
-  if (!useSupabaseProxy || !url) return url;
-  try {
-    const parsed = new URL(url);
-    const base = new URL(supabaseUrl);
-    const storageHost = base.hostname.replace(/\.supabase\.co$/, '.storage.supabase.co');
-    if (parsed.hostname === base.hostname) {
-      return window.location.origin + '/supabase' + parsed.pathname + parsed.search + parsed.hash;
-    }
-    if (parsed.hostname === storageHost) {
-      return window.location.origin + '/supabase-storage' + parsed.pathname + parsed.search + parsed.hash;
-    }
-  } catch { /* Preserve unexpected URLs without breaking rendering. */ }
-  return url;
-}
+function mediaUrl(url:string):string{return cacheMediaUrl(url);}
 
 const CONNECT_LOCAL_LOGOUT_FLAG='connect-local-logout-v1';
 function locallyLoggedOut():boolean {try{return localStorage.getItem(CONNECT_LOCAL_LOGOUT_FLAG)==='1';}catch{return false;}}
@@ -87,15 +74,27 @@ const supabase = supabaseUrl && supabaseKey
     })
   : null;
 
-// Signed storage links expire independently of authentication. Renew only the
-// failing object through the existing session, never make a private bucket public.
-async function refreshMediaUrl(source: string): Promise<string | undefined> {
-  const identity = mediaIdentity(source);
-  if (!supabase || !identity) return;
-  const slash = identity.indexOf('/'), bucket = identity.slice(0, slash);
-  if (slash < 1 || !['connect-avatars', 'connect-attachments', 'connect-stickers', 'connect-profile-media'].includes(bucket)) return;
-  const {data} = await supabase.storage.from(bucket).createSignedUrl(identity.slice(slash + 1), 3600);
-  return data?.signedUrl ? mediaUrl(data.signedUrl) : undefined;
+// Signatures share the same account/session lease as durable media bytes.
+const signedMediaLinks=createSignedMediaCache({
+  lease:viewer=>viewer===mediaCacheOwner()?mediaCacheEpoch():null,
+  cached:async(viewer,bucket,path)=>{
+    const identity='/storage/v1/object/sign/'+bucket+'/'+path;
+    const local=await resolveCachedMedia(identity,viewer);
+    return isCachedMediaUrl(local)?local:null;
+  },
+  sign:async(_viewer,bucket,path)=>{
+    if(!supabase)return;
+    const {data,error}=await supabase.storage.from(bucket).createSignedUrl(path,3600);
+    return !error&&data?.signedUrl?mediaUrl(data.signedUrl):undefined;
+  },
+});
+function resolveAttachmentMedia(path:string,viewer:string){return signedMediaLinks.resolve(viewer,'connect-attachments',path);}
+async function refreshMediaUrl(source:string,force=false):Promise<string|undefined>{
+  const identity=mediaIdentity(source),viewer=mediaCacheOwner();
+  if(!supabase||!identity||!viewer)return;
+  const slash=identity.indexOf('/'),bucket=identity.slice(0,slash);
+  if(slash<1||!['connect-avatars','connect-attachments','connect-stickers','connect-profile-media'].includes(bucket))return;
+  return signedMediaLinks.resolve(viewer,bucket,identity.slice(slash+1),force);
 }
 
 type AlbumItem = {path:string;name:string;kind:'image'|'video'};
@@ -270,7 +269,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
     if(waveOwner&&path){
       const identity='/storage/v1/object/sign/connect-attachments/'+path;
       void resolveCachedMedia(identity,waveOwner).then(local=>{
-        if(current&&local.startsWith('blob:')&&(!audioRef.current||(audioRef.current.paused&&audioRef.current.currentTime===0)))setPlaySrc(local);
+        if(current&&isCachedMediaUrl(local)&&(!audioRef.current||(audioRef.current.paused&&audioRef.current.currentTime===0)))setPlaySrc(local);
       }).catch(()=>{});
     }
     return()=>{current=false;};
@@ -299,12 +298,12 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
       try{
         // Shares the existing bounded media-cache job with the audio prefetch;
         // no second full-object GET if it was already being cached.
-        if(byteSize<=1024*1024)await prefetchChatAudio(src,waveOwner,byteSize);
+        // Full voice bytes are captured on playback, never for an offscreen waveform.
         if(disposed)return;
         const identity='/storage/v1/object/sign/connect-attachments/'+path;
         const local=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
         if(disposed)return;
-        await prewarmChatWave(waveOwner,path,local.startsWith('blob:')?local:src,byteSize);
+        if(isCachedMediaUrl(local))await prewarmChatWave(waveOwner,path,local,byteSize);
         if(!disposed)syncWave();
       }catch{/* Waveform is optional; playback must remain available. */}
     };
@@ -331,7 +330,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
       let current=playSrc||src||'';
       if(!current){
         const cached=await resolveCachedMedia(identity,waveOwner).catch(()=>identity);
-        current=cached.startsWith('blob:')?cached:(await refreshMediaUrl(identity)||'');
+        current=isCachedMediaUrl(cached)?cached:(await refreshMediaUrl(identity)||'');
         if(!current)throw new Error('Voice message URL is not ready');
         audio.src=current;setPlaySrc(current);
       }
@@ -340,7 +339,7 @@ const VoicePlayer = memo(function VoicePlayer({ src, path, byteSize, sentAt, min
         await audio.play();
       } catch(firstError) {
         if(!navigator.onLine||audio.error?.code===3||audio.error?.code===4)throw firstError;
-        const renewed=await refreshMediaUrl(identity);
+        const renewed=await refreshMediaUrl(identity,true);
         if(!renewed||renewed===current)throw firstError;
         audio.src=renewed;setPlaySrc(renewed);audio.load();
         await audio.play();
@@ -655,10 +654,9 @@ async function cachedChatPoster(path:string):Promise<string|null>{
   if(!supabase||!path)return null;
   if(isNativeMediaRuntime()){
     const viewer=mediaCacheOwner(),identity='/storage/v1/object/sign/connect-attachments/'+path+'__poster.jpg';
-    if(viewer){const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);if(local.startsWith('blob:'))return local;}
-    const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600);
-    if(error||!data?.signedUrl)return null;
-    const signed=mediaUrl(data.signedUrl);
+    if(viewer){const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);if(isCachedMediaUrl(local))return local;}
+    const signed=await resolveAttachmentMedia(path+'__poster.jpg',viewer);
+    if(!signed)return null;
     if(viewer)void prefetchCachedMedia(signed,viewer);
     return signed;
   }
@@ -668,16 +666,15 @@ async function cachedChatPoster(path:string):Promise<string|null>{
   const identity='/storage/v1/object/sign/connect-attachments/'+path+'__poster.jpg';
   if(viewer){
     const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
-    if(local.startsWith('blob:')){rememberChatPoster(viewer,path,local);return local;}
+    if(isCachedMediaUrl(local)){rememberChatPoster(viewer,path,local);return local;}
   }
-  const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(path+'__poster.jpg',3600);
-  if(error||!data?.signedUrl)return null;
-  const signed=mediaUrl(data.signedUrl);
+  const signed=await resolveAttachmentMedia(path+'__poster.jpg',viewer);
+  if(!signed)return null;
   if(viewer){
     await prefetchCachedMedia(signed,viewer);
     const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
-    if(local.startsWith('blob:')){rememberChatPoster(viewer,path,local);return local;}
-    rememberChatPoster(viewer,path,signed);
+    if(isCachedMediaUrl(local)){rememberChatPoster(viewer,path,local);return local;}
+    // Network fallbacks keep the signing coordinator's original expiry.
   }
   return signed;
 }
@@ -1152,7 +1149,6 @@ export default function Home() {
     const timer=window.setTimeout(()=>setChatDisplayReady(activeChat),1400);
     return()=>window.clearTimeout(timer);
   },[activeChat,user?.id]);
-  const signedMediaLifetimes=useRef(new Map<string,number>());
   const warmedChatWindows=useRef(new Map<string,number>());
   const [historyHasMore,setHistoryHasMore]=useState(false);
   const [historyLoadingMore,setHistoryLoadingMore]=useState(false);
@@ -1217,7 +1213,7 @@ export default function Home() {
   const [pendingFiles,setPendingFiles]=useState<File[]>([]);
   const [videoNoteOpen,setVideoNoteOpen]=useState(false);
   const [recording, setRecording] = useState(false);
-  useEffect(()=>{if(!user?.id)return;return installMediaCache(user.id, refreshMediaUrl);},[user?.id]);
+  useEffect(()=>{if(!user?.id)return;const release=installMediaCache(user.id, source=>refreshMediaUrl(source,true));return()=>{signedMediaLinks.clear(user.id);release();};},[user?.id]);
   // CONNECT_PROFILE_MEDIA_INSTANT_CACHE_V3_20261111
   // Prefetch only library metadata after login, without bulk downloading media.
   useEffect(()=>{
@@ -1675,7 +1671,7 @@ export default function Home() {
         try {
           const local=await resolveCachedMedia(identity,viewer);
           if(epoch!==stickerCatalogEpoch.current)return;
-          if(local.startsWith('blob:')){
+          if(isCachedMediaUrl(local)){
             setCustomStickerUrls(prev=>prev[st.id]===local?prev:{...prev,[st.id]:local});
             continue;
           }
@@ -1862,15 +1858,14 @@ export default function Home() {
       void Promise.all(candidates.map(async x=>{
         const identity='/storage/v1/object/sign/connect-avatars/'+x.avatar_path!;
         const local=await resolveCachedMedia(identity,owner).catch(()=>identity);
-        return {id:x.id,path:x.avatar_path!,local:local.startsWith('blob:')?local:''};
+        return {id:x.id,path:x.avatar_path!,local:isCachedMediaUrl(local)?local:''};
       })).then(items=>{
         if(avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
         setAvatarUrls(Object.fromEntries(items.filter(x=>x.local).map(x=>[x.id,x.local])));
         // Signed URLs are short-lived; paths in IndexedDB are stable.
         void Promise.all(items.filter(x=>!x.local).map(async x=>{
-          const {data}=await supabase.storage.from('connect-avatars').createSignedUrl(x.path,3600);
-          if(!data?.signedUrl||avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
-          const url=mediaUrl(data.signedUrl);
+          const url=await signedMediaLinks.resolve(owner,'connect-avatars',x.path);
+          if(!url||avatarCacheEpoch.current!==epoch||activePreviewUser.current!==owner)return;
           setAvatarUrls(prev=>({...prev,[x.id]:url}));
           void prefetchCachedMedia(url,owner);
         })).catch(()=>{});
@@ -2074,8 +2069,7 @@ export default function Home() {
     return()=>window.clearTimeout(timer);
   },[user?.id,conversations,latest]);
 
-  // Give nearby chats a head start: a few lightweight thumbnails plus at
-  // most three bounded photos are signed and cached before the next tap.
+  // Give nearby chats a head start: only lightweight thumbnails, never originals.
   useEffect(()=>{
     if(!supabase||!user?.id||!conversations.length)return;
     const connection=(navigator as Navigator & {connection?:{saveData?:boolean;effectiveType?:string}}).connection;
@@ -2085,23 +2079,22 @@ export default function Home() {
       const hotChats=new Set([...conversations].sort((a,b)=>(latest[b.id]?.created_at||b.created_at).localeCompare(latest[a.id]?.created_at||a.created_at)).slice(0,3).map(c=>c.id));
       const rows=recentMessagesRef.current.filter(m=>hotChats.has(m.conversation_id)&&!m.deleted_at&&!serverDeleted.current.has(m.id)).sort(compareChatMessages).slice(-50).reverse();
       const candidates=rows.flatMap(m=>[
-        ...(m.attachment_kind==='image'&&m.attachment_path&&supportsPhotoPreview(m.attachment_path)?[{path:photoPreviewPath(m.attachment_path),original:false}]:[]),
-        ...parseAlbum(m.body).filter(x=>x.kind==='image'&&supportsPhotoPreview(x.path)).map(x=>({path:photoPreviewPath(x.path),original:false})),
-        ...(connection?.effectiveType!=='3g'&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2?[{path:m.attachment_path,original:true}]:[])
+        ...(m.attachment_kind==='image'&&m.attachment_path&&supportsPhotoPreview(m.attachment_path)?[{path:photoPreviewPath(m.attachment_path)}]:[]),
+        ...parseAlbum(m.body).filter(x=>x.kind==='image'&&supportsPhotoPreview(x.path)).map(x=>({path:photoPreviewPath(x.path)})),
       ]);
-      let thumbs=0,originals=0;
+      let thumbs=0;
       for(const candidate of candidates){
         if(activePreviewUser.current!==owner)return;
-        if(candidate.original?originals>=3:thumbs>=10)continue;
+        if(thumbs>=10)break;
         const key=owner+':'+candidate.path,until=inboxMediaWarm.current.get(key)||0;
         if(until>Date.now())continue;
         inboxMediaWarm.current.set(key,Date.now()+60000);
-        if(candidate.original)originals++;else thumbs++;
+        thumbs++;
         try{
           const identity='/storage/v1/object/sign/connect-attachments/'+candidate.path;
           if((await resolveCachedMedia(identity,owner)).startsWith('blob:'))continue;
-          const {data,error}=await supabase.storage.from('connect-attachments').createSignedUrl(candidate.path,3600);
-          if(!error&&data?.signedUrl)await prefetchCachedMedia(mediaUrl(data.signedUrl),owner,candidate.original);
+          const signed=await resolveAttachmentMedia(candidate.path,owner);
+          if(signed&&activePreviewUser.current===owner)await prefetchCachedMedia(signed,owner);
         }catch{/* Preloading never blocks chat navigation. */}
       }
     })();},900);
@@ -2856,33 +2849,26 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   useEffect(() => {
     if(!supabase||!user)return;
     let cancelled=false;
-    const client=supabase,viewer=user.id;
-    // Android also needs progressive, bounded signing for large audio-heavy chats.
+    const client=supabase,viewer=user.id,epoch=mediaCacheEpoch();
+    const current=()=>!cancelled&&mediaCacheOwner()===viewer&&mediaCacheEpoch()===epoch;
+    // Reconsider existing entries on chat entry; the resolver owns their real TTL.
     if(isNativeMediaRuntime()){
-      const selected=messages.filter(m=>!m.deleted_at&&(!activeChat||m.conversation_id===activeChat));
+      if(!activeChat)return;
+      const selected=messages.filter(m=>!m.deleted_at&&m.conversation_id===activeChat);
       const paths=Array.from(new Set([...selected].reverse().flatMap(m=>[...(m.attachment_path?[m.attachment_path]:[]),...parseAlbum(m.body).map(x=>x.path)])));
-      const missing=paths.filter(path=>!attachmentUrls[path]);
-      let cursor=0, audioWarm=0;
+      let cursor=0,audioWarm=0;
       const worker=async()=>{
-        while(!cancelled&&cursor<missing.length){
-          const path=missing[cursor++];
-          const meta=selected.find(m=>m.attachment_path===path);
-          const identity='/storage/v1/object/sign/connect-attachments/'+path;
-          try {
-            const local=await resolveCachedMedia(identity,viewer).catch(()=>identity);
-            let url=local.startsWith('blob:')?local:'';
-            if(!url){
-              const {data}=await client.storage.from('connect-attachments').createSignedUrl(path,3600);
-              url=data?.signedUrl?mediaUrl(data.signedUrl):'';
-            }
-            if(!url||cancelled)continue;
-            setAttachmentUrls(prev=>prev[path]?prev:{...prev,[path]:url});
-            if(meta?.attachment_kind==='audio'&&meta.attachment_size&&meta.attachment_size<=1024*1024&&audioWarm++<2)
-              void prefetchChatAudio(url,viewer,meta.attachment_size);
+        while(current()&&cursor<paths.length){
+          const path=paths[cursor++],meta=selected.find(m=>m.attachment_path===path);
+          try{
+            const url=await resolveAttachmentMedia(path,viewer);
+            if(!url||!current())continue;
+            setAttachmentUrls(prev=>!current()||prev[path]===url?prev:{...prev,[path]:url});
+            // No audio original is downloaded on chat entry.
           }catch{/* One failed attachment must not block the rest. */}
         }
       };
-      void Promise.all(Array.from({length:Math.min(4,missing.length)},()=>worker())).catch(()=>{});
+      void Promise.all(Array.from({length:Math.min(4,paths.length)},()=>worker())).catch(()=>{});
       return()=>{cancelled=true;};
     }
     if(!activeChat||historyReadyChat!==activeChat)return;
@@ -2897,38 +2883,30 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     let offset=0,recentLeft=Math.min(10,entries.length);
     if(!recentLeft)setChatDisplayReady(chatId);
     const worker=async()=>{
-      while(!cancelled&&offset<entries.length){
+      while(current()&&offset<entries.length){
         const index=offset++,item=entries[index],path=item.path;
         try{
-          const identity='/storage/v1/object/sign/connect-attachments/'+path;
-          const cached=await resolveCachedMedia(identity,viewer);
-          const previous=attachmentUrls[path];
-          let url=cached.startsWith('blob:')?cached:(previous&&(previous.startsWith('blob:')||(signedMediaLifetimes.current.get(path)||0)>Date.now()+60000)?previous:'');
-          if(!url){
-            const {data,error}=await client.storage.from('connect-attachments').createSignedUrl(path,3600);
-            if(!error&&data?.signedUrl){url=mediaUrl(data.signedUrl);signedMediaLifetimes.current.set(path,Date.now()+48*60*1000);}
-          }
-          if(!url)continue;
-          if(!cancelled)setAttachmentUrls(prev=>prev[path]===url?prev:{...prev,[path]:url});
+          const url=await resolveAttachmentMedia(path,viewer);
+          if(!url||!current())continue;
+          setAttachmentUrls(prev=>!current()||prev[path]===url?prev:{...prev,[path]:url});
           if(item.kind==='image'&&supportsPhotoPreview(path)){
             const thumb=photoPreviewPath(path),thumbIdentity='/storage/v1/object/sign/connect-attachments/'+thumb;
             let local=await resolveCachedMedia(thumbIdentity,viewer);
-            if(!local.startsWith('blob:')){
-              const signed=await client.storage.from('connect-attachments').createSignedUrl(thumb,3600);
-              if(signed.data?.signedUrl){const thumbUrl=mediaUrl(signed.data.signedUrl);
+            if(!isCachedMediaUrl(local)){
+              const thumbUrl=await resolveAttachmentMedia(thumb,viewer);
+              if(thumbUrl){
                 await prefetchCachedMedia(thumbUrl,viewer);
                 const hydrated=await resolveCachedMedia(thumbIdentity,viewer);
-                local=hydrated.startsWith('blob:')?hydrated:thumbUrl;
+                local=isCachedMediaUrl(hydrated)?hydrated:thumbUrl;
               }else local='';
             }
-            if(!cancelled)setPhotoPreviews(prev=>prev[path]=== (local||null)?prev:{...prev,[path]:local||null});
+            if(current())setPhotoPreviews(prev=>!current()||prev[path]=== (local||null)?prev:{...prev,[path]:local||null});
           }
           if(item.kind==='video')await cachedChatPoster(path).catch(()=>null);
-           if(item.kind==='audio'&&index<4&&item.size>0&&item.size<=1024*1024)
-             void prefetchChatAudio(url,viewer,item.size);
+          // No original prefetch: the first playback response persists its bytes.
         }catch{/* Never let a failed attachment block message navigation. */}
         finally{
-          if(index<10&&--recentLeft===0&&!cancelled){
+          if(index<10&&--recentLeft===0&&current()){
             warmedChatWindows.current.set(viewer+':'+chatId,Date.now()+42*60*1000);
             setChatDisplayReady(chatId);
           }
@@ -2942,7 +2920,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
 
   useEffect(()=>{
     if(!supabase||!user)return;
-    const owner=user.id;
+    const owner=user.id,epoch=mediaCacheEpoch();let cancelled=false;
     const paths=[...new Set(messages.filter(m=>m.conversation_id===activeChat).flatMap(m=>[
       ...(m.attachment_kind==='image'&&m.attachment_path?[m.attachment_path]:[]),
       ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
@@ -2958,14 +2936,20 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       try{
         const previewPath=photoPreviewPath(path),identity='/storage/v1/object/sign/connect-attachments/'+previewPath;
         const local=await resolveCachedMedia(identity,owner);
-        if(local.startsWith('blob:'))return {path,url:local};
-        const {data,error}=await supabase!.storage.from('connect-attachments').createSignedUrl(previewPath,3600);
-        if(error||!data?.signedUrl)return {path,url:null};
-        const signed=mediaUrl(data.signedUrl);
-        void prefetchCachedMedia(signed,owner);
-        return {path,url:signed};
+        if(isCachedMediaUrl(local))return {path,url:local};
+        const signed=await resolveAttachmentMedia(previewPath,owner);
+        if(!signed)return {path,url:null};
+        await prefetchCachedMedia(signed,owner);
+        const hydrated=await resolveCachedMedia(signed,owner);
+        return {path,url:isCachedMediaUrl(hydrated)?hydrated:signed};
       }catch{return {path,url:null};}
-    })).then(items=>{if(activePreviewUser.current===owner){setPhotoPreviews(prev=>{const next={...prev};for(const item of items)next[item.path]=item.url;return next;});for(const item of items)if(!item.url)retryPhotoPreview(item.path);}});
+    })).then(items=>{
+      if(!cancelled&&activePreviewUser.current===owner&&mediaCacheEpoch()===epoch){
+        setPhotoPreviews(prev=>{const next={...prev};for(const item of items)next[item.path]=item.url;return next;});
+        for(const item of items){if(item.url)photoPreviewAttempts.current.delete(item.path);else retryPhotoPreview(item.path);}
+      }
+    }).finally(()=>{for(const path of paths)photoPreviewRequests.current.delete(path);});
+    return()=>{cancelled=true;for(const path of paths)photoPreviewRequests.current.delete(path);};
   },[messages,activeChat,user?.id,photoPreviewRetry]);
   useEffect(()=>{
     photoPreviewRequests.current.clear();photoPreviewAttempts.current.clear();
@@ -2978,7 +2962,6 @@ const currentName = selected?.other?.display_name || 'Собеседник';
   },[]);
 
   // Warm avatars and small thumbnails even while viewing the chat list.
-  // Small original photos are prefetched only on unconstrained connections.
   useEffect(()=>{
     if(!user?.id)return;
     const owner=user.id;
@@ -2989,15 +2972,13 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       ...parseAlbum(m.body).filter(x=>x.kind==='image').map(x=>x.path)
     ]):[];
     const urls=[...new Set([...Object.values(avatarUrls),...previews.map(p=>photoPreviews[p]).filter((v):v is string=>typeof v==='string')])].filter(Boolean).slice(0,56);
-    const small=activeChat?messages.filter(m=>m.conversation_id===activeChat&&m.attachment_kind==='image'&&m.attachment_path&&m.attachment_size&&m.attachment_size<=6*1024**2).slice(-6).map(m=>attachmentUrls[m.attachment_path!]).filter((v):v is string=>!!v):[];
     let stopped=false;
     const timer=window.setTimeout(()=>{void(async()=>{
       for(const src of urls){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner);}
       if(connection?.effectiveType==='3g')return;
-      for(const src of small){if(stopped||activePreviewUser.current!==owner)break;await prefetchCachedMedia(src,owner,true);}
     })();},200);
     return()=>{stopped=true;window.clearTimeout(timer);};
-  },[user?.id,activeChat,photoPreviews,avatarUrls,messages,attachmentUrls]);
+  },[user?.id,activeChat,photoPreviews,avatarUrls,messages]);
 
   function isKeyboardSticker(m: Message): boolean {
     return m.attachment_kind === 'image' && /^sticker-\d+\.(png|webp|gif|jpe?g)$/i.test(m.attachment_name || '');
@@ -3147,8 +3128,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
       setLatest(prev=>({...prev,[chatId]:m}));
       setReplyTo(null);setPendingFiles([]);
-      const urls=await Promise.all(items.map(async x=>({path:x.path,result:await client.storage.from('connect-attachments').createSignedUrl(x.path,3600)})));
-      setAttachmentUrls(prev=>{const next={...prev};urls.forEach(x=>{if(x.result.data?.signedUrl)next[x.path]=mediaUrl(x.result.data.signedUrl)});return next});
+      const urls=await Promise.all(items.map(async x=>({path:x.path,url:await resolveAttachmentMedia(x.path,uid)})));
+      setAttachmentUrls(prev=>{if(mediaCacheOwner()!==uid)return prev;const next={...prev};urls.forEach(x=>{if(x.url)next[x.path]=x.url});return next});
       requestAnimationFrame(()=>{if(scrollRef.current)scrollRef.current.scrollTop=scrollRef.current.scrollHeight});
     }catch(e){setNotice('Не удалось отправить альбом: '+(e instanceof Error?e.message:String(e)))}
     finally{setBusy(false);setUploadProgress(null)}
@@ -3232,8 +3213,8 @@ const currentName = selected?.other?.display_name || 'Собеседник';
       setMessages(prev=>prev.some(x=>x.id===m.id)?prev:[...prev,m]);
       setLatest(prev=>({...prev,[chatId]:m}));
       setReplyTo(null);
-      const signed=await supabase.storage.from('connect-attachments').createSignedUrl(path,3600);
-      if(signed.data?.signedUrl)setAttachmentUrls(prev=>({...prev,[path]:mediaUrl(signed.data!.signedUrl)}));
+      const signed=await resolveAttachmentMedia(path,user.id);
+      if(signed)setAttachmentUrls(prev=>mediaCacheOwner()===user.id?{...prev,[path]:signed}:prev);
       requestAnimationFrame(()=>{const el=scrollRef.current;if(el)el.scrollTop=el.scrollHeight;});
     } catch(e) {
       setNotice('Не удалось отправить вложение: '+(e instanceof Error?e.message:String(e)));
@@ -3501,7 +3482,7 @@ const currentName = selected?.other?.display_name || 'Собеседник';
     historyWarmStamps.current={};inboxMediaWarm.current.clear();
     avatarCacheEpoch.current++;setAvatarUrls({});
     if(accountId)forgetUserChatPresentation(accountId);
-    warmedChatWindows.current.clear();signedMediaLifetimes.current.clear();
+    warmedChatWindows.current.clear();signedMediaLinks.clear(accountId||'');
     let signoutTimeout:ReturnType<typeof setTimeout>|undefined;
     try {
       const {error}=await Promise.race([
